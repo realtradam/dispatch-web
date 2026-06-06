@@ -5,7 +5,7 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-06 — Slice 2 FE-complete (unit + integration green); awaiting a LIVE probe._
+_Last updated: 2026-06-06 — Slice 2 LIVE-VERIFIED end-to-end against the running backend (9/9). ✅_
 
 ---
 
@@ -14,7 +14,7 @@ _Last updated: 2026-06-06 — Slice 2 FE-complete (unit + integration green); aw
 | Slice | State |
 |---|---|
 | **Slice 1** — surface system + WS + composition root | ✅ DONE, committed, green. |
-| **Slice 2** — conversation transcript: cache + delta streaming (design §6) | ✅ FE-COMPLETE, committed — svelte-check 0/0, **218 vitest** (stable x2), biome clean, build ok. **Not yet live-probed against a running backend** (see §6). |
+| **Slice 2** — conversation transcript: cache + delta streaming (design §6) | ✅ DONE + **LIVE-VERIFIED** — svelte-check 0/0, **221 vitest**, biome clean, build ok; live e2e probe **9/9** against `bin/up` (see §6). |
 
 **Slice 2 units built** (all pure-core / injected-shell, single-owner): `core/chunks` (the one
 transcript reducer) · `core/wire` (contract-conformance drift guard) · `adapters/ws` (now multiplexes
@@ -58,22 +58,25 @@ Mirrored in-repo for headless agents: `.dispatch/ui-contract.reference.md`, `.di
 ### 3.3 Pending asks / roadblocks
 - _(none open)_ — Slice 2 needed no backend change. One coordination item below (§6).
 
-## 6. Recommended next: a LIVE end-to-end probe (coordination, not a change)
+## 6. LIVE end-to-end probe — DONE ✅ (9/9, against `bin/up`)
 
-Slice 2 is unit/integration-green, but per the Slice-1 lesson (an effectful transport SHELL is
-exactly where integration bugs hide — the WS-upgrade bug only surfaced live), the FE chat path should
-be probed against a **running backend** before we call it done:
-- WS `chat.send` → `chat.delta` stream over `:24205`, and the post-`turn-sealed` resync via
-  `GET /conversations/:id?sinceSeq` over `:24203` (CORS from the `:24204` page origin).
-- FE expectations being validated: one socket multiplexes surface + chat; deltas fold into a
-  provisional turn; on `turn-sealed` the FE refetches `?sinceSeq` and the authoritative seq'd chunks
-  supersede the provisional ones; IndexedDB caches sealed turns.
+Ran `bun scripts/live-probe.ts` (drives the FE's REAL network-facing stack — `adapters/ws` socket,
+`core/chunks` reducer, `conversation-cache` + `adapters/idb`, and the HTTP history endpoint — against
+the running backend). **All 9 checks passed:**
+- one WS (`:24205`) delivered the surface `catalog` AND the chat stream;
+- `chat.send` → ~33 `chat.delta` events (incl. `text-delta`) → folded to the expected assistant text
+  → `turn-sealed`;
+- post-seal `GET :24203/conversations/:id?sinceSeq=0` → 3 seq-monotonic `StoredChunk`s
+  (`latestSeq=3`); `applyHistory` superseded the provisional turn (`sealedTurnId` cleared);
+- IndexedDB cache persisted the sealed turn; committed transcript shows the assistant text.
 
-**Ask to the backend orchestrator (via courier):** confirm a known-good local boot (`bin/up`?) with
-the HTTP `:24203` + WS `:24205` servers both up, and — if convenient — a minimal scripted chat turn
-we can point the FE dev server (`bun run dev`, `:24204`) at. The FE can drive the probe from the
-browser; we just need the backend running with a real model credential. Report any shape/behaviour
-mismatch back here in §3.3.
+**No backend mismatch found — every confirmed invariant (C1–C4) held live.** One FE-internal note
+(not a backend matter): the idb adapter relies on the global `IDBKeyRange` (fine in a browser; the
+probe needed `fake-indexeddb/auto` to supply it under Bun).
+
+Also caught + fixed during browser bring-up (FE-only bug, not backend): a BLANK page on plain-HTTP
+non-localhost origins (`http://arch-razer:24204`) because `crypto.randomUUID()` is secure-context-only
+— now replaced with a `getRandomValues`-based fallback.
 
 ## 4. (history) Slice 2 unit map — delivered, see §1.
 
