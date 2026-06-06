@@ -388,9 +388,11 @@ describe("createAppStore", () => {
 		});
 
 		expect(store.activeChat.chunks.length).toBeGreaterThan(0);
-		const textChunks = store.activeChat.chunks.filter((c) => c.chunk.type === "text");
-		expect(textChunks).toHaveLength(1);
-		expect((textChunks[0]?.chunk as { type: "text"; text: string }).text).toBe("Hello world");
+		const assistantChunks = store.activeChat.chunks.filter(
+			(c) => c.role === "assistant" && c.chunk.type === "text",
+		);
+		expect(assistantChunks).toHaveLength(1);
+		expect((assistantChunks[0]?.chunk as { type: "text"; text: string }).text).toBe("Hello world");
 
 		store.dispose();
 	});
@@ -580,14 +582,19 @@ describe("createAppStore", () => {
 		});
 
 		store.selectTab(convId1);
-		const textChunks1 = store.activeChat.chunks.filter((c) => c.chunk.type === "text");
-		expect(textChunks1).toHaveLength(1);
-		expect((textChunks1[0]?.chunk as { type: "text"; text: string }).text).toBe(
+		const assistantChunks1 = store.activeChat.chunks.filter(
+			(c) => c.role === "assistant" && c.chunk.type === "text",
+		);
+		expect(assistantChunks1).toHaveLength(1);
+		expect((assistantChunks1[0]?.chunk as { type: "text"; text: string }).text).toBe(
 			"response to first",
 		);
 
 		store.selectTab(convId2);
-		expect(store.activeChat.chunks).toEqual([]);
+		const assistantChunks2 = store.activeChat.chunks.filter(
+			(c) => c.role === "assistant" && c.chunk.type === "text",
+		);
+		expect(assistantChunks2).toEqual([]);
 
 		store.dispose();
 	});
@@ -652,6 +659,51 @@ describe("createAppStore", () => {
 
 		store.dispose();
 		store2.dispose();
+	});
+
+	it("tabs persist to globalThis.localStorage when no storage is injected", () => {
+		const realLs = globalThis.localStorage;
+		const memLs = createFakeStorage();
+		globalThis.localStorage = memLs;
+		try {
+			const ws1 = fakeSocket();
+			const store = createAppStore({
+				socketFactory: () => ws1,
+				fetchImpl: fakeFetchImpl(),
+			});
+			ws1.resolveOpen();
+
+			store.send("persist via default");
+			const convId = store.tabs[0]?.conversationId;
+			const title = store.tabs[0]?.title;
+			expect(convId).toBeDefined();
+			expect(title).toBeDefined();
+
+			const raw = globalThis.localStorage.getItem("dispatch.tabs");
+			expect(raw).not.toBeNull();
+			const parsed = JSON.parse(raw as string);
+			expect(parsed.tabs).toHaveLength(1);
+			expect(parsed.tabs[0].conversationId).toBe(convId);
+			expect(parsed.tabs[0].title).toBe(title);
+
+			store.dispose();
+
+			const ws2 = fakeSocket();
+			const store2 = createAppStore({
+				socketFactory: () => ws2,
+				fetchImpl: fakeFetchImpl(),
+			});
+			ws2.resolveOpen();
+
+			expect(store2.tabs).toHaveLength(1);
+			expect(store2.tabs[0]?.conversationId).toBe(convId);
+			expect(store2.tabs[0]?.title).toBe(title);
+			expect(store2.activeConversationId).toBe(convId);
+
+			store2.dispose();
+		} finally {
+			globalThis.localStorage = realLs;
+		}
 	});
 
 	it("newDraft resets to draft mode", () => {

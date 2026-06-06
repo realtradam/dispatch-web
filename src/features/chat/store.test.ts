@@ -436,4 +436,62 @@ describe("createChatStore", () => {
 
 		store.dispose();
 	});
+
+	it("send optimistically shows the user message immediately", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			cache: cache.impl,
+		});
+
+		store.send("hi");
+
+		expect(store.messages).toHaveLength(1);
+		expect(store.messages[0]?.role).toBe("user");
+		expect(store.messages[0]?.chunks).toHaveLength(1);
+		expect(store.messages[0]?.chunks[0]?.type).toBe("text");
+		expect((store.messages[0]?.chunks[0] as { type: "text"; text: string }).text).toBe("hi");
+
+		store.dispose();
+	});
+
+	it("the optimistic user message is replaced after turn-sealed + history sync", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			cache: cache.impl,
+		});
+
+		historySync.returnChunks = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "hi" } },
+			{ seq: 2, role: "assistant", chunk: { type: "text", text: "hello!" } },
+		];
+
+		store.send("hi");
+		expect(store.messages).toHaveLength(1);
+		expect(store.messages[0]?.role).toBe("user");
+
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(
+			deltaEvent({ type: "text-delta", conversationId: CONV_ID, turnId: "t1", delta: "hello!" }),
+		);
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+
+		await vi.waitFor(() => {
+			expect(store.messages.length).toBe(2);
+		});
+
+		expect(store.messages[0]?.role).toBe("user");
+		expect(store.messages[1]?.role).toBe("assistant");
+
+		store.dispose();
+	});
 });

@@ -6,6 +6,7 @@ import type {
 import type { ChatMessage } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "../../core/chunks";
 import {
+	appendUserMessage,
 	applyHistory,
 	foldEvent,
 	initialState,
@@ -94,6 +95,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		},
 
 		send(text: string): void {
+			transcript = appendUserMessage(transcript, text);
 			const msg: ChatSendMessage = {
 				type: "chat.send",
 				conversationId: deps.conversationId,

@@ -100,7 +100,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	const fetchImpl = opts?.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	const indexedDBFactory = opts?.indexedDB ?? globalThis.indexedDB;
-	const localStorageOpt = opts?.localStorage;
+	const localStorageOpt = opts?.localStorage ?? globalThis.localStorage;
 
 	const storageAdapter = createLocalStore<TabsState>("dispatch.tabs", {
 		storage: localStorageOpt,
