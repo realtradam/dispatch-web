@@ -21,6 +21,22 @@ describe("serialize", () => {
 		const msg = { type: "invoke" as const, surfaceId: "s1", actionId: "click" };
 		expect(JSON.parse(serialize(msg))).toEqual(msg);
 	});
+
+	it("serializes a chat.send message", () => {
+		const msg = { type: "chat.send" as const, message: "hello" };
+		expect(JSON.parse(serialize(msg))).toEqual(msg);
+	});
+
+	it("serializes a chat.send message with all fields", () => {
+		const msg = {
+			type: "chat.send" as const,
+			conversationId: "c1",
+			message: "hello",
+			model: "openai/gpt-4",
+			cwd: "/tmp",
+		};
+		expect(JSON.parse(serialize(msg))).toEqual(msg);
+	});
 });
 
 describe("parseServerMessage", () => {
@@ -133,6 +149,49 @@ describe("parseServerMessage", () => {
 	it("returns null for error with invalid surfaceId type", () => {
 		expect(
 			parseServerMessage(JSON.stringify({ type: "error", surfaceId: 42, message: "boom" })),
+		).toBeNull();
+	});
+
+	it("parses a chat.delta message", () => {
+		const event = { type: "text-delta", conversationId: "c1", turnId: "t1", delta: "hello" };
+		const data = JSON.stringify({ type: "chat.delta", event });
+		const result = parseServerMessage(data);
+		expect(result).toEqual({ type: "chat.delta", event });
+	});
+
+	it("parses a chat.error message with conversationId", () => {
+		const data = JSON.stringify({
+			type: "chat.error",
+			conversationId: "c1",
+			message: "bad request",
+		});
+		const result = parseServerMessage(data);
+		expect(result).toEqual({ type: "chat.error", conversationId: "c1", message: "bad request" });
+	});
+
+	it("parses a chat.error message without conversationId", () => {
+		const data = JSON.stringify({ type: "chat.error", message: "no conversation" });
+		const result = parseServerMessage(data);
+		expect(result).toEqual({ type: "chat.error", message: "no conversation" });
+	});
+
+	it("returns null for chat.delta with non-object event", () => {
+		expect(parseServerMessage(JSON.stringify({ type: "chat.delta", event: "nope" }))).toBeNull();
+	});
+
+	it("returns null for chat.delta with missing event.type", () => {
+		expect(parseServerMessage(JSON.stringify({ type: "chat.delta", event: {} }))).toBeNull();
+	});
+
+	it("returns null for chat.error with non-string message", () => {
+		expect(parseServerMessage(JSON.stringify({ type: "chat.error", message: 42 }))).toBeNull();
+	});
+
+	it("returns null for chat.error with invalid conversationId type", () => {
+		expect(
+			parseServerMessage(
+				JSON.stringify({ type: "chat.error", conversationId: 42, message: "boom" }),
+			),
 		).toBeNull();
 	});
 });

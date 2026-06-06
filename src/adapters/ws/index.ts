@@ -1,4 +1,9 @@
-import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
+import type {
+	ChatDeltaMessage,
+	ChatErrorMessage,
+	WsClientMessage,
+} from "@dispatch/transport-contract";
+import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { nextBackoffMs, parseServerMessage, serialize } from "./logic";
 
 export interface WebSocketLike {
@@ -12,12 +17,13 @@ export interface WebSocketLike {
 export interface SurfaceSocketOptions {
 	url: string;
 	onMessage: (msg: SurfaceServerMessage) => void;
+	onChat?: (msg: ChatDeltaMessage | ChatErrorMessage) => void;
 	onReopen?: () => void;
 	socketFactory?: (url: string) => WebSocketLike;
 }
 
 export interface SurfaceSocketHandle {
-	send(msg: SurfaceClientMessage): void;
+	send(msg: WsClientMessage): void;
 	close(): void;
 }
 
@@ -52,7 +58,11 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
 			if (disposed) return;
 			const msg = parseServerMessage(ev.data);
 			if (msg !== null) {
-				opts.onMessage(msg);
+				if (msg.type === "chat.delta" || msg.type === "chat.error") {
+					opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage);
+				} else {
+					opts.onMessage(msg as SurfaceServerMessage);
+				}
 			}
 		};
 
@@ -76,7 +86,7 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
 	connect(false);
 
 	return {
-		send(msg: SurfaceClientMessage): void {
+		send(msg: WsClientMessage): void {
 			if (disposed) return;
 			const raw = serialize(msg);
 			if (isOpen) {
