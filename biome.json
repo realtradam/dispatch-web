@@ -4,6 +4,7 @@
 	"linter": { "enabled": true, "rules": { "recommended": true } },
 	"formatter": { "enabled": true, "indentStyle": "tab", "lineWidth": 100 },
 	"javascript": { "formatter": { "quoteStyle": "double", "semicolons": "always" } },
+	"css": { "parser": { "tailwindDirectives": true } },
 	"files": {
 		"includes": ["**", "!**/node_modules", "!**/dist", "!**/build", "!**/*.svelte"]
 	}

@@ -1,0 +1,8 @@
+@import "tailwindcss";
+
+/* DaisyUI v5 — enable the plugin AND bundle the dracula theme (set as default,
+   applied via <html data-theme="dracula">). Themes not listed here are NOT
+   bundled, so dracula must be named explicitly, not merely referenced. */
+@plugin "daisyui" {
+	themes: dracula --default;
+}
