@@ -1,16 +1,27 @@
 import type {
+	ChatDeltaMessage,
+	ChatErrorMessage,
+	WsClientMessage,
+	WsServerMessage,
+} from "@dispatch/transport-contract";
+import type {
 	CatalogMessage,
-	SurfaceClientMessage,
 	SurfaceErrorMessage,
 	SurfaceMessage,
-	SurfaceServerMessage,
 	SurfaceUpdateMessage,
 } from "@dispatch/ui-contract";
 
-const VALID_SERVER_TYPES = new Set(["catalog", "surface", "update", "error"]);
+const VALID_SERVER_TYPES = new Set([
+	"catalog",
+	"surface",
+	"update",
+	"error",
+	"chat.delta",
+	"chat.error",
+]);
 
 /** Serialize a client message to a JSON string for the wire. */
-export function serialize(msg: SurfaceClientMessage): string {
+export function serialize(msg: WsClientMessage): string {
 	return JSON.stringify(msg);
 }
 
@@ -19,10 +30,10 @@ function isRecord(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * Parse a raw server message string into a typed SurfaceServerMessage.
+ * Parse a raw server message string into a typed WsServerMessage.
  * Returns null for malformed JSON or shapes that don't match the protocol.
  */
-export function parseServerMessage(data: string): SurfaceServerMessage | null {
+export function parseServerMessage(data: string): WsServerMessage | null {
 	let parsed: unknown;
 	try {
 		parsed = JSON.parse(data);
@@ -70,6 +81,22 @@ export function parseServerMessage(data: string): SurfaceServerMessage | null {
 				surfaceId !== undefined
 					? { type: "error", surfaceId, message: parsed.message }
 					: { type: "error", message: parsed.message };
+			return msg;
+		}
+		case "chat.delta": {
+			const event = parsed.event;
+			if (!isRecord(event)) return null;
+			if (typeof event.type !== "string") return null;
+			return { type: "chat.delta", event: event as unknown as ChatDeltaMessage["event"] };
+		}
+		case "chat.error": {
+			if (typeof parsed.message !== "string") return null;
+			const conversationId = parsed.conversationId;
+			if (conversationId !== undefined && typeof conversationId !== "string") return null;
+			const msg: ChatErrorMessage =
+				conversationId !== undefined
+					? { type: "chat.error", conversationId, message: parsed.message }
+					: { type: "chat.error", message: parsed.message };
 			return msg;
 		}
 		default:

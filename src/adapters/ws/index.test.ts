@@ -231,4 +231,116 @@ describe("createSurfaceSocket", () => {
 			payload: 1,
 		});
 	});
+
+	it("routes chat.delta to onChat", () => {
+		const ws = fakeSocket();
+		const onMessage = vi.fn();
+		const onChat = vi.fn();
+		createSurfaceSocket({
+			url: "ws://test",
+			onMessage,
+			onChat,
+			socketFactory: () => ws,
+		});
+
+		ws.resolveOpen();
+		const event = { type: "text-delta", conversationId: "c1", turnId: "t1", delta: "hi" };
+		ws.invokeMessage(JSON.stringify({ type: "chat.delta", event }));
+		expect(onChat).toHaveBeenCalledOnce();
+		expect(onChat).toHaveBeenCalledWith({ type: "chat.delta", event });
+		expect(onMessage).not.toHaveBeenCalled();
+	});
+
+	it("routes chat.error to onChat", () => {
+		const ws = fakeSocket();
+		const onMessage = vi.fn();
+		const onChat = vi.fn();
+		createSurfaceSocket({
+			url: "ws://test",
+			onMessage,
+			onChat,
+			socketFactory: () => ws,
+		});
+
+		ws.resolveOpen();
+		ws.invokeMessage(JSON.stringify({ type: "chat.error", message: "bad request" }));
+		expect(onChat).toHaveBeenCalledOnce();
+		expect(onChat).toHaveBeenCalledWith({ type: "chat.error", message: "bad request" });
+		expect(onMessage).not.toHaveBeenCalled();
+	});
+
+	it("still routes surface catalog/surface to onMessage", () => {
+		const ws = fakeSocket();
+		const onMessage = vi.fn();
+		const onChat = vi.fn();
+		createSurfaceSocket({
+			url: "ws://test",
+			onMessage,
+			onChat,
+			socketFactory: () => ws,
+		});
+
+		ws.resolveOpen();
+		ws.invokeMessage(JSON.stringify({ type: "catalog", catalog: [] }));
+		expect(onMessage).toHaveBeenCalledOnce();
+		expect(onMessage).toHaveBeenCalledWith({ type: "catalog", catalog: [] });
+		expect(onChat).not.toHaveBeenCalled();
+
+		ws.invokeMessage(
+			JSON.stringify({ type: "surface", spec: { id: "s1", region: "r", title: "S", fields: [] } }),
+		);
+		expect(onMessage).toHaveBeenCalledTimes(2);
+	});
+
+	it("send accepts and serializes a chat.send message", () => {
+		const ws = fakeSocket();
+		const handle = createSurfaceSocket({
+			url: "ws://test",
+			onMessage: vi.fn(),
+			socketFactory: () => ws,
+		});
+
+		ws.resolveOpen();
+		handle.send({ type: "chat.send", message: "hello" });
+		expect(ws.sent).toHaveLength(1);
+		expect(JSON.parse(ws.sent[0] ?? "")).toEqual({ type: "chat.send", message: "hello" });
+	});
+
+	it("onChat absent is safe (surface-only usage does not throw)", () => {
+		const ws = fakeSocket();
+		const onMessage = vi.fn();
+		createSurfaceSocket({
+			url: "ws://test",
+			onMessage,
+			socketFactory: () => ws,
+		});
+
+		ws.resolveOpen();
+		expect(() => {
+			ws.invokeMessage(
+				JSON.stringify({
+					type: "chat.delta",
+					event: { type: "text-delta", conversationId: "c1", turnId: "t1", delta: "x" },
+				}),
+			);
+			ws.invokeMessage(JSON.stringify({ type: "chat.error", message: "boom" }));
+		}).not.toThrow();
+		expect(onMessage).not.toHaveBeenCalled();
+	});
+
+	it("chat send is queued until open then flushed", () => {
+		const ws = fakeSocket();
+		const handle = createSurfaceSocket({
+			url: "ws://test",
+			onMessage: vi.fn(),
+			socketFactory: () => ws,
+		});
+
+		handle.send({ type: "chat.send", message: "queued" });
+		expect(ws.sent).toHaveLength(0);
+
+		ws.resolveOpen();
+		expect(ws.sent).toHaveLength(1);
+		expect(JSON.parse(ws.sent[0] ?? "")).toEqual({ type: "chat.send", message: "queued" });
+	});
 });
