@@ -7,7 +7,7 @@
 ## Shared with the backend (canonical — do NOT redefine)
 | Term | Meaning | Aliases to avoid |
 |---|---|---|
-| **conversation** | A single thread of turns with persisted history, id'd by `conversationId`. | tab, session, thread, chat |
+| **conversation** | A single thread of turns with persisted history, id'd by `conversationId`. | session, thread, chat (and do NOT call the conversation itself a "tab" — a tab *references* one; see FE "tab") |
 | **conversationId** | The string id threading multi-turn history. | tabId, sessionId, chatId |
 | **turn** | One user message → assistant response cycle (may span steps). | — |
 | **step** | One LLM round-trip within a turn. | iteration |
@@ -25,6 +25,7 @@
 | **action / action ref** | A backend-invokable action; a field carries an *action ref* the client posts back. (Backend calls this a `command` for now.) | — |
 | **surface catalog** | The list of available surfaces (metadata) the FE fetches to discover them (`GET /surfaces`). | capability manifest |
 | **view** | RESERVED — the old-Dispatch sidebar affordance (settings / feature views); a FUTURE FE concept, NOT a surface. | (do not reuse) |
+| **tab** | A FE workspace slot in the tab strip that *references* one open conversation — holds its `conversationId`, the selected **model name**, and a derived title. Distinct from the conversation itself (the backend thread): closing a tab forgets it LOCALLY (drops the slot + evicts its FE cache); the conversation persists server-side. Open tabs + the active tab are persisted locally. | (do not conflate with **conversation**) |
 | **feature module** | A self-contained FE feature (chat, history explorer, …); feature-as-a-library, composed at the root. | — |
 | **composition root** | The single place (`src/app/`) that imports + wires feature modules + the surface host. | — |
 | **surface interpreter** | The generic renderer: field kind → component. Knows kinds, never surface ids. | — |
