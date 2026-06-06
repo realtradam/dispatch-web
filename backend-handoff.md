@@ -5,7 +5,7 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-06 — Slice 2 LIVE-VERIFIED end-to-end against the running backend (9/9). ✅_
+_Last updated: 2026-06-06 — Slice 3 (tabs + model selector + DaisyUI) FE-complete; no new backend asks._
 
 ---
 
@@ -14,7 +14,8 @@ _Last updated: 2026-06-06 — Slice 2 LIVE-VERIFIED end-to-end against the runni
 | Slice | State |
 |---|---|
 | **Slice 1** — surface system + WS + composition root | ✅ DONE, committed, green. |
-| **Slice 2** — conversation transcript: cache + delta streaming (design §6) | ✅ DONE + **LIVE-VERIFIED** — svelte-check 0/0, **221 vitest**, biome clean, build ok; live e2e probe **9/9** against `bin/up` (see §6). |
+| **Slice 2** — conversation transcript: cache + delta streaming (design §6) | ✅ DONE + **LIVE-VERIFIED** — live e2e probe **9/9** against `bin/up` (see §6). |
+| **Slice 3** — tabs (multi-conversation) + model selector + DaisyUI/dracula | ✅ FE-COMPLETE — svelte-check 0/0, **281 vitest**, biome clean, build ok. Per-tab chat stores, one WS routed by `conversationId`, local-forget on tab close, tabs persisted to localStorage. No backend change needed. |
 
 **Slice 2 units built** (all pure-core / injected-shell, single-owner): `core/chunks` (the one
 transcript reducer) · `core/wire` (contract-conformance drift guard) · `adapters/ws` (now multiplexes
@@ -46,6 +47,13 @@ Mirrored in-repo for headless agents: `.dispatch/ui-contract.reference.md`, `.di
 ### 3.1 Resolved / answered
 - ✅ Wire-types split, per-chunk `seq`, history endpoint, WS chat multiplexing, CORS — all delivered
   (backend commit `812621c`).
+
+### 3.2a Finding — model is NOT persisted/exposed per conversation (FE handled it)
+`model` is a per-turn `ChatRequest` field only; `session-orchestrator` resolves it per `handleMessage`
+and never stores it, and `conversation-store`/`ConversationHistoryResponse` carry no model. So the FE
+**persists the selected model per tab** (localStorage). No action needed. OPTIONAL future nicety: if
+you ever persist + expose a per-conversation "last model" (e.g. on the `GET /conversations` list when
+it lands), the FE could seed a reopened tab's model from the server instead of localStorage.
 
 ### 3.2 FYI — non-blocking gotcha (no action required unless you publish externally)
 - **`workspace:*` breaks external `file:` consumption under bun.** `transport-contract`'s deps are
