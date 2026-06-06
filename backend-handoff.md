@@ -5,7 +5,7 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-06 — Slice 2 kicked off (unit summons in flight)._
+_Last updated: 2026-06-06 — Slice 2 FE-complete (unit + integration green); awaiting a LIVE probe._
 
 ---
 
@@ -13,8 +13,16 @@ _Last updated: 2026-06-06 — Slice 2 kicked off (unit summons in flight)._
 
 | Slice | State |
 |---|---|
-| **Slice 1** — surface system + WS + composition root | ✅ DONE, committed, green (svelte-check 0/0, 91 vitest, biome clean, build ok). |
-| **Slice 2** — conversation transcript: cache + delta streaming (design §6) | 🔧 IN PROGRESS — contracts pinned + mirrored; FE units being built (see §4). |
+| **Slice 1** — surface system + WS + composition root | ✅ DONE, committed, green. |
+| **Slice 2** — conversation transcript: cache + delta streaming (design §6) | ✅ FE-COMPLETE, committed — svelte-check 0/0, **218 vitest** (stable x2), biome clean, build ok. **Not yet live-probed against a running backend** (see §6). |
+
+**Slice 2 units built** (all pure-core / injected-shell, single-owner): `core/chunks` (the one
+transcript reducer) · `core/wire` (contract-conformance drift guard) · `adapters/ws` (now multiplexes
+`chat.send`/`chat.delta` on the one socket) · `features/conversation-cache` (pure reconcile/evict +
+`ConversationChunkStore` port) · `adapters/idb` (IndexedDB impl) · `features/chat` (runes view-model
++ `ChatView`/`Composer`) · `app` (one socket for surface+chat, host-relative HTTP `:24203` history
+sync, IndexedDB cache, renders the chat). Consumes ONLY the pinned `@0.1.0` contracts — no backend
+change was needed.
 
 ## 2. Pinned backend contracts (consumed by the FE)
 
@@ -48,15 +56,26 @@ Mirrored in-repo for headless agents: `.dispatch/ui-contract.reference.md`, `.di
   consumers.
 
 ### 3.3 Pending asks / roadblocks
-- _(none open)_ — Slice 2 has all the backend contracts it needs.
+- _(none open)_ — Slice 2 needed no backend change. One coordination item below (§6).
 
-## 4. Looking ahead — FE Slice 2 unit map (no backend dependency)
+## 6. Recommended next: a LIVE end-to-end probe (coordination, not a change)
 
-Pure-core / injected-shell decomposition, built by single-owner agents in this repo:
-`core/chunks` (the one transcript reducer) · `core/wire` (contract-conformance type-tests) ·
-`adapters/ws` (extend for `chat.send`/`chat.delta`) · `features/conversation-cache`
-(pure `reconcileCache`/`selectEvictions` + IndexedDB port) · `adapters/idb` (IndexedDB impl) ·
-`features/chat` (view-model + UI) · `app` (wiring). None require backend changes.
+Slice 2 is unit/integration-green, but per the Slice-1 lesson (an effectful transport SHELL is
+exactly where integration bugs hide — the WS-upgrade bug only surfaced live), the FE chat path should
+be probed against a **running backend** before we call it done:
+- WS `chat.send` → `chat.delta` stream over `:24205`, and the post-`turn-sealed` resync via
+  `GET /conversations/:id?sinceSeq` over `:24203` (CORS from the `:24204` page origin).
+- FE expectations being validated: one socket multiplexes surface + chat; deltas fold into a
+  provisional turn; on `turn-sealed` the FE refetches `?sinceSeq` and the authoritative seq'd chunks
+  supersede the provisional ones; IndexedDB caches sealed turns.
+
+**Ask to the backend orchestrator (via courier):** confirm a known-good local boot (`bin/up`?) with
+the HTTP `:24203` + WS `:24205` servers both up, and — if convenient — a minimal scripted chat turn
+we can point the FE dev server (`bun run dev`, `:24204`) at. The FE can drive the probe from the
+browser; we just need the backend running with a real model credential. Report any shape/behaviour
+mismatch back here in §3.3.
+
+## 4. (history) Slice 2 unit map — delivered, see §1.
 
 ## 5. Likely NEXT backend asks (heads-up, not yet requested)
 
