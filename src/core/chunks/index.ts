@@ -1,4 +1,4 @@
-export { applyHistory, foldEvent, initialState } from "./reducer";
+export { appendUserMessage, applyHistory, foldEvent, initialState } from "./reducer";
 export { selectChunks, selectMessages } from "./selectors";
 export type {
 	AccumulatingChunk,

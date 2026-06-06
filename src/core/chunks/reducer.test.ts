@@ -11,7 +11,7 @@ import type {
 	TurnUsageEvent,
 } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
-import { applyHistory, foldEvent, initialState } from "./reducer";
+import { appendUserMessage, applyHistory, foldEvent, initialState } from "./reducer";
 import { selectChunks, selectMessages } from "./selectors";
 
 const turnStart = (turnId: string): TurnStartEvent => ({
@@ -402,5 +402,66 @@ describe("selectMessages", () => {
 		expect(msgs[1]?.role).toBe("assistant");
 		expect(msgs[1]?.chunks).toHaveLength(1);
 		expect(msgs[1]?.chunks[0]).toEqual({ type: "text", text: "a1a2" });
+	});
+});
+
+describe("appendUserMessage", () => {
+	it("adds a provisional user text chunk", () => {
+		let s = initialState();
+		s = appendUserMessage(s, "hello from user");
+		const chunks = selectChunks(s);
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]?.seq).toBeNull();
+		expect(chunks[0]?.role).toBe("user");
+		expect(chunks[0]?.chunk).toEqual({ type: "text", text: "hello from user" });
+		expect(chunks[0]?.provisional).toBe(true);
+	});
+
+	it("selectMessages includes the optimistic user message", () => {
+		let s = initialState();
+		s = appendUserMessage(s, "what is 2+2?");
+		const msgs = selectMessages(s);
+		expect(msgs).toHaveLength(1);
+		expect(msgs[0]?.role).toBe("user");
+		expect(msgs[0]?.chunks).toHaveLength(1);
+		expect(msgs[0]?.chunks[0]).toEqual({ type: "text", text: "what is 2+2?" });
+	});
+
+	it("user echo then turn-sealed + applyHistory supersedes the provisional user chunk", () => {
+		let s = initialState();
+		s = appendUserMessage(s, "hi");
+		expect(selectChunks(s)).toHaveLength(1);
+
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "hello back"));
+		s = foldEvent(s, turnSealed("t1"));
+		s = applyHistory(s, [
+			storedChunk(1, "user", { type: "text", text: "hi" }),
+			storedChunk(2, "assistant", { type: "text", text: "hello back" }),
+		]);
+		const chunks = selectChunks(s);
+		expect(chunks).toHaveLength(2);
+		expect(chunks[0]?.seq).toBe(1);
+		expect(chunks[0]?.role).toBe("user");
+		expect(chunks[0]?.chunk).toEqual({ type: "text", text: "hi" });
+		expect(chunks[0]?.provisional).toBe(false);
+		expect(chunks[1]?.seq).toBe(2);
+		expect(chunks[1]?.role).toBe("assistant");
+		expect(chunks[1]?.provisional).toBe(false);
+	});
+
+	it("flushes accumulating chunk before appending user message", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "partial"));
+		expect(s.accumulating).toEqual({ kind: "text", text: "partial" });
+
+		s = appendUserMessage(s, "user msg");
+		expect(s.accumulating).toBeNull();
+		expect(s.provisional).toHaveLength(2);
+		expect(s.provisional[0]?.role).toBe("assistant");
+		expect(s.provisional[0]?.chunk).toEqual({ type: "text", text: "partial" });
+		expect(s.provisional[1]?.role).toBe("user");
+		expect(s.provisional[1]?.chunk).toEqual({ type: "text", text: "user msg" });
 	});
 });

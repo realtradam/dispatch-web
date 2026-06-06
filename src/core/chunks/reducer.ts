@@ -166,3 +166,19 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 		}
 	}
 }
+
+/**
+ * Optimistically append a user message to the provisional list.
+ * Flushes any in-progress accumulating chunk first (defensively).
+ * The provisional user chunk is superseded when applyHistory receives
+ * the authoritative committed chunks after a turn seals.
+ */
+export function appendUserMessage(state: TranscriptState, text: string): TranscriptState {
+	const provisional = flushAccumulating(state.provisional, state.accumulating);
+	const userChunk: Chunk = { type: "text", text };
+	return {
+		...state,
+		provisional: [...provisional, { role: "user", chunk: userChunk }],
+		accumulating: null,
+	};
+}
