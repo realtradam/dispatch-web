@@ -23,11 +23,18 @@ it, test it, and write a report — nothing else. If no single unit is named, st
 
 ## What you may read (visibility)
 - **Your own unit:** every file, freely.
-- **The contract you consume:** reproduced IN-REPO at
-  `.dispatch/ui-contract.reference.md` — read THAT. Your code imports
-  `@dispatch/ui-contract` normally, but **do NOT read `node_modules/@dispatch/*`** — it
-  symlinks to the backend repo (OUTSIDE this repo) and a headless permission prompt will
-  HANG the run (see "Headless read boundary").
+- **The contracts you consume:** reproduced IN-REPO under `.dispatch/*.reference.md` — read THOSE:
+  - `.dispatch/ui-contract.reference.md` — `@dispatch/ui-contract` (surfaces + surface WS protocol).
+  - `.dispatch/wire.reference.md` — `@dispatch/wire` (`Chunk`/`StoredChunk`+`seq`/`ChatMessage`/
+    `AgentEvent`/`TurnSealedEvent`/`Usage` — the chat wire types).
+  - `.dispatch/transport-contract.reference.md` — `@dispatch/transport-contract` (HTTP endpoints +
+    `ChatRequest`/`ModelsResponse`/`ConversationHistoryResponse` + WS chat ops + the unified
+    `WsClientMessage`/`WsServerMessage` unions).
+
+  Your code imports `@dispatch/ui-contract` / `@dispatch/wire` / `@dispatch/transport-contract`
+  normally, but **do NOT read `node_modules/@dispatch/*`** — they symlink to the backend repo
+  (OUTSIDE this repo) and a headless permission prompt will HANG the run (see "Headless read
+  boundary").
 - **Sibling units — PUBLIC SURFACE only:** their `index.ts` exports. Don't read
   their internals (needing them ⇒ the contract is incomplete → report a CR).
 

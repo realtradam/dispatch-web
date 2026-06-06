@@ -14,7 +14,13 @@
 		"check:fix": "biome check --write ."
 	},
 	"dependencies": {
-		"@dispatch/ui-contract": "file:../arch-rewrite/packages/ui-contract"
+		"@dispatch/transport-contract": "file:../arch-rewrite/packages/transport-contract",
+		"@dispatch/ui-contract": "file:../arch-rewrite/packages/ui-contract",
+		"@dispatch/wire": "file:../arch-rewrite/packages/wire"
+	},
+	"overrides": {
+		"@dispatch/ui-contract": "file:../arch-rewrite/packages/ui-contract",
+		"@dispatch/wire": "file:../arch-rewrite/packages/wire"
 	},
 	"devDependencies": {
 		"@biomejs/biome": "^2.4.16",
@@ -23,6 +29,7 @@
 		"@testing-library/svelte": "^5.2.0",
 		"@testing-library/user-event": "^14.6.1",
 		"@tsconfig/svelte": "^5.0.0",
+		"fake-indexeddb": "^6.0.0",
 		"jsdom": "^25.0.0",
 		"svelte": "^5.0.0",
 		"svelte-check": "^4.0.0",
