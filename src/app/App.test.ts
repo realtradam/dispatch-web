@@ -55,37 +55,76 @@ function fakeSocket(): FakeSocket {
 }
 
 function fakeFetchImpl(): typeof fetch {
-	return async (): Promise<Response> =>
-		new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+	return async (input: string | URL | Request): Promise<Response> => {
+		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+		if (url.endsWith("/models")) {
+			return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+				status: 200,
+			});
+		}
+		return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+	};
+}
+
+function createFakeStorage(): Storage {
+	const map = new Map<string, string>();
+	return {
+		get length() {
+			return map.size;
+		},
+		clear() {
+			map.clear();
+		},
+		getItem(key: string): string | null {
+			return map.get(key) ?? null;
+		},
+		key(_index: number): string | null {
+			return null;
+		},
+		removeItem(key: string) {
+			map.delete(key);
+		},
+		setItem(key: string, value: string) {
+			map.set(key, value);
+		},
+	};
 }
 
 function sentMessages(ws: FakeSocket) {
 	return ws.sent.map((s) => JSON.parse(s));
 }
 
+function activeConversationId(store: ReturnType<typeof createAppStore>): string {
+	const id = store.activeConversationId;
+	expect(id).not.toBeNull();
+	return id as string;
+}
+
 describe("App component interaction tests", () => {
-	it("renders empty state when catalog is empty", () => {
+	it("renders the model selector and composer in draft mode", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
 		render(App, { props: { store } });
 
-		expect(screen.getByText("No surfaces available")).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "Message input" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+		expect(screen.getByRole("combobox", { name: "Model selector" })).toBeInTheDocument();
 
 		store.dispose();
 	});
 
-	it("renders a catalog button per entry after a catalog message", () => {
+	it("renders catalog buttons when surfaces are available", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -114,7 +153,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -158,7 +197,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -193,7 +232,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -227,7 +266,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -249,7 +288,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -297,31 +336,12 @@ describe("App component interaction tests", () => {
 		store.dispose();
 	});
 
-	it("renders the chat section with composer", () => {
-		const ws = fakeSocket();
-		const store = createAppStore({
-			socketFactory: () => ws,
-			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
-		});
-		ws.resolveOpen();
-
-		render(App, { props: { store } });
-
-		expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
-		expect(screen.getByRole("log")).toBeInTheDocument();
-		expect(screen.getByRole("textbox", { name: "Message input" })).toBeInTheDocument();
-		expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
-
-		store.dispose();
-	});
-
 	it("typing and sending a message posts chat.send on the socket", async () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
@@ -350,9 +370,13 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			conversationId: "test-conv",
+			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
+
+		// Promote draft to tab
+		store.send("test");
+		const convId = activeConversationId(store);
 
 		render(App, { props: { store } });
 
@@ -360,7 +384,7 @@ describe("App component interaction tests", () => {
 			type: "chat.delta",
 			event: {
 				type: "turn-start",
-				conversationId: "test-conv",
+				conversationId: convId,
 				turnId: "turn-1",
 			},
 		});
@@ -369,7 +393,7 @@ describe("App component interaction tests", () => {
 			type: "chat.delta",
 			event: {
 				type: "text-delta",
-				conversationId: "test-conv",
+				conversationId: convId,
 				turnId: "turn-1",
 				delta: "Hi there!",
 			},
