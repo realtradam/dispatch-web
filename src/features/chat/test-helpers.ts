@@ -75,6 +75,9 @@ export function createFakeCache(): FakeCache {
 			async evictIfOverBudget() {
 				return [];
 			},
+			async delete(conversationId) {
+				store.delete(conversationId);
+			},
 		},
 	};
 }

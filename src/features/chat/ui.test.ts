@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { RenderedChunk } from "../../core/chunks";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
+import ModelSelector from "./ui/ModelSelector.svelte";
 
 describe("ChatView", () => {
 	it("renders a message's text chunk", () => {
@@ -144,8 +145,8 @@ describe("ChatView", () => {
 
 		render(ChatView, { props: { chunks } });
 
-		const article = screen.getByText("Streaming...").closest("article");
-		expect(article).toHaveClass("message--provisional");
+		const bubble = screen.getByText("Streaming...").closest(".chat-bubble");
+		expect(bubble).toHaveClass("opacity-50");
 	});
 
 	it("renders empty transcript", () => {
@@ -258,5 +259,40 @@ describe("Composer", () => {
 		await user.type(textarea, "Line 1{Shift>}{Enter}{/Shift}Line 2");
 
 		expect(onSend).not.toHaveBeenCalled();
+	});
+});
+
+describe("ModelSelector", () => {
+	it("renders the options and current selection", () => {
+		const models = ["openai/gpt-4", "anthropic/claude-3", "google/gemini"];
+		render(ModelSelector, {
+			props: { models, selected: "anthropic/claude-3", onSelect: vi.fn() },
+		});
+
+		const select = screen.getByRole("combobox", { name: "Model selector" });
+		expect(select).toBeInTheDocument();
+		expect(select).toHaveValue("anthropic/claude-3");
+
+		const options = screen.getAllByRole("option");
+		expect(options).toHaveLength(3);
+		expect(options[0]).toHaveValue("openai/gpt-4");
+		expect(options[1]).toHaveValue("anthropic/claude-3");
+		expect(options[2]).toHaveValue("google/gemini");
+	});
+
+	it("calls onSelect on change", async () => {
+		const onSelect = vi.fn();
+		const user = userEvent.setup();
+		const models = ["openai/gpt-4", "anthropic/claude-3"];
+
+		render(ModelSelector, {
+			props: { models, selected: "openai/gpt-4", onSelect },
+		});
+
+		const select = screen.getByRole("combobox", { name: "Model selector" });
+		await user.selectOptions(select, "anthropic/claude-3");
+
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect).toHaveBeenCalledWith("anthropic/claude-3");
 	});
 });

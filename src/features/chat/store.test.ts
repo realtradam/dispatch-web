@@ -347,4 +347,93 @@ describe("createChatStore", () => {
 
 		store.dispose();
 	});
+
+	it("setModel changes the model used by the next send", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			model: "openai/gpt-4",
+			transport: transport.impl,
+			historySync: historySync.impl,
+			cache: cache.impl,
+		});
+
+		store.send("First");
+		expect(transport.sent[0]?.model).toBe("openai/gpt-4");
+
+		store.setModel("anthropic/claude-3");
+		store.send("Second");
+		expect(transport.sent[1]?.model).toBe("anthropic/claude-3");
+
+		store.dispose();
+	});
+
+	it("setModel from undefined to a model", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			cache: cache.impl,
+		});
+
+		store.send("First");
+		expect(transport.sent[0]).not.toHaveProperty("model");
+
+		store.setModel("openai/gpt-4o");
+		store.send("Second");
+		expect(transport.sent[1]?.model).toBe("openai/gpt-4o");
+
+		store.dispose();
+	});
+
+	it("handleDelta ignores a chat.delta for a different conversationId", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			cache: cache.impl,
+		});
+
+		store.handleDelta(
+			deltaEvent({ type: "turn-start", conversationId: "other-conv", turnId: "t1" }),
+		);
+		store.handleDelta(
+			deltaEvent({
+				type: "text-delta",
+				conversationId: "other-conv",
+				turnId: "t1",
+				delta: "Should be ignored",
+			}),
+		);
+
+		expect(store.messages).toHaveLength(0);
+
+		store.dispose();
+	});
+
+	it("handleDelta ignores a chat.error for a different conversationId", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			cache: cache.impl,
+		});
+
+		store.handleDelta({ type: "chat.error", conversationId: "other-conv", message: "Wrong conv" });
+
+		expect(store.error).toBeNull();
+
+		store.dispose();
+	});
 });

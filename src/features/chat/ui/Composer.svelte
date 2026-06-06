@@ -18,16 +18,16 @@
 	}
 </script>
 
-<form class="composer" onsubmit={prevent => { prevent.preventDefault(); handleSubmit(); }}>
+<form class="flex gap-2 p-4" onsubmit={(e) => { e.preventDefault(); handleSubmit(); }}>
 	<textarea
-		class="composer__input"
+		class="textarea textarea-bordered flex-1"
 		bind:value={text}
 		onkeydown={handleKeydown}
 		placeholder="Type a message..."
 		rows="3"
 		aria-label="Message input"
 	></textarea>
-	<button class="composer__send" type="submit" disabled={text.trim().length === 0}>
+	<button class="btn btn-primary" type="submit" disabled={text.trim().length === 0}>
 		Send
 	</button>
 </form>

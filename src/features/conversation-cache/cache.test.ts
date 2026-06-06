@@ -171,3 +171,27 @@ describe("cache.evictIfOverBudget", () => {
 		expect(evicted).toEqual([]);
 	});
 });
+
+describe("cache.delete", () => {
+	it("removes the conversation from the store", async () => {
+		const store = createFakeStore();
+		const cache = createConversationCache(store);
+
+		await store.append("conv-1", [chunk(1), chunk(2)]);
+		await cache.delete("conv-1");
+
+		const stored = await store.load("conv-1");
+		expect(stored).toEqual([]);
+	});
+
+	it("then load returns []", async () => {
+		const store = createFakeStore();
+		const cache = createConversationCache(store);
+
+		await cache.commit("conv-1", [chunk(1), chunk(2), chunk(3)]);
+		await cache.delete("conv-1");
+
+		const result = await cache.load("conv-1");
+		expect(result).toEqual([]);
+	});
+});
