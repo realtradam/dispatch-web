@@ -1,5 +1,6 @@
+import type { WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
@@ -9,7 +10,8 @@ import { createAppStore } from "./store.svelte";
 interface FakeSocket extends WebSocketLike {
 	sent: string[];
 	resolveOpen(): void;
-	feedMessage(data: SurfaceServerMessage): void;
+	feedServerMessage(data: WsServerMessage): void;
+	feedSurfaceMessage(data: SurfaceServerMessage): void;
 }
 
 function fakeSocket(): FakeSocket {
@@ -41,12 +43,20 @@ function fakeSocket(): FakeSocket {
 		resolveOpen() {
 			onopen?.();
 		},
-		feedMessage(msg: SurfaceServerMessage) {
+		feedServerMessage(msg: WsServerMessage) {
+			onmessage?.({ data: JSON.stringify(msg) });
+		},
+		feedSurfaceMessage(msg: SurfaceServerMessage) {
 			onmessage?.({ data: JSON.stringify(msg) });
 		},
 		sent,
 	};
 	return ws;
+}
+
+function fakeFetchImpl(): typeof fetch {
+	return async (): Promise<Response> =>
+		new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
 }
 
 function sentMessages(ws: FakeSocket) {
@@ -56,7 +66,11 @@ function sentMessages(ws: FakeSocket) {
 describe("App component interaction tests", () => {
 	it("renders empty state when catalog is empty", () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
 		render(App, { props: { store } });
@@ -68,10 +82,14 @@ describe("App component interaction tests", () => {
 
 	it("renders a catalog button per entry after a catalog message", () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "catalog",
 			catalog: [
 				{ id: "s1", region: "sidebar", title: "Surface One" },
@@ -81,7 +99,9 @@ describe("App component interaction tests", () => {
 
 		render(App, { props: { store } });
 
-		const buttons = screen.getAllByRole("button");
+		const surfacesSection = screen.getByRole("heading", { name: "Surfaces" }).closest("section");
+		if (surfacesSection === null) throw new Error("Surfaces section not found");
+		const buttons = within(surfacesSection).getAllByRole("button");
 		expect(buttons).toHaveLength(2);
 		expect(buttons[0]).toHaveTextContent("Surface One");
 		expect(buttons[1]).toHaveTextContent("Surface Two");
@@ -91,10 +111,14 @@ describe("App component interaction tests", () => {
 
 	it("clicking a catalog entry subscribes and renders its surface", async () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "catalog",
 			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
 		});
@@ -112,7 +136,7 @@ describe("App component interaction tests", () => {
 		);
 		expect(subscribe).toBeTruthy();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "surface",
 			spec: {
 				id: "s1",
@@ -131,10 +155,14 @@ describe("App component interaction tests", () => {
 
 	it("clicking a different entry unsubscribes the previous then subscribes the new", async () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "catalog",
 			catalog: [
 				{ id: "s1", region: "sidebar", title: "Surface One" },
@@ -162,10 +190,14 @@ describe("App component interaction tests", () => {
 
 	it("selected catalog button reflects aria-current", async () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "catalog",
 			catalog: [
 				{ id: "s1", region: "sidebar", title: "Surface One" },
@@ -192,10 +224,14 @@ describe("App component interaction tests", () => {
 
 	it("an error message renders the alert banner", () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "error",
 			message: "Something went wrong",
 		});
@@ -210,10 +246,14 @@ describe("App component interaction tests", () => {
 
 	it("invoking a field action sends an invoke", async () => {
 		const ws = fakeSocket();
-		const store = createAppStore({ socketFactory: () => ws });
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
 		ws.resolveOpen();
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "catalog",
 			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
 		});
@@ -223,7 +263,7 @@ describe("App component interaction tests", () => {
 		const user = userEvent.setup();
 		await user.click(screen.getByRole("button", { name: /Surface One/ }));
 
-		ws.feedMessage({
+		ws.feedSurfaceMessage({
 			type: "surface",
 			spec: {
 				id: "s1",
@@ -253,6 +293,89 @@ describe("App component interaction tests", () => {
 				m.payload === true,
 		);
 		expect(invoke).toBeTruthy();
+
+		store.dispose();
+	});
+
+	it("renders the chat section with composer", () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
+		ws.resolveOpen();
+
+		render(App, { props: { store } });
+
+		expect(screen.getByRole("heading", { name: "Chat" })).toBeInTheDocument();
+		expect(screen.getByRole("log")).toBeInTheDocument();
+		expect(screen.getByRole("textbox", { name: "Message input" })).toBeInTheDocument();
+		expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
+
+		store.dispose();
+	});
+
+	it("typing and sending a message posts chat.send on the socket", async () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
+		ws.resolveOpen();
+
+		render(App, { props: { store } });
+
+		const user = userEvent.setup();
+		const textarea = screen.getByRole("textbox", { name: "Message input" });
+		await user.type(textarea, "hello from UI");
+
+		ws.sent.length = 0;
+		const sendBtn = screen.getByRole("button", { name: "Send" });
+		await user.click(sendBtn);
+
+		const msgs = sentMessages(ws);
+		const chatSend = msgs.find((m: { type: string }) => m.type === "chat.send") as
+			| { type: string; conversationId: string; message: string }
+			| undefined;
+		expect(chatSend).toBeTruthy();
+		expect(chatSend?.message).toBe("hello from UI");
+
+		store.dispose();
+	});
+
+	it("incoming chat.delta renders text in the chat transcript", async () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			conversationId: "test-conv",
+		});
+		ws.resolveOpen();
+
+		render(App, { props: { store } });
+
+		ws.feedServerMessage({
+			type: "chat.delta",
+			event: {
+				type: "turn-start",
+				conversationId: "test-conv",
+				turnId: "turn-1",
+			},
+		});
+
+		ws.feedServerMessage({
+			type: "chat.delta",
+			event: {
+				type: "text-delta",
+				conversationId: "test-conv",
+				turnId: "turn-1",
+				delta: "Hi there!",
+			},
+		});
+
+		expect(await screen.findByText("Hi there!")).toBeInTheDocument();
 
 		store.dispose();
 	});

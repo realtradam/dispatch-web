@@ -1,4 +1,6 @@
+import type { ConversationHistoryResponse } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
+import { createIdbChunkStore } from "../adapters/idb";
 import type { WebSocketLike } from "../adapters/ws";
 import { createSurfaceSocket, type SurfaceSocketOptions } from "../adapters/ws";
 import {
@@ -9,6 +11,11 @@ import {
 	subscribe as protocolSubscribe,
 	unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
+import type { ChatStore } from "../features/chat";
+import { createChatStore } from "../features/chat";
+import type { ConversationCache } from "../features/conversation-cache";
+import { createConversationCache } from "../features/conversation-cache";
+import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
 
 export interface AppStore {
@@ -16,15 +23,36 @@ export interface AppStore {
 	readonly selectedId: string | null;
 	readonly selectedSpec: SurfaceSpec | null;
 	readonly lastError: ProtocolState["lastError"];
+	readonly chat: ChatStore;
 	select(surfaceId: string): void;
 	invoke(surfaceId: string, actionId: string, payload?: unknown): void;
 	dispose(): void;
 }
 
-export function createAppStore(opts?: {
+export interface CreateAppStoreOptions {
 	url?: string;
+	httpUrl?: string;
 	socketFactory?: (url: string) => WebSocketLike;
-}): AppStore {
+	fetchImpl?: typeof fetch;
+	indexedDB?: IDBFactory;
+	conversationId?: string;
+}
+
+function createHistorySync(
+	httpBase: string,
+	fetchImpl: typeof fetch,
+): (conversationId: string, sinceSeq: number) => Promise<ConversationHistoryResponse> {
+	return async (conversationId: string, sinceSeq: number) => {
+		const url = `${httpBase}/conversations/${encodeURIComponent(conversationId)}?sinceSeq=${sinceSeq}`;
+		const res = await fetchImpl(url);
+		if (!res.ok) {
+			throw new Error(`History sync failed: ${res.status}`);
+		}
+		return (await res.json()) as ConversationHistoryResponse;
+	};
+}
+
+export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let protocol = $state<ProtocolState>(initialState());
 	let selectedId = $state<string | null>(null);
 
@@ -35,15 +63,53 @@ export function createAppStore(opts?: {
 	}
 
 	const wsLocation = typeof location !== "undefined" ? location : undefined;
-	const url =
+	const wsUrl =
 		opts?.url ??
 		resolveWsUrl(
 			{ VITE_WS_URL: import.meta.env.VITE_WS_URL, VITE_WS_PORT: import.meta.env.VITE_WS_PORT },
 			wsLocation,
 		);
+
+	const httpLocation = typeof location !== "undefined" ? location : undefined;
+	const httpBase =
+		opts?.httpUrl ??
+		resolveHttpUrl(
+			{
+				VITE_HTTP_URL: import.meta.env.VITE_HTTP_URL,
+				VITE_HTTP_PORT: import.meta.env.VITE_HTTP_PORT,
+			},
+			httpLocation,
+		);
+
+	const fetchImpl = opts?.fetchImpl ?? globalThis.fetch.bind(globalThis);
+	const indexedDBFactory = opts?.indexedDB ?? globalThis.indexedDB;
+	const conversationId = opts?.conversationId ?? crypto.randomUUID();
+
+	const cache: ConversationCache = createConversationCache(
+		createIdbChunkStore({ indexedDB: indexedDBFactory }),
+	);
+
+	const historySync = createHistorySync(httpBase, fetchImpl);
+
+	const chatStore = createChatStore({
+		conversationId,
+		transport: {
+			send(msg) {
+				socket?.send(msg);
+			},
+		},
+		historySync,
+		cache,
+	});
+
+	let chat = $state<ChatStore>(chatStore as ChatStore);
+
 	const socketOpts: SurfaceSocketOptions = {
-		url,
+		url: wsUrl,
 		onMessage: handleServerMessage,
+		onChat(msg) {
+			chatStore.handleDelta(msg);
+		},
 		onReopen() {
 			if (selectedId !== null) {
 				const result = protocolSubscribe(protocol, selectedId);
@@ -59,6 +125,8 @@ export function createAppStore(opts?: {
 	}
 	socket = createSurfaceSocket(socketOpts);
 
+	void chatStore.load();
+
 	return {
 		get catalog() {
 			return protocol.catalog;
@@ -72,6 +140,9 @@ export function createAppStore(opts?: {
 		},
 		get lastError() {
 			return protocol.lastError;
+		},
+		get chat() {
+			return chat;
 		},
 		select(surfaceId: string): void {
 			if (selectedId !== null && selectedId !== surfaceId) {
@@ -96,6 +167,7 @@ export function createAppStore(opts?: {
 			}
 		},
 		dispose(): void {
+			chatStore.dispose();
 			socket?.close();
 			socket = null;
 		},
