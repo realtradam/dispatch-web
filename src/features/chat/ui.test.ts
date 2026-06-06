@@ -155,6 +155,40 @@ describe("ChatView", () => {
 		expect(log).toBeInTheDocument();
 		expect(log.children).toHaveLength(0);
 	});
+
+	it("thinking <details> stays open across a streaming update", async () => {
+		const initial: RenderedChunk[] = [
+			{
+				seq: null,
+				role: "assistant",
+				chunk: { type: "thinking", text: "Let me think..." },
+				provisional: true,
+			},
+		];
+
+		const { rerender } = render(ChatView, { props: { chunks: initial } });
+
+		const details = screen.getByText("Thinking").closest("details");
+		expect(details).not.toBeNull();
+		expect(details).not.toHaveAttribute("open");
+		if (details) details.open = true;
+		expect(details).toHaveAttribute("open");
+
+		const updated: RenderedChunk[] = [
+			{
+				seq: null,
+				role: "assistant",
+				chunk: { type: "thinking", text: "Let me think... step by step" },
+				provisional: true,
+			},
+		];
+		await rerender({ chunks: updated });
+
+		const detailsAfter = screen.getByText("Thinking").closest("details");
+		expect(detailsAfter).not.toBeNull();
+		expect(detailsAfter).toHaveAttribute("open");
+		expect(detailsAfter).toHaveTextContent("Let me think... step by step");
+	});
 });
 
 describe("Composer", () => {

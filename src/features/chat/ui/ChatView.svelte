@@ -5,7 +5,7 @@
 </script>
 
 <div class="chat-transcript" role="log" aria-live="polite">
-	{#each chunks as rendered (rendered)}
+	{#each chunks as rendered, i (rendered.seq != null ? `c${rendered.seq}` : `p${i}`)}
 		<article
 			class="message message--{rendered.role}"
 			class:message--provisional={rendered.provisional}
