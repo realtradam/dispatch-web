@@ -17,6 +17,7 @@ import type { ConversationCache } from "../features/conversation-cache";
 import { createConversationCache } from "../features/conversation-cache";
 import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
+import { randomId } from "./uuid";
 
 export interface AppStore {
 	readonly catalog: ProtocolState["catalog"];
@@ -83,7 +84,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	const fetchImpl = opts?.fetchImpl ?? globalThis.fetch.bind(globalThis);
 	const indexedDBFactory = opts?.indexedDB ?? globalThis.indexedDB;
-	const conversationId = opts?.conversationId ?? crypto.randomUUID();
+	const conversationId = opts?.conversationId ?? randomId();
 
 	const cache: ConversationCache = createConversationCache(
 		createIdbChunkStore({ indexedDB: indexedDBFactory }),
