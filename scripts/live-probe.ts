@@ -119,16 +119,27 @@ async function main() {
 	// Post-seal: resync authoritative seq'd history + commit to cache (the real path).
 	const sinceSeq = await cache.sinceSeq(conversationId);
 	const hist = await historySync(conversationId, sinceSeq);
-	record("history endpoint returned chunks", hist.chunks.length > 0, `${hist.chunks.length} chunks, latestSeq=${hist.latestSeq}`);
+	record(
+		"history endpoint returned chunks",
+		hist.chunks.length > 0,
+		`${hist.chunks.length} chunks, latestSeq=${hist.latestSeq}`,
+	);
 	const monotonic = hist.chunks.every((c, i) => i === 0 || c.seq > (hist.chunks[i - 1]?.seq ?? -1));
 	record("history chunks are seq-monotonic", monotonic);
 
 	const merged = await cache.commit(conversationId, hist.chunks);
 	state = applyHistory(state, merged);
-	record("provisional superseded after applyHistory (sealedTurnId cleared)", state.sealedTurnId === null);
+	record(
+		"provisional superseded after applyHistory (sealedTurnId cleared)",
+		state.sealedTurnId === null,
+	);
 
 	const cached = await cache.load(conversationId);
-	record("IndexedDB cache persisted the turn", cached.length === hist.chunks.length, `${cached.length} cached`);
+	record(
+		"IndexedDB cache persisted the turn",
+		cached.length === hist.chunks.length,
+		`${cached.length} cached`,
+	);
 
 	const committedText = selectMessages(state)
 		.filter((m) => m.role === "assistant")
