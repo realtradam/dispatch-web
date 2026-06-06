@@ -20,6 +20,9 @@ export interface ConversationCache {
 	 * Returns the evicted conversationIds.
 	 */
 	evictIfOverBudget(activeConversationId: string | null): Promise<readonly string[]>;
+
+	/** Delete all cached data for a single conversation (local forget). */
+	delete(conversationId: string): Promise<void>;
 }
 
 export interface ConversationCacheOptions {
@@ -66,6 +69,10 @@ export function createConversationCache(
 				await store.delete(id);
 			}
 			return toEvict;
+		},
+
+		async delete(conversationId) {
+			await store.delete(conversationId);
 		},
 	};
 }

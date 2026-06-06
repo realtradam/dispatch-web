@@ -28,8 +28,10 @@ export interface ChatStore {
 	readonly chunks: readonly RenderedChunk[];
 	readonly pendingSync: boolean;
 	readonly error: string | null;
+	readonly model: string | undefined;
 	handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
 	send(text: string): void;
+	setModel(model: string): void;
 	load(): Promise<void>;
 	dispose(): void;
 }
@@ -38,6 +40,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 	let transcript = $state<TranscriptState>(initialState());
 	let _pendingSync = $state(false);
 	let _error = $state<string | null>(null);
+	let _model = $state<string | undefined>(deps.model);
 	let disposed = false;
 
 	async function syncTail(): Promise<void> {
@@ -69,10 +72,19 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		get error(): string | null {
 			return _error;
 		},
+		get model(): string | undefined {
+			return _model;
+		},
 
 		handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void {
 			if (msg.type === "chat.error") {
+				if (msg.conversationId !== undefined && msg.conversationId !== deps.conversationId) {
+					return;
+				}
 				_error = msg.message;
+				return;
+			}
+			if (msg.event.conversationId !== deps.conversationId) {
 				return;
 			}
 			transcript = foldEvent(transcript, msg.event);
@@ -86,9 +98,13 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 				type: "chat.send",
 				conversationId: deps.conversationId,
 				message: text,
-				...(deps.model !== undefined ? { model: deps.model } : {}),
+				...(_model !== undefined ? { model: _model } : {}),
 			};
 			deps.transport.send(msg);
+		},
+
+		setModel(model: string): void {
+			_model = model;
 		},
 
 		async load(): Promise<void> {

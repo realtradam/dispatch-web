@@ -1,0 +1,74 @@
+export interface Tab {
+	readonly conversationId: string;
+	readonly model: string;
+	readonly title: string;
+}
+
+export interface TabsState {
+	readonly tabs: readonly Tab[];
+	readonly activeConversationId: string | null;
+}
+
+const DEFAULT_TITLE = "New chat";
+const DEFAULT_MAX_TITLE_LENGTH = 40;
+
+export function initialState(persisted?: TabsState): TabsState {
+	if (persisted !== undefined) return persisted;
+	return { tabs: [], activeConversationId: null };
+}
+
+export function newDraft(state: TabsState): TabsState {
+	return { ...state, activeConversationId: null };
+}
+
+export function createTab(state: TabsState, tab: Tab): TabsState {
+	const exists = state.tabs.some((t) => t.conversationId === tab.conversationId);
+	const tabs = exists ? state.tabs : [...state.tabs, tab];
+	return { tabs, activeConversationId: tab.conversationId };
+}
+
+export function selectTab(state: TabsState, conversationId: string): TabsState {
+	return { ...state, activeConversationId: conversationId };
+}
+
+export function closeTab(state: TabsState, conversationId: string): TabsState {
+	const idx = state.tabs.findIndex((t) => t.conversationId === conversationId);
+	if (idx === -1) return state;
+
+	const tabs = state.tabs.filter((t) => t.conversationId !== conversationId);
+
+	if (state.activeConversationId !== conversationId) {
+		return { tabs, activeConversationId: state.activeConversationId };
+	}
+
+	if (tabs.length === 0) {
+		return { tabs, activeConversationId: null };
+	}
+
+	// prefer previous tab, else next
+	const neighborIdx = idx > 0 ? idx - 1 : 0;
+	const neighbor = tabs[neighborIdx];
+	return { tabs, activeConversationId: neighbor?.conversationId ?? null };
+}
+
+export function setModel(state: TabsState, conversationId: string, model: string): TabsState {
+	const tabs = state.tabs.map((t) => (t.conversationId === conversationId ? { ...t, model } : t));
+	return { tabs, activeConversationId: state.activeConversationId };
+}
+
+export function setTitle(state: TabsState, conversationId: string, title: string): TabsState {
+	const tabs = state.tabs.map((t) => (t.conversationId === conversationId ? { ...t, title } : t));
+	return { tabs, activeConversationId: state.activeConversationId };
+}
+
+export function activeTab(state: TabsState): Tab | null {
+	if (state.activeConversationId === null) return null;
+	return state.tabs.find((t) => t.conversationId === state.activeConversationId) ?? null;
+}
+
+export function deriveTitle(message: string, max: number = DEFAULT_MAX_TITLE_LENGTH): string {
+	const trimmed = message.trim().replace(/\s+/g, " ");
+	if (trimmed.length === 0) return DEFAULT_TITLE;
+	if (trimmed.length <= max) return trimmed;
+	return `${trimmed.slice(0, max)}\u2026`;
+}
