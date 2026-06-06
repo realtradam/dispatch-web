@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import { SurfaceView } from "../features/surface-host";
+	import { ChatView, Composer } from "../features/chat";
 	import type { AppStore } from "./store.svelte";
 
 	let { store }: { store: AppStore } = $props();
@@ -11,6 +12,10 @@
 
 	function handleInvoke(msg: InvokeMessage) {
 		store.invoke(msg.surfaceId, msg.actionId, msg.payload);
+	}
+
+	function handleSend(text: string) {
+		store.chat.send(text);
 	}
 </script>
 
@@ -23,6 +28,19 @@
 			{store.lastError.message}
 		</div>
 	{/if}
+
+	{#if store.chat.error}
+		<div role="alert">
+			<strong>Chat error:</strong>
+			{store.chat.error}
+		</div>
+	{/if}
+
+	<section>
+		<h2>Chat</h2>
+		<ChatView chunks={store.chat.chunks} />
+		<Composer onSend={handleSend} />
+	</section>
 
 	<section>
 		<h2>Surfaces</h2>
