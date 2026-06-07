@@ -133,7 +133,7 @@ describe("ChatView", () => {
 		expect(screen.getByText("System context loaded")).toBeInTheDocument();
 	});
 
-	it("marks provisional chunks", () => {
+	it("renders provisional (in-flight) chunks without any dimming", () => {
 		const chunks: RenderedChunk[] = [
 			{
 				seq: null,
@@ -145,10 +145,9 @@ describe("ChatView", () => {
 
 		render(ChatView, { props: { chunks } });
 
-		// Assistant chunks are no longer in a bubble; the provisional marker now
-		// lives on the plain wrapper that directly contains the text.
+		// In-flight chunks render at full opacity (no faded "disabled" look).
 		const wrapper = screen.getByText("Streaming...").closest("div");
-		expect(wrapper).toHaveClass("opacity-50");
+		expect(wrapper).not.toHaveClass("opacity-50");
 	});
 
 	it("renders empty transcript", () => {
