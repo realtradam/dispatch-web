@@ -28,4 +28,11 @@ export interface RenderedChunk {
 	readonly role: Role;
 	readonly chunk: Chunk;
 	readonly provisional: boolean;
+	/**
+	 * True only for the single chunk currently being accumulated from live deltas
+	 * (the in-flight text/thinking the model is actively generating). Absent/false
+	 * once flushed or committed. Lets the UI show a live indicator (e.g. loading
+	 * dots on streaming thinking) and drop it the moment generation moves on.
+	 */
+	readonly streaming?: boolean;
 }

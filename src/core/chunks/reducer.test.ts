@@ -371,6 +371,21 @@ describe("selectChunks", () => {
 		expect(chunks[0]?.provisional).toBe(true);
 		expect(chunks[0]?.chunk).toEqual({ type: "text", text: "building..." });
 	});
+
+	it("marks ONLY the actively-accumulating chunk as streaming", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		// A flushed-but-still-provisional thinking chunk, then a live accumulating one.
+		s = foldEvent(s, reasoningDelta("t1", "first thought"));
+		s = foldEvent(s, toolCall("t1", "tc1", "bash", {})); // flushes the thinking
+		s = foldEvent(s, textDelta("t1", "now writing"));
+		const chunks = selectChunks(s);
+		const thinking = chunks.find((c) => c.chunk.type === "thinking");
+		const accumulating = chunks.find((c) => c.streaming === true);
+		expect(thinking?.streaming).toBeFalsy(); // flushed → not streaming
+		expect(accumulating?.chunk).toEqual({ type: "text", text: "now writing" });
+		expect(chunks.filter((c) => c.streaming === true)).toHaveLength(1);
+	});
 });
 
 describe("selectMessages", () => {
