@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import { ChatView, Composer, ModelSelector } from "../features/chat";
+	import { TabBar } from "../features/tabs";
 	import { SurfaceView } from "../features/surface-host";
 	import type { AppStore } from "./store.svelte";
 
@@ -42,40 +43,13 @@
 		</div>
 	{/if}
 
-	<div class="flex items-center gap-2 border-b border-base-300 px-4">
-		<div class="tabs tabs-border flex-1">
-			{#each store.tabs as tab (tab.conversationId)}
-				<div
-					class="tab"
-					class:tab-active={tab.conversationId === store.activeConversationId}
-					role="tab"
-					tabindex="0"
-					onclick={() => store.selectTab(tab.conversationId)}
-					onkeydown={(e) => { if (e.key === "Enter") store.selectTab(tab.conversationId); }}
-				>
-					<span class="max-w-[120px] truncate">{tab.title}</span>
-					<button
-						class="btn btn-ghost btn-xs ml-1"
-						aria-label="Close tab"
-						onclick={(e) => {
-							e.stopPropagation();
-							store.closeTab(tab.conversationId);
-						}}
-					>
-						&times;
-					</button>
-				</div>
-			{/each}
-			<button
-				class="tab"
-				class:tab-active={store.activeConversationId === null}
-				onclick={() => store.newDraft()}
-				aria-label="New chat"
-			>
-				+
-			</button>
-		</div>
-	</div>
+	<TabBar
+		tabs={store.tabs}
+		activeConversationId={store.activeConversationId}
+		onSelect={(id) => store.selectTab(id)}
+		onClose={(id) => store.closeTab(id)}
+		onNewDraft={() => store.newDraft()}
+	/>
 
 	<div class="flex flex-1 flex-col overflow-hidden">
 		<div class="flex items-center gap-2 px-4 py-2">
