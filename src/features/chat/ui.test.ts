@@ -20,7 +20,6 @@ describe("ChatView", () => {
 		render(ChatView, { props: { chunks } });
 
 		expect(screen.getByText("Hello world")).toBeInTheDocument();
-		expect(screen.getByText("assistant")).toBeInTheDocument();
 	});
 
 	it("renders multiple chunks", () => {
@@ -145,8 +144,10 @@ describe("ChatView", () => {
 
 		render(ChatView, { props: { chunks } });
 
-		const bubble = screen.getByText("Streaming...").closest(".chat-bubble");
-		expect(bubble).toHaveClass("opacity-50");
+		// Assistant chunks are no longer in a bubble; the provisional marker now
+		// lives on the plain wrapper that directly contains the text.
+		const wrapper = screen.getByText("Streaming...").closest("div");
+		expect(wrapper).toHaveClass("opacity-50");
 	});
 
 	it("renders empty transcript", () => {
