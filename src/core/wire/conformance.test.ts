@@ -1,5 +1,5 @@
 import type { ChatSendMessage, ConversationHistoryResponse } from "@dispatch/transport-contract";
-import type { AgentEvent, StoredChunk } from "@dispatch/wire";
+import type { AgentEvent, StepId, StoredChunk } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import {
 	assertAgentEventExhaustive,
@@ -36,6 +36,7 @@ describe("classifies every AgentEvent type", () => {
 			toolCallId: "tc1",
 			toolName: "read",
 			input: {},
+			stepId: "t1#0" as StepId,
 		},
 		{
 			type: "tool-result",
@@ -45,6 +46,7 @@ describe("classifies every AgentEvent type", () => {
 			toolName: "read",
 			content: "ok",
 			isError: false,
+			stepId: "t1#0" as StepId,
 		},
 		{
 			type: "tool-output",

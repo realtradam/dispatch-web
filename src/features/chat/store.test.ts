@@ -1,4 +1,4 @@
-import type { AgentEvent, StoredChunk } from "@dispatch/wire";
+import type { AgentEvent, StepId, StoredChunk } from "@dispatch/wire";
 import { describe, expect, it, vi } from "vitest";
 import { createChatStore } from "./store.svelte";
 import { createFakeCache, createFakeHistorySync, createFakeTransport } from "./test-helpers";
@@ -327,6 +327,7 @@ describe("createChatStore", () => {
 				toolCallId: "tc1",
 				toolName: "read_file",
 				input: { path: "/tmp/test.txt" },
+				stepId: "t1#0" as StepId,
 			}),
 		);
 		store.handleDelta(
@@ -338,6 +339,7 @@ describe("createChatStore", () => {
 				toolName: "read_file",
 				content: "file contents",
 				isError: false,
+				stepId: "t1#0" as StepId,
 			}),
 		);
 

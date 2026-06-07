@@ -1,3 +1,4 @@
+import type { StepId } from "@dispatch/wire";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
@@ -156,6 +157,61 @@ describe("ChatView", () => {
 		const log = screen.getByRole("log");
 		expect(log).toBeInTheDocument();
 		expect(log.children).toHaveLength(0);
+	});
+
+	it("groups batched tool calls (shared stepId) into one DaisyUI list", () => {
+		const chunks: RenderedChunk[] = [
+			{
+				seq: 1,
+				role: "assistant",
+				chunk: {
+					type: "tool-call",
+					toolCallId: "a",
+					toolName: "read_file",
+					input: { path: "/a" },
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
+			{
+				seq: 2,
+				role: "assistant",
+				chunk: {
+					type: "tool-call",
+					toolCallId: "b",
+					toolName: "list_dir",
+					input: { path: "/b" },
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
+			{
+				seq: 3,
+				role: "tool",
+				chunk: {
+					type: "tool-result",
+					toolCallId: "a",
+					toolName: "read_file",
+					content: "contents-of-a",
+					isError: false,
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
+		];
+
+		const { container } = render(ChatView, { props: { chunks } });
+
+		// One DaisyUI list with two rows (one per call), not separate cards.
+		const lists = container.querySelectorAll("ul.list");
+		expect(lists).toHaveLength(1);
+		expect(container.querySelectorAll("ul.list > li.list-row")).toHaveLength(2);
+
+		// Both call names + the available result are shown; the result is absorbed
+		// (no standalone tool-result card).
+		expect(screen.getByText("read_file")).toBeInTheDocument();
+		expect(screen.getByText("list_dir")).toBeInTheDocument();
+		expect(screen.getByText("contents-of-a")).toBeInTheDocument();
 	});
 
 	it("thinking <details> stays open across a streaming update", async () => {
