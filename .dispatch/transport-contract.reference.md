@@ -5,9 +5,15 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.1.0`. Regenerate whenever it changes.
-> Depends on `@dispatch/wire` (see `wire.reference.md`) + `@dispatch/ui-contract`
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.2.0`. Regenerate whenever it changes.
+> Depends on `@dispatch/wire@0.2.0` (see `wire.reference.md`) + `@dispatch/ui-contract`
 > (see `ui-contract.reference.md`).
+>
+> **0.2.0 change (step grouping):** no shape change HERE — this contract's own types are
+> identical. It only re-exports the bumped `@dispatch/wire`, whose `AgentEvent` tool variants
+> now carry a required `stepId` and whose tool `Chunk`s carry an optional `stepId`. The
+> `chat.delta` events streamed over WS and the `ConversationHistoryResponse.chunks` you already
+> consume therefore now carry the step grouping key (see `wire.reference.md`).
 
 ## Endpoints (backend, confirmed live — CORS wildcard `*`, HTTP port 24203, WS port 24205)
 

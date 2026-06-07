@@ -106,6 +106,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				toolCallId: event.toolCallId,
 				toolName: event.toolName,
 				input: event.input,
+				stepId: event.stepId,
 			};
 			return {
 				...state,
@@ -122,6 +123,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				toolName: event.toolName,
 				content: event.content,
 				isError: event.isError,
+				stepId: event.stepId,
 			};
 			return {
 				...state,

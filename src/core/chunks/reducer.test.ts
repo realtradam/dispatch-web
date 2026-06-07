@@ -1,4 +1,5 @@
 import type {
+	StepId,
 	StoredChunk,
 	TurnDoneEvent,
 	TurnErrorEvent,
@@ -39,6 +40,7 @@ const toolCall = (
 	toolCallId: string,
 	toolName: string,
 	input: unknown,
+	stepId = "s0",
 ): TurnToolCallEvent => ({
 	type: "tool-call",
 	conversationId: "c1",
@@ -46,6 +48,7 @@ const toolCall = (
 	toolCallId,
 	toolName,
 	input,
+	stepId: stepId as StepId,
 });
 
 const toolResult = (
@@ -53,6 +56,7 @@ const toolResult = (
 	toolCallId: string,
 	toolName: string,
 	content: string,
+	stepId = "s0",
 ): TurnToolResultEvent => ({
 	type: "tool-result",
 	conversationId: "c1",
@@ -61,6 +65,7 @@ const toolResult = (
 	toolName,
 	content,
 	isError: false,
+	stepId: stepId as StepId,
 });
 
 const usageEvent = (turnId: string, inputTokens: number, outputTokens: number): TurnUsageEvent => ({
@@ -161,15 +166,17 @@ describe("foldEvent — tool-call then tool-result", () => {
 	it("tool-call then tool-result render in order", () => {
 		let s = initialState();
 		s = foldEvent(s, turnStart("t1"));
-		s = foldEvent(s, toolCall("t1", "tc1", "bash", { cmd: "ls" }));
-		s = foldEvent(s, toolResult("t1", "tc1", "bash", "file.txt"));
+		s = foldEvent(s, toolCall("t1", "tc1", "bash", { cmd: "ls" }, "t1#0"));
+		s = foldEvent(s, toolResult("t1", "tc1", "bash", "file.txt", "t1#0"));
 		expect(s.provisional).toHaveLength(2);
 		expect(s.provisional[0]?.role).toBe("assistant");
+		// foldEvent copies the event's stepId onto the chunk (grouping key).
 		expect(s.provisional[0]?.chunk).toEqual({
 			type: "tool-call",
 			toolCallId: "tc1",
 			toolName: "bash",
 			input: { cmd: "ls" },
+			stepId: "t1#0",
 		});
 		expect(s.provisional[1]?.role).toBe("tool");
 		expect(s.provisional[1]?.chunk).toEqual({
@@ -178,6 +185,7 @@ describe("foldEvent — tool-call then tool-result", () => {
 			toolName: "bash",
 			content: "file.txt",
 			isError: false,
+			stepId: "t1#0",
 		});
 	});
 
