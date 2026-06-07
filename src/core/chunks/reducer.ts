@@ -148,6 +148,10 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 		case "usage":
 			return { ...state, latestUsage: event.usage };
 
+		case "step-complete":
+			// Timing metadata — no content chunk; handled by the telemetry reducer.
+			return state;
+
 		case "done": {
 			const provisional = flushAccumulating(state.provisional, state.accumulating);
 			return {

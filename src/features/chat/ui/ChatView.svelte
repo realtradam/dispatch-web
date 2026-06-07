@@ -1,16 +1,27 @@
 <script lang="ts">
 	import { groupRenderedChunks, type RenderedChunk } from "../index";
+	import type { TelemetryState } from "../../../core/telemetry";
+	import { stepMetrics, stepTps } from "../../../core/telemetry";
 
-	let { chunks }: { chunks: readonly RenderedChunk[] } = $props();
+	interface Props {
+		chunks: readonly RenderedChunk[];
+		telemetry: TelemetryState;
+		currentTurnId: string | null;
+	}
+
+	let { chunks, telemetry, currentTurnId }: Props = $props();
 
 	const groups = $derived(groupRenderedChunks(chunks));
 
-	// Stable per-row keys. Thinking blocks get an ordinal key (`think<n>`) that
-	// survives the provisional→committed (seq null → seq N) transition, so the
-	// collapse's open/close state is NOT lost when a turn seals. (App isolates
-	// these keys per conversation via {#key}.)
+	function formatMs(ms: number): string {
+		if (ms < 1000) return `${Math.round(ms)}ms`;
+		const s = ms / 1000;
+		return s < 60 ? `${s.toFixed(1)}s` : `${Math.floor(s / 60)}m${Math.round(s % 60)}s`;
+	}
+
 	const rows = $derived.by(() => {
 		let thinking = 0;
+		let stepIdx = 0;
 		return groups.map((group, i) => {
 			let key: string;
 			if (group.kind === "tool-batch") {
@@ -22,14 +33,17 @@
 			} else {
 				key = `p${i}`;
 			}
-			return { group, key };
+			const si = stepIdx;
+			if (group.kind === "tool-batch" || (group.kind === "single" && (group.chunk.chunk.type === "tool-call" || group.chunk.chunk.type === "tool-result"))) {
+				stepIdx++;
+			}
+			return { group, key, stepIdx: si };
 		});
 	});
 </script>
 
-{#snippet chunkRow(rendered: RenderedChunk)}
+{#snippet chunkRow(rendered: RenderedChunk, sIdx: number)}
 	{#if rendered.role === "user"}
-		<!-- User: a speech bubble, left-aligned -->
 		<div class="chat chat-start">
 			<div class="chat-bubble chat-bubble-primary">
 				{#if rendered.chunk.type === "text"}
@@ -38,9 +52,6 @@
 			</div>
 		</div>
 	{:else if rendered.chunk.type === "thinking"}
-		<!-- Thinking: a visible bubble (like tool cards), holding a checkbox collapse
-		     (no arrow icon, smooth open/close). Title reads "Thinking" + loading dots
-		     while generating, then "Thoughts" with no dots once complete. -->
 		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
 			<div class="chat-bubble w-full bg-transparent">
 				<div class="collapse w-full rounded-box bg-base-200 text-sm">
@@ -58,14 +69,18 @@
 			</div>
 		</div>
 	{:else if rendered.chunk.type === "tool-call" || rendered.chunk.type === "tool-result"}
-		<!-- Single tool call/result: a regular (non-speech) card. Nested in the
-		     chat-start grid via a transparent, padding-stripped chat-bubble shim so
-		     the card inherits the same left offset as the bubble bodies. -->
+		{@const step = currentTurnId ? stepMetrics(telemetry, currentTurnId, sIdx) : undefined}
+		{@const toolDur = step?.toolDurationMs}
 		<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
 			<div class="chat-bubble bg-transparent">
 				{#if rendered.chunk.type === "tool-call"}
 					<div class="w-fit max-w-full rounded-box bg-base-200 p-3 text-sm">
-						<strong>{rendered.chunk.toolName}</strong>
+						<div class="flex items-center gap-2">
+							<strong>{rendered.chunk.toolName}</strong>
+							{#if toolDur !== undefined && toolDur > 0}
+								<span class="badge badge-ghost badge-xs ml-auto">{formatMs(toolDur)}</span>
+							{/if}
+						</div>
 						<pre class="text-xs mt-1">{JSON.stringify(rendered.chunk.input, null, 2)}</pre>
 					</div>
 				{:else}
@@ -73,19 +88,43 @@
 						class="w-fit max-w-full rounded-box bg-base-200 p-3 text-sm"
 						class:text-error={rendered.chunk.isError}
 					>
-						<strong>{rendered.chunk.toolName}</strong>
+						<div class="flex items-center gap-2">
+							<strong>{rendered.chunk.toolName}</strong>
+							{#if toolDur !== undefined && toolDur > 0}
+								<span class="badge badge-ghost badge-xs ml-auto">{formatMs(toolDur)}</span>
+							{/if}
+						</div>
 						<pre class="text-xs mt-1">{rendered.chunk.content}</pre>
 					</div>
 				{/if}
 			</div>
 		</div>
 	{:else}
-		<!-- Assistant text / system / error: an INVISIBLE speech bubble — same
-		     chat-start grid as the user bubble, so it inherits identical left spacing. -->
+		{@const step = currentTurnId ? stepMetrics(telemetry, currentTurnId, sIdx) : undefined}
+		{@const tps = step ? stepTps(step) : undefined}
 		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl">
 			<div class="chat-bubble w-full bg-transparent">
 				{#if rendered.chunk.type === "text"}
-					<p>{rendered.chunk.text}</p>
+					<ul class="list rounded-box text-sm">
+						<li class="list-row">
+							<p>{rendered.chunk.text}</p>
+						</li>
+						{#if step && (step.genTotalMs !== undefined || tps !== undefined || step.usage?.outputTokens !== undefined)}
+							<li class="list-row">
+								{#if step.genTotalMs !== undefined}
+									<span class="badge badge-ghost badge-xs">{formatMs(step.genTotalMs)}</span>
+								{/if}
+								<span>·</span>
+								{#if tps !== undefined}
+									<span class="badge badge-ghost badge-xs">{Math.round(tps)} t/s</span>
+								{/if}
+								<span>·</span>
+								{#if step.usage?.outputTokens !== undefined}
+									<span class="badge badge-ghost badge-xs">{step.usage.outputTokens} tok</span>
+								{/if}
+							</li>
+						{/if}
+					</ul>
 				{:else if rendered.chunk.type === "error"}
 					<div class="text-error" role="alert">
 						{rendered.chunk.message}
@@ -102,20 +141,24 @@
 {/snippet}
 
 <div class="flex flex-col gap-2 p-4 pl-6" role="log" aria-live="polite">
-	{#each rows as { group, key } (key)}
+	{#each rows as { group, key, stepIdx } (key)}
 		{#if group.kind === "single"}
-			{@render chunkRow(group.chunk)}
+			{@render chunkRow(group.chunk, stepIdx)}
 		{:else}
-			<!-- Batched tool calls (one step): a single bubble holding a DaisyUI list,
-			     one row per call paired with its result. Same chat-start grid shim as
-			     the single tool card so it lines up with the other messages. -->
+			{@const step = currentTurnId ? stepMetrics(telemetry, currentTurnId, stepIdx) : undefined}
+			{@const toolDur = step?.toolDurationMs}
 			<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
 				<div class="chat-bubble bg-transparent">
 					<ul class="list w-fit max-w-full rounded-box bg-base-200 text-sm">
 						{#each group.entries as entry (entry.call.toolCallId)}
 							<li class="list-row">
 								<div>
-									<strong>{entry.call.toolName}</strong>
+									<div class="flex items-center gap-2">
+										<strong>{entry.call.toolName}</strong>
+										{#if toolDur !== undefined && toolDur > 0}
+											<span class="badge badge-ghost badge-xs ml-auto">{formatMs(toolDur)}</span>
+										{/if}
+									</div>
 									<pre class="text-xs mt-1">{JSON.stringify(entry.call.input, null, 2)}</pre>
 									{#if entry.result}
 										<pre
