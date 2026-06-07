@@ -61,8 +61,12 @@ the read — STOP and write the need in your report, then end.
 - **Strict TS:** respect `exactOptionalPropertyTypes` + `noUncheckedIndexedAccess`.
 
 ## Verify before finishing — YOUR UNIT IN ISOLATION
-Run, and paste the output into your report:
-- `bunx svelte-check --tsconfig ./tsconfig.json` → 0 errors
+Sibling units may be built IN PARALLEL, so do NOT judge yourself by the whole project.
+`svelte-check` is whole-project: if it reports errors in files OUTSIDE your unit's directory,
+that is concurrent work-in-progress — IGNORE it and ensure only YOUR files (plus any existing
+consumer you must not break) are error-free. The SCOPED checks below are your authoritative
+signals. Run them, and paste the output into your report:
+- `bunx svelte-check --tsconfig ./tsconfig.json` → 0 errors in YOUR files
 - `bunx vitest run src/<your-dir>` → all pass (count goes up)
 - `bunx biome check src/<your-dir>` → clean
 The orchestrator runs the authoritative full `typecheck`/`test`/`check`/`build`.
