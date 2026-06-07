@@ -145,4 +145,34 @@ describe("TabBar", () => {
 		const newChat = screen.getByRole("button", { name: "New chat" });
 		expect(newChat).toHaveClass("sticky");
 	});
+
+	it("shows visible 'New Chat' text when activeConversationId is null", () => {
+		render(TabBar, {
+			props: {
+				tabs: sampleTabs,
+				activeConversationId: null,
+				onSelect: vi.fn(),
+				onClose: vi.fn(),
+				onNewDraft: vi.fn(),
+			},
+		});
+
+		const newChat = screen.getByRole("button", { name: "New chat" });
+		expect(newChat).toHaveTextContent("New Chat");
+	});
+
+	it("does not show 'New Chat' text when a real tab is active", () => {
+		render(TabBar, {
+			props: {
+				tabs: sampleTabs,
+				activeConversationId: "c1",
+				onSelect: vi.fn(),
+				onClose: vi.fn(),
+				onNewDraft: vi.fn(),
+			},
+		});
+
+		const newChat = screen.getByRole("button", { name: "New chat" });
+		expect(newChat).not.toHaveTextContent("New Chat");
+	});
 });
