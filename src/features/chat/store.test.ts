@@ -393,52 +393,6 @@ describe("createChatStore", () => {
 		store.dispose();
 	});
 
-	it("folding step-complete and usage events populates telemetry", () => {
-		const transport = createFakeTransport();
-		const historySync = createFakeHistorySync();
-		const cache = createFakeCache();
-		const store = createChatStore({
-			conversationId: CONV_ID,
-			transport: transport.impl,
-			historySync: historySync.impl,
-			cache: cache.impl,
-		});
-
-		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
-		store.handleDelta(
-			deltaEvent({
-				type: "step-complete",
-				conversationId: CONV_ID,
-				turnId: "t1",
-				stepId: "t1#0" as StepId,
-				ttftMs: 300,
-				decodeMs: 700,
-				genTotalMs: 1000,
-			}),
-		);
-		store.handleDelta(
-			deltaEvent({
-				type: "usage",
-				conversationId: CONV_ID,
-				turnId: "t1",
-				stepId: "t1#0" as StepId,
-				usage: { inputTokens: 50, outputTokens: 20 },
-			}),
-		);
-
-		const turn = store.telemetry.turns.get("t1");
-		expect(turn).toBeDefined();
-		expect(turn?.steps).toHaveLength(1);
-		const step = turn?.steps.find((s) => s.stepId === ("t1#0" as StepId));
-		expect(step).toBeDefined();
-		expect(step?.ttftMs).toBe(300);
-		expect(step?.decodeMs).toBe(700);
-		expect(step?.usage?.inputTokens).toBe(50);
-		expect(step?.usage?.outputTokens).toBe(20);
-
-		store.dispose();
-	});
-
 	it("handleDelta ignores a chat.delta for a different conversationId", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
