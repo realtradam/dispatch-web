@@ -4,14 +4,13 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.3.0`. Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.2.0`. Regenerate whenever `@dispatch/wire` changes.
 >
-> **0.3.0 change (live metrics — see `frontend-metrics-handoff.md` for the full guide):** new
-> `TurnStepCompleteEvent` (`type:"step-complete"`) in the `AgentEvent` union with per-step
-> `ttftMs?`/`decodeMs?`/`genTotalMs?`; `TurnUsageEvent` gained `stepId?`; `TurnToolResultEvent`
-> gained `durationMs?` (tool exec time); `TurnDoneEvent` gained `durationMs?` (turn wall-clock) +
-> `usage?` (turn total). All additive/optional — existing handling is unaffected. (0.2.0 added
-> `stepId` for tool-call grouping.)
+> **0.2.0 change (step grouping):** `ToolCallChunk`/`ToolResultChunk` gained an OPTIONAL
+> `stepId?: StepId`; `TurnToolCallEvent`/`TurnToolResultEvent` gained a REQUIRED `stepId: StepId`.
+> A `StepId` is the per-step grouping key for batched/parallel tool calls — group by equality.
+> Live: read `event.stepId`. Replay: read `storedChunk.chunk.stepId` (NOT the envelope; absent on
+> pre-0.2.0 rows / non-tool chunks — tolerate absence). `StoredChunk` envelope is UNCHANGED.
 
 ```ts
 /**
@@ -76,7 +75,17 @@ export interface ToolCallChunk {
 	readonly toolCallId: string;
 	readonly toolName: string;
 	readonly input: unknown;
-	/** Step grouping key (generation provenance). Optional — tolerate absence. */
+	/**
+	 * The step that produced this call — generation provenance stamped by the
+	 * runtime when the model emits the call (NOT storage metadata like `seq`,
+	 * which is why it lives on the chunk and travels with it through persistence
+	 * and replay). Tool calls a model batches together in one step share the same
+	 * `stepId`: the grouping key for rendering a parallel batch as one unit, and
+	 * equal to the `stepId` on the matching `tool-call` AgentEvent. Optional:
+	 * absent on chunks reconstructed outside a turn and on rows persisted before
+	 * this field existed, so a consumer must tolerate its absence (render
+	 * ungrouped).
+	 */
 	readonly stepId?: StepId;
 }
 
@@ -91,7 +100,14 @@ export interface ToolResultChunk {
 	readonly toolName: string;
 	readonly content: string;
 	readonly isError: boolean;
-	/** Step grouping key — equals the originating call's. Optional. */
+	/**
+	 * The step that produced the originating call — equal to the `stepId` on the
+	 * matching `tool-call` chunk (same `toolCallId`) and on the `tool-result`
+	 * AgentEvent, so a consumer groups a step's calls with their results.
+	 * Generation provenance, not storage metadata (see `ToolCallChunk.stepId`).
+	 * Optional for the same reasons; `reconcile` copies it from the originating
+	 * call onto a synthesized (interrupted) result.
+	 */
 	readonly stepId?: StepId;
 }
 
@@ -122,10 +138,16 @@ export interface ChatMessage {
 }
 
 /**
- * A persisted chunk plus its sync metadata: `{ seq, role, chunk }`. `seq` is the
- * per-conversation sync cursor (envelope); a tool chunk's `stepId` rides on
- * `chunk` (generation provenance). NOTE: usage/timing metrics are NOT persisted —
- * they exist only on the live stream (see `frontend-metrics-handoff.md`).
+ * A persisted chunk plus its sync metadata. The append-only conversation log
+ * stamps every chunk with a monotonic, gap-free, per-conversation `seq` (the
+ * sync cursor, assigned in append order) and records the `role` of the message
+ * it belongs to. This makes a flat seq-ordered stream both incrementally
+ * syncable ("give me chunks after seq N") and regroupable into messages by the
+ * client. `chunk` is the content unit — `Chunk` carries no storage/sync cursor
+ * (`seq` lives here on the envelope, not on the chunk, since it is assigned by
+ * the store and the provider has no use for it). A chunk MAY still carry
+ * generation provenance assigned at production time (e.g. a tool chunk's
+ * `stepId`), which is intrinsic to the content and so travels with it.
  */
 export interface StoredChunk {
 	readonly seq: number;
@@ -161,7 +183,6 @@ export type AgentEvent =
 	| TurnToolResultEvent
 	| TurnToolOutputEvent
 	| TurnUsageEvent
-	| TurnStepCompleteEvent
 	| TurnErrorEvent
 	| TurnDoneEvent
 	| TurnSealedEvent;
@@ -201,7 +222,13 @@ export interface TurnToolCallEvent {
 	readonly type: "tool-call";
 	readonly conversationId: string;
 	readonly turnId: string;
-	/** Step grouping key (matches the tool-result event + persisted chunk). */
+	/**
+	 * The step that produced this call. Tool calls a model batches together in
+	 * one step share the same `stepId` — the grouping key for rendering a
+	 * parallel batch as one unit. Matches the `stepId` on the matching
+	 * `tool-result` event and on the persisted tool chunk
+	 * (`StoredChunk.chunk.stepId`).
+	 */
 	readonly stepId: StepId;
 	readonly toolCallId: string;
 	readonly toolName: string;
@@ -213,18 +240,17 @@ export interface TurnToolResultEvent {
 	readonly type: "tool-result";
 	readonly conversationId: string;
 	readonly turnId: string;
-	/** Step grouping key — equals the matching tool-call's. */
+	/**
+	 * The step that produced the originating call. Equal to the `stepId` on the
+	 * matching `tool-call` event (same `toolCallId`) and on the persisted tool
+	 * chunk (`StoredChunk.chunk.stepId`), so a client groups a step's calls with
+	 * their results.
+	 */
 	readonly stepId: StepId;
 	readonly toolCallId: string;
 	readonly toolName: string;
 	readonly content: string;
 	readonly isError: boolean;
-	/**
-	 * How long the tool took to execute (dispatch → result), in milliseconds —
-	 * the backend's authoritative execution time, distinct from any client-side
-	 * wall-clock. Optional: present only when the runtime was given a clock.
-	 */
-	readonly durationMs?: number;
 }
 
 /** Streaming output from a tool execution (e.g. shell stdout/stderr). */
@@ -242,40 +268,7 @@ export interface TurnUsageEvent {
 	readonly type: "usage";
 	readonly conversationId: string;
 	readonly turnId: string;
-	/**
-	 * The step this usage report belongs to, so a consumer can attribute tokens
-	 * per step (and join with the matching `step-complete` timing by `stepId`).
-	 * Optional: absent when the runtime had no step context.
-	 */
-	readonly stepId?: StepId;
 	readonly usage: Usage;
-}
-
-/**
- * A step (one LLM round-trip) has completed — the authoritative per-step metrics
- * packet, emitted once at the step's end (after the generation stream finishes),
- * so its timing is final (unlike `usage`, which may arrive mid-stream). Carries
- * the step's generation timing; join to the step's tokens via `stepId` on the
- * `usage` event. All timing fields are optional: present only when the runtime
- * was given a clock, and `ttftMs`/`decodeMs` additionally require that a first
- * content token (text or reasoning) was observed this step.
- */
-export interface TurnStepCompleteEvent {
-	readonly type: "step-complete";
-	readonly conversationId: string;
-	readonly turnId: string;
-	readonly stepId: StepId;
-	/** Time to first token: stream start → first text/reasoning delta. */
-	readonly ttftMs?: number;
-	/** Decode time: first token → stream end (generation total − TTFT). */
-	readonly decodeMs?: number;
-	/**
-	 * Total generation time for the step: stream start → stream end. Present
-	 * whenever a clock was available, even if no first token was seen (then
-	 * `ttftMs`/`decodeMs` are absent). When a first token was seen,
-	 * `genTotalMs === ttftMs + decodeMs`.
-	 */
-	readonly genTotalMs?: number;
 }
 
 /** An error occurred during the turn. */
@@ -293,16 +286,6 @@ export interface TurnDoneEvent {
 	readonly conversationId: string;
 	readonly turnId: string;
 	readonly reason: string;
-	/**
-	 * Total wall-clock duration of the turn (turn start → turn end), in
-	 * milliseconds. Optional: present only when the runtime was given a clock.
-	 */
-	readonly durationMs?: number;
-	/**
-	 * Aggregate token usage across all steps in the turn — a convenience total so
-	 * a consumer need not sum the per-step `usage` events. Optional.
-	 */
-	readonly usage?: Usage;
 }
 
 /**

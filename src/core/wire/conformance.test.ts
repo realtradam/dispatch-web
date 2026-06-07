@@ -62,15 +62,6 @@ describe("classifies every AgentEvent type", () => {
 			turnId: "t1",
 			usage: { inputTokens: 10, outputTokens: 20 },
 		},
-		{
-			type: "step-complete",
-			conversationId: "c1",
-			turnId: "t1",
-			stepId: "t1#0" as StepId,
-			ttftMs: 300,
-			decodeMs: 700,
-			genTotalMs: 1000,
-		},
 		{ type: "error", conversationId: "c1", turnId: "t1", message: "oops" },
 		{ type: "done", conversationId: "c1", turnId: "t1", reason: "complete" },
 		{ type: "turn-sealed", conversationId: "c1", turnId: "t1" },
@@ -87,15 +78,14 @@ describe("classifies every AgentEvent type", () => {
 			"tool-result",
 			"tool-output",
 			"usage",
-			"step-complete",
 			"error",
 			"done",
 			"turn-sealed",
 		]);
 	});
 
-	it("covers all 12 AgentEvent variants", () => {
-		expect(samples).toHaveLength(12);
+	it("covers all 11 AgentEvent variants", () => {
+		expect(samples).toHaveLength(11);
 	});
 });
 

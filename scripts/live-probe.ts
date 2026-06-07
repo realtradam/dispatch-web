@@ -43,13 +43,6 @@ import {
 	selectMessages,
 	type TranscriptState,
 } from "../src/core/chunks/index.ts";
-import {
-	foldMetricEvent,
-	stepMetrics,
-	type TelemetryState,
-	initialState as telemetryInitialState,
-	turnMetrics,
-} from "../src/core/telemetry/index.ts";
 import { createConversationCache } from "../src/features/conversation-cache/index.ts";
 
 const WS_URL = process.env.PROBE_WS ?? "ws://localhost:24205";
@@ -94,15 +87,8 @@ async function runTurn(
 	socket: Socket,
 	conversationId: string,
 	prompt: string,
-): Promise<{
-	state: TranscriptState;
-	telemetry: TelemetryState;
-	deltas: number;
-	sealed: boolean;
-	error: string | null;
-}> {
+): Promise<{ state: TranscriptState; deltas: number; sealed: boolean; error: string | null }> {
 	let state = initialState();
-	let telemetry = telemetryInitialState();
 	let deltas = 0;
 	let sealed = false;
 	let error: string | null = null;
@@ -116,7 +102,6 @@ async function runTurn(
 		}
 		deltas++;
 		state = foldEvent(state, msg.event);
-		telemetry = foldMetricEvent(telemetry, msg.event);
 		if (msg.event.type === "turn-sealed") {
 			sealed = true;
 			done.resolve();
@@ -128,7 +113,7 @@ async function runTurn(
 	await done.promise;
 	clearTimeout(timeout);
 	handlers.delete(conversationId);
-	return { state, telemetry, deltas, sealed, error };
+	return { state, deltas, sealed, error };
 }
 
 function toolChunksOf(state: TranscriptState) {
@@ -193,70 +178,12 @@ async function main() {
 		.join("");
 	record("turn 1 committed transcript has assistant text", committedText.length > 0);
 
-	// ─── Turn 1 telemetry: verify step metrics populated ───────────────────────
-	const t1Turn = turnMetrics(t1.telemetry, textConv);
-	const t1StepCount = t1Turn?.steps.length ?? 0;
-	record("turn 1 telemetry accumulated steps", t1StepCount > 0, `${t1StepCount} step(s)`);
-	if (t1StepCount > 0) {
-		const s0 = stepMetrics(t1.telemetry, textConv, 0);
-		const hasTiming = s0?.genTotalMs !== undefined || s0?.ttftMs !== undefined;
-		if (hasTiming) {
-			record(
-				"turn 1 step 0 has timing metrics",
-				true,
-				`ttftMs=${s0?.ttftMs ?? "–"} decodeMs=${s0?.decodeMs ?? "–"} genTotalMs=${s0?.genTotalMs ?? "–"}`,
-			);
-		} else {
-			note(
-				"turn 1 step 0 has no timing (backend may not have a clock) — telemetry path verified but no timing to assert",
-			);
-		}
-		const hasTokens = s0?.usage?.outputTokens !== undefined;
-		if (hasTokens) {
-			record(
-				"turn 1 step 0 has token usage",
-				true,
-				`in=${s0?.usage?.inputTokens ?? "–"} out=${s0?.usage?.outputTokens ?? "–"}`,
-			);
-		} else {
-			note(
-				"turn 1 step 0 has no usage (stepId may not have been on the usage event) — telemetry path verified",
-			);
-		}
-	}
-	const t1Done = t1Turn?.wallMs;
-	if (t1Done !== undefined) {
-		record("turn 1 done event recorded wall-clock", true, `${t1Done}ms`);
-	} else {
-		note("turn 1 done.durationMs absent (backend clock unavailable)");
-	}
-
 	// ─── Turn 2: tool-call batching (wire@0.2.0 stepId) ─────────────────────────
 	console.log(`\n[live-probe] TURN 2 (tools): "${TOOL_PROMPT}"`);
 	const toolConv = crypto.randomUUID();
 	const t2 = await runTurn(socket, toolConv, TOOL_PROMPT);
 	if (t2.error !== null) record("turn 2 had no chat.error", false, t2.error);
 	record("turn 2 reached turn-sealed", t2.sealed);
-
-	// ─── Turn 2 telemetry: verify step + tool metrics ──────────────────────────
-	const t2Turn = turnMetrics(t2.telemetry, toolConv);
-	const t2StepCount = t2Turn?.steps.length ?? 0;
-	record("turn 2 telemetry accumulated steps", t2StepCount > 0, `${t2StepCount} step(s)`);
-	if (t2StepCount > 0) {
-		const s0 = stepMetrics(t2.telemetry, toolConv, 0);
-		if (s0?.toolDurationMs !== undefined && s0.toolDurationMs > 0) {
-			record("turn 2 step 0 has tool execution time", true, `toolDurationMs=${s0.toolDurationMs}`);
-		} else {
-			note("turn 2 step 0 has no toolDurationMs (tool-result.durationMs may be absent)");
-		}
-		if (s0?.genTotalMs !== undefined) {
-			record("turn 2 step 0 has generation timing", true, `genTotalMs=${s0.genTotalMs}`);
-		}
-	}
-	const t2Done = t2Turn?.wallMs;
-	if (t2Done !== undefined) {
-		record("turn 2 done event recorded wall-clock", true, `${t2Done}ms`);
-	}
 
 	const liveTool = toolChunksOf(t2.state);
 	const liveCalls = liveTool.filter((c) => c.chunk.type === "tool-call");

@@ -13,8 +13,6 @@ import {
 	selectChunks,
 	selectMessages,
 } from "../../core/chunks";
-import type { TelemetryState } from "../../core/telemetry";
-import { foldMetricEvent, initialState as telemetryInitialState } from "../../core/telemetry";
 import type { ConversationCache } from "../conversation-cache";
 import type { ChatTransport, HistorySync } from "./ports";
 
@@ -32,8 +30,6 @@ export interface ChatStore {
 	readonly pendingSync: boolean;
 	readonly error: string | null;
 	readonly model: string | undefined;
-	readonly telemetry: TelemetryState;
-	readonly currentTurnId: string | null;
 	handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
 	send(text: string): void;
 	setModel(model: string): void;
@@ -46,7 +42,6 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 	let _pendingSync = $state(false);
 	let _error = $state<string | null>(null);
 	let _model = $state<string | undefined>(deps.model);
-	let telemetry = $state<TelemetryState>(telemetryInitialState());
 	let disposed = false;
 
 	async function syncTail(): Promise<void> {
@@ -81,12 +76,6 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		get model(): string | undefined {
 			return _model;
 		},
-		get telemetry(): TelemetryState {
-			return telemetry;
-		},
-		get currentTurnId(): string | null {
-			return transcript.currentTurnId;
-		},
 
 		handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void {
 			if (msg.type === "chat.error") {
@@ -100,7 +89,6 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 				return;
 			}
 			transcript = foldEvent(transcript, msg.event);
-			telemetry = foldMetricEvent(telemetry, msg.event);
 			if (transcript.sealedTurnId !== null) {
 				void syncTail();
 			}
