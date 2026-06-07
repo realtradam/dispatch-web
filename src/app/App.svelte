@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { InvokeMessage } from "@dispatch/ui-contract";
-	import { ChatView, Composer, ModelSelector } from "../features/chat";
+	import { ChatView, Composer, ModelSelector, TurnSummary } from "../features/chat";
 	import { TabBar } from "../features/tabs";
 	import { SurfaceView } from "../features/surface-host";
 	import type { AppStore } from "./store.svelte";
@@ -62,7 +62,15 @@
 
 		<div class="flex-1 overflow-y-auto">
 			{#key store.activeConversationId}
-				<ChatView chunks={store.activeChat.chunks} />
+				<ChatView
+					chunks={store.activeChat.chunks}
+					telemetry={store.activeChat.telemetry}
+					currentTurnId={store.activeChat.currentTurnId}
+				/>
+				<TurnSummary
+					telemetry={store.activeChat.telemetry}
+					turnId={store.activeChat.currentTurnId}
+				/>
 			{/key}
 		</div>
 

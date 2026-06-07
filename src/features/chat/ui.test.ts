@@ -3,9 +3,15 @@ import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RenderedChunk } from "../../core/chunks";
+import type { TelemetryState } from "../../core/telemetry";
+import { initialState } from "../../core/telemetry";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
 import ModelSelector from "./ui/ModelSelector.svelte";
+import TurnSummary from "./ui/TurnSummary.svelte";
+
+const emptyTelemetry = initialState();
+const noTurnId = null;
 
 describe("ChatView", () => {
 	it("renders a message's text chunk", () => {
@@ -18,7 +24,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		expect(screen.getByText("Hello world")).toBeInTheDocument();
 	});
@@ -34,7 +40,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		expect(screen.getByText("Hi there")).toBeInTheDocument();
 		expect(screen.getByText("Hello!")).toBeInTheDocument();
@@ -55,7 +61,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		expect(screen.getByText("read_file")).toBeInTheDocument();
 		const pre = screen.getByText((content, element) => {
@@ -80,7 +86,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		expect(screen.getByText("read_file")).toBeInTheDocument();
 		expect(screen.getByText("file contents here")).toBeInTheDocument();
@@ -96,7 +102,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		const alert = screen.getByRole("alert");
 		expect(alert).toHaveTextContent("Something failed");
@@ -112,7 +118,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		expect(screen.getByText("Rate limited")).toBeInTheDocument();
 		expect(screen.getByText("[RATE_LIMIT]")).toBeInTheDocument();
@@ -128,7 +134,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		expect(screen.getByText("System context loaded")).toBeInTheDocument();
 	});
@@ -143,7 +149,7 @@ describe("ChatView", () => {
 			},
 		];
 
-		render(ChatView, { props: { chunks } });
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		// In-flight chunks render at full opacity (no faded "disabled" look).
 		const wrapper = screen.getByText("Streaming...").closest("div");
@@ -151,7 +157,7 @@ describe("ChatView", () => {
 	});
 
 	it("renders empty transcript", () => {
-		render(ChatView, { props: { chunks: [] } });
+		render(ChatView, { props: { chunks: [], telemetry: emptyTelemetry, currentTurnId: noTurnId } });
 
 		const log = screen.getByRole("log");
 		expect(log).toBeInTheDocument();
@@ -199,7 +205,9 @@ describe("ChatView", () => {
 			},
 		];
 
-		const { container } = render(ChatView, { props: { chunks } });
+		const { container } = render(ChatView, {
+			props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId },
+		});
 
 		// One DaisyUI list with two rows (one per call), not separate cards.
 		const lists = container.querySelectorAll("ul.list");
@@ -224,7 +232,9 @@ describe("ChatView", () => {
 			},
 		];
 
-		const { container } = render(ChatView, { props: { chunks } });
+		const { container } = render(ChatView, {
+			props: { chunks, telemetry: emptyTelemetry, currentTurnId: noTurnId },
+		});
 
 		const collapse = container.querySelector(".collapse");
 		expect(collapse).not.toBeNull();
@@ -247,7 +257,9 @@ describe("ChatView", () => {
 			},
 		];
 
-		const { container, rerender } = render(ChatView, { props: { chunks: streaming } });
+		const { container, rerender } = render(ChatView, {
+			props: { chunks: streaming, telemetry: emptyTelemetry, currentTurnId: noTurnId },
+		});
 
 		// Streaming: "Thinking" + loading dots.
 		expect(screen.getByText("Thinking")).toBeInTheDocument();
@@ -269,6 +281,8 @@ describe("ChatView", () => {
 					provisional: false,
 				},
 			],
+			telemetry: emptyTelemetry,
+			currentTurnId: noTurnId,
 		});
 
 		// Completed: "Thoughts", no dots — and the open state survived the transition.
@@ -277,6 +291,118 @@ describe("ChatView", () => {
 		expect(container.querySelector(".loading")).toBeNull();
 		expect(screen.getByRole("checkbox", { name: "Toggle thoughts" })).toBeChecked();
 		expect(container).toHaveTextContent("hmm, all done");
+	});
+
+	it("assistant text shows step metrics footer when step-complete data is available", () => {
+		const chunks: RenderedChunk[] = [
+			{
+				seq: 1,
+				role: "assistant",
+				chunk: { type: "text", text: "Here is my answer" },
+				provisional: false,
+			},
+		];
+
+		const telemetry: TelemetryState = {
+			turns: new Map([
+				[
+					"turn-1",
+					{
+						wallMs: 2500,
+						steps: [
+							{
+								stepId: "turn-1#0" as StepId,
+								genTotalMs: 1200,
+								decodeMs: 1000,
+								usage: { inputTokens: 100, outputTokens: 86 },
+							},
+						],
+					},
+				],
+			]),
+		};
+
+		render(ChatView, { props: { chunks, telemetry, currentTurnId: "turn-1" } });
+
+		expect(screen.getByText("Here is my answer")).toBeInTheDocument();
+		expect(screen.getByText("1.2s")).toBeInTheDocument();
+		expect(screen.getByText("86 t/s")).toBeInTheDocument();
+		expect(screen.getByText("86 tok")).toBeInTheDocument();
+	});
+
+	it("does not show metrics footer when no step data exists", () => {
+		const chunks: RenderedChunk[] = [
+			{
+				seq: 1,
+				role: "assistant",
+				chunk: { type: "text", text: "Still streaming" },
+				provisional: true,
+			},
+		];
+
+		render(ChatView, { props: { chunks, telemetry: emptyTelemetry, currentTurnId: "turn-1" } });
+
+		expect(screen.getByText("Still streaming")).toBeInTheDocument();
+		expect(screen.queryByText("t/s")).toBeNull();
+		expect(screen.queryByText("tok")).toBeNull();
+	});
+});
+
+describe("TurnSummary", () => {
+	it("renders turn stats when telemetry has data", () => {
+		const telemetry: TelemetryState = {
+			turns: new Map([
+				[
+					"turn-1",
+					{
+						wallMs: 4200,
+						steps: [
+							{
+								stepId: "turn-1#0" as StepId,
+								genTotalMs: 2000,
+								decodeMs: 1500,
+								usage: { inputTokens: 500, outputTokens: 300 },
+							},
+							{
+								stepId: "turn-1#1" as StepId,
+								genTotalMs: 1800,
+								decodeMs: 1200,
+								usage: { inputTokens: 600, outputTokens: 200 },
+							},
+						],
+					},
+				],
+			]),
+		};
+
+		render(TurnSummary, { props: { telemetry, turnId: "turn-1" } });
+
+		expect(screen.getByText("Turn")).toBeInTheDocument();
+		expect(screen.getByText("4.2s")).toBeInTheDocument();
+		expect(screen.getByText("Tokens")).toBeInTheDocument();
+		expect(screen.getByText("1,600")).toBeInTheDocument();
+		expect(screen.getByText("Output")).toBeInTheDocument();
+		expect(screen.getByText("500")).toBeInTheDocument();
+		expect(screen.getByText("Input")).toBeInTheDocument();
+		expect(screen.getByText("1,100")).toBeInTheDocument();
+		expect(screen.getByText("Steps")).toBeInTheDocument();
+		expect(screen.getByText("2")).toBeInTheDocument();
+		expect(screen.getByText("TPS")).toBeInTheDocument();
+		expect(screen.getByText("185 t/s")).toBeInTheDocument();
+	});
+
+	it("renders nothing when turnId is null", () => {
+		const { container } = render(TurnSummary, {
+			props: { telemetry: emptyTelemetry, turnId: null },
+		});
+		expect(container.querySelector(".stats")).toBeNull();
+	});
+
+	it("renders nothing when turn metrics not found", () => {
+		const { container } = render(TurnSummary, {
+			props: { telemetry: emptyTelemetry, turnId: "nonexistent" },
+		});
+		expect(container.querySelector(".stats")).toBeNull();
 	});
 });
 
