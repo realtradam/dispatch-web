@@ -10,7 +10,7 @@
 	{#if rendered.role === "user"}
 		<!-- User: a speech bubble, left-aligned -->
 		<div class="chat chat-start">
-			<div class="chat-bubble chat-bubble-primary" class:opacity-50={rendered.provisional}>
+			<div class="chat-bubble chat-bubble-primary">
 				{#if rendered.chunk.type === "text"}
 					<p>{rendered.chunk.text}</p>
 				{/if}
@@ -21,7 +21,7 @@
 		     chat-start grid via a transparent, padding-stripped chat-bubble shim so
 		     the card inherits the same left offset as the bubble bodies. -->
 		<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
-			<div class="chat-bubble bg-transparent" class:opacity-50={rendered.provisional}>
+			<div class="chat-bubble bg-transparent">
 				{#if rendered.chunk.type === "tool-call"}
 					<div class="w-fit max-w-full rounded-box bg-base-200 p-3 text-sm">
 						<strong>{rendered.chunk.toolName}</strong>
@@ -42,7 +42,7 @@
 		<!-- Assistant / system / error: an INVISIBLE speech bubble — same chat-start
 		     grid as the user bubble, so it inherits identical left spacing. -->
 		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl">
-			<div class="chat-bubble w-full bg-transparent" class:opacity-50={rendered.provisional}>
+			<div class="chat-bubble w-full bg-transparent">
 				{#if rendered.chunk.type === "text"}
 					<p>{rendered.chunk.text}</p>
 				{:else if rendered.chunk.type === "thinking"}
@@ -74,7 +74,7 @@
 			     one row per call paired with its result. Same chat-start grid shim as
 			     the single tool card so it lines up with the other messages. -->
 			<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
-				<div class="chat-bubble bg-transparent" class:opacity-50={group.provisional}>
+				<div class="chat-bubble bg-transparent">
 					<ul class="list w-fit max-w-full rounded-box bg-base-200 text-sm">
 						{#each group.entries as entry (entry.call.toolCallId)}
 							<li class="list-row">
