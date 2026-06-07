@@ -66,6 +66,26 @@ export function activeTab(state: TabsState): Tab | null {
 	return state.tabs.find((t) => t.conversationId === state.activeConversationId) ?? null;
 }
 
+export interface ScrollMetrics {
+	readonly scrollLeft: number;
+	readonly clientWidth: number;
+	readonly scrollWidth: number;
+}
+
+const STUCK_EPSILON = 1;
+
+/**
+ * True when a right-pinned sticky element is floating over scrolled content — the
+ * strip overflows horizontally AND is not scrolled fully to the right. When it is
+ * at rest (no overflow, or scrolled to the end so it sits at its natural position)
+ * this returns false. Pure: layout measurements in, boolean out.
+ */
+export function isStuckToEnd(m: ScrollMetrics): boolean {
+	const overflows = m.scrollWidth > m.clientWidth + STUCK_EPSILON;
+	const notAtEnd = m.scrollLeft + m.clientWidth < m.scrollWidth - STUCK_EPSILON;
+	return overflows && notAtEnd;
+}
+
 export function deriveTitle(message: string, max: number = DEFAULT_MAX_TITLE_LENGTH): string {
 	const trimmed = message.trim().replace(/\s+/g, " ");
 	if (trimmed.length === 0) return DEFAULT_TITLE;
