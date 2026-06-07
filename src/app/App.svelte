@@ -61,7 +61,9 @@
 		</div>
 
 		<div class="flex-1 overflow-y-auto">
-			<ChatView chunks={store.activeChat.chunks} />
+			{#key store.activeConversationId}
+				<ChatView chunks={store.activeChat.chunks} />
+			{/key}
 		</div>
 
 		<Composer onSend={handleSend} />

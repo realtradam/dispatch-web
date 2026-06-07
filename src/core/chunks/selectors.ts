@@ -18,7 +18,7 @@ export function selectChunks(state: TranscriptState): readonly RenderedChunk[] {
 			state.accumulating.kind === "text"
 				? { type: "text", text: state.accumulating.text }
 				: { type: "thinking", text: state.accumulating.text };
-		result.push({ seq: null, role: "assistant", chunk, provisional: true });
+		result.push({ seq: null, role: "assistant", chunk, provisional: true, streaming: true });
 	}
 	return result;
 }

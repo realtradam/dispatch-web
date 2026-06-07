@@ -4,6 +4,27 @@
 	let { chunks }: { chunks: readonly RenderedChunk[] } = $props();
 
 	const groups = $derived(groupRenderedChunks(chunks));
+
+	// Stable per-row keys. Thinking blocks get an ordinal key (`think<n>`) that
+	// survives the provisional→committed (seq null → seq N) transition, so the
+	// collapse's open/close state is NOT lost when a turn seals. (App isolates
+	// these keys per conversation via {#key}.)
+	const rows = $derived.by(() => {
+		let thinking = 0;
+		return groups.map((group, i) => {
+			let key: string;
+			if (group.kind === "tool-batch") {
+				key = `b${group.stepId}`;
+			} else if (group.chunk.chunk.type === "thinking") {
+				key = `think${thinking++}`;
+			} else if (group.chunk.seq != null) {
+				key = `c${group.chunk.seq}`;
+			} else {
+				key = `p${i}`;
+			}
+			return { group, key };
+		});
+	});
 </script>
 
 {#snippet chunkRow(rendered: RenderedChunk)}
@@ -14,6 +35,26 @@
 				{#if rendered.chunk.type === "text"}
 					<p>{rendered.chunk.text}</p>
 				{/if}
+			</div>
+		</div>
+	{:else if rendered.chunk.type === "thinking"}
+		<!-- Thinking: a visible bubble (like tool cards), holding a checkbox collapse
+		     (no arrow icon, smooth open/close). Title reads "Thinking" + loading dots
+		     while generating, then "Thoughts" with no dots once complete. -->
+		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
+			<div class="chat-bubble w-full bg-transparent">
+				<div class="collapse w-full rounded-box bg-base-200 text-sm">
+					<input type="checkbox" aria-label="Toggle thoughts" />
+					<div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
+						<span>{rendered.streaming ? "Thinking" : "Thoughts"}</span>
+						{#if rendered.streaming}
+							<span class="loading loading-dots loading-sm" aria-label="Generating"></span>
+						{/if}
+					</div>
+					<div class="collapse-content">
+						<p class="whitespace-pre-wrap">{rendered.chunk.text}</p>
+					</div>
+				</div>
 			</div>
 		</div>
 	{:else if rendered.chunk.type === "tool-call" || rendered.chunk.type === "tool-result"}
@@ -39,17 +80,12 @@
 			</div>
 		</div>
 	{:else}
-		<!-- Assistant / system / error: an INVISIBLE speech bubble — same chat-start
-		     grid as the user bubble, so it inherits identical left spacing. -->
+		<!-- Assistant text / system / error: an INVISIBLE speech bubble — same
+		     chat-start grid as the user bubble, so it inherits identical left spacing. -->
 		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl">
 			<div class="chat-bubble w-full bg-transparent">
 				{#if rendered.chunk.type === "text"}
 					<p>{rendered.chunk.text}</p>
-				{:else if rendered.chunk.type === "thinking"}
-					<details>
-						<summary>Thinking</summary>
-						<p>{rendered.chunk.text}</p>
-					</details>
 				{:else if rendered.chunk.type === "error"}
 					<div class="text-error" role="alert">
 						{rendered.chunk.message}
@@ -66,7 +102,7 @@
 {/snippet}
 
 <div class="flex flex-col gap-2 p-4 pl-6" role="log" aria-live="polite">
-	{#each groups as group, i (group.kind === "tool-batch" ? `b${group.stepId}` : group.chunk.seq != null ? `c${group.chunk.seq}` : `p${i}`)}
+	{#each rows as { group, key } (key)}
 		{#if group.kind === "single"}
 			{@render chunkRow(group.chunk)}
 		{:else}

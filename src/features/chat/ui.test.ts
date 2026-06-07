@@ -213,38 +213,70 @@ describe("ChatView", () => {
 		expect(screen.getByText("contents-of-a")).toBeInTheDocument();
 	});
 
-	it("thinking <details> stays open across a streaming update", async () => {
-		const initial: RenderedChunk[] = [
+	it("thinking is a checkbox collapse (no arrow) inside a visible bubble", () => {
+		const chunks: RenderedChunk[] = [
 			{
 				seq: null,
 				role: "assistant",
 				chunk: { type: "thinking", text: "Let me think..." },
 				provisional: true,
+				streaming: true,
 			},
 		];
 
-		const { rerender } = render(ChatView, { props: { chunks: initial } });
+		const { container } = render(ChatView, { props: { chunks } });
 
-		const details = screen.getByText("Thinking").closest("details");
-		expect(details).not.toBeNull();
-		expect(details).not.toHaveAttribute("open");
-		if (details) details.open = true;
-		expect(details).toHaveAttribute("open");
+		const collapse = container.querySelector(".collapse");
+		expect(collapse).not.toBeNull();
+		expect(collapse).not.toHaveClass("collapse-arrow"); // no indicator icon
+		expect(collapse).not.toHaveClass("collapse-plus");
+		// Visible bubble, like tool cards.
+		expect(collapse).toHaveClass("bg-base-200");
+		expect(collapse).toHaveClass("rounded-box");
+		expect(screen.getByRole("checkbox", { name: "Toggle thoughts" })).toBeInTheDocument();
+	});
 
-		const updated: RenderedChunk[] = [
+	it("title is 'Thinking' + dots while streaming, then 'Thoughts' with no dots once complete; open state persists", async () => {
+		const streaming: RenderedChunk[] = [
 			{
 				seq: null,
 				role: "assistant",
-				chunk: { type: "thinking", text: "Let me think... step by step" },
+				chunk: { type: "thinking", text: "hmm" },
 				provisional: true,
+				streaming: true,
 			},
 		];
-		await rerender({ chunks: updated });
 
-		const detailsAfter = screen.getByText("Thinking").closest("details");
-		expect(detailsAfter).not.toBeNull();
-		expect(detailsAfter).toHaveAttribute("open");
-		expect(detailsAfter).toHaveTextContent("Let me think... step by step");
+		const { container, rerender } = render(ChatView, { props: { chunks: streaming } });
+
+		// Streaming: "Thinking" + loading dots.
+		expect(screen.getByText("Thinking")).toBeInTheDocument();
+		expect(screen.queryByText("Thoughts")).toBeNull();
+		expect(container.querySelector(".loading")).not.toBeNull();
+
+		// Open it.
+		const checkbox = screen.getByRole("checkbox", { name: "Toggle thoughts" });
+		await userEvent.click(checkbox);
+		expect(checkbox).toBeChecked();
+
+		// Transition generating → completed/committed (seq assigned, no longer streaming).
+		await rerender({
+			chunks: [
+				{
+					seq: 1,
+					role: "assistant",
+					chunk: { type: "thinking", text: "hmm, all done" },
+					provisional: false,
+				},
+			],
+		});
+
+		// Completed: "Thoughts", no dots — and the open state survived the transition.
+		expect(screen.getByText("Thoughts")).toBeInTheDocument();
+		expect(screen.queryByText("Thinking")).toBeNull();
+		expect(container.querySelector(".loading")).toBeNull();
+		expect(screen.getByRole("checkbox", { name: "Toggle thoughts" })).toBeChecked();
+		expect(container).toHaveTextContent("hmm, all done");
 	});
 });
 
