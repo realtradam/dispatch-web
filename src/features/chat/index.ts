@@ -1,6 +1,7 @@
 export type { RenderedChunk, RenderGroup, ToolBatchEntry } from "../../core/chunks";
 export { groupRenderedChunks } from "../../core/chunks";
-export type { ChatTransport, HistorySync } from "./ports";
+export type { TurnMetricsEntry } from "../../core/metrics";
+export type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 export type { ChatStore, ChatStoreDependencies } from "./store.svelte";
 export { createChatStore } from "./store.svelte";
 export { default as ChatView } from "./ui/ChatView.svelte";

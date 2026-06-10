@@ -30,6 +30,7 @@ import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
 	ConversationHistoryResponse,
+	ConversationMetricsResponse,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { createIdbChunkStore } from "../src/adapters/idb/index.ts";
@@ -43,6 +44,13 @@ import {
 	selectMessages,
 	type TranscriptState,
 } from "../src/core/chunks/index.ts";
+import {
+	applyDurableMetrics,
+	foldMetricsEvent,
+	initialMetricsState,
+	type MetricsState,
+	selectOrderedTurnMetrics,
+} from "../src/core/metrics/index.ts";
 import { createConversationCache } from "../src/features/conversation-cache/index.ts";
 
 const WS_URL = process.env.PROBE_WS ?? "ws://localhost:24205";
@@ -74,6 +82,15 @@ async function historySync(id: string, sinceSeq: number): Promise<ConversationHi
 	return (await res.json()) as ConversationHistoryResponse;
 }
 
+/** Durable metrics fetch — returns the response, or the HTTP status when not OK
+ * (the endpoint is being implemented backend-side; the FE tolerates a 404). */
+async function metricsSync(id: string): Promise<ConversationMetricsResponse | { status: number }> {
+	const url = `${HTTP_BASE}/conversations/${encodeURIComponent(id)}/metrics`;
+	const res = await fetch(url, { headers: { Origin: "http://localhost:24204" } });
+	if (!res.ok) return { status: res.status };
+	return (await res.json()) as ConversationMetricsResponse;
+}
+
 type ChatMsg = ChatDeltaMessage | ChatErrorMessage;
 type Socket = ReturnType<typeof createSurfaceSocket>;
 
@@ -87,8 +104,15 @@ async function runTurn(
 	socket: Socket,
 	conversationId: string,
 	prompt: string,
-): Promise<{ state: TranscriptState; deltas: number; sealed: boolean; error: string | null }> {
+): Promise<{
+	state: TranscriptState;
+	metrics: MetricsState;
+	deltas: number;
+	sealed: boolean;
+	error: string | null;
+}> {
 	let state = initialState();
+	let metrics = initialMetricsState();
 	let deltas = 0;
 	let sealed = false;
 	let error: string | null = null;
@@ -102,6 +126,7 @@ async function runTurn(
 		}
 		deltas++;
 		state = foldEvent(state, msg.event);
+		metrics = foldMetricsEvent(metrics, msg.event);
 		if (msg.event.type === "turn-sealed") {
 			sealed = true;
 			done.resolve();
@@ -113,7 +138,7 @@ async function runTurn(
 	await done.promise;
 	clearTimeout(timeout);
 	handlers.delete(conversationId);
-	return { state, deltas, sealed, error };
+	return { state, metrics, deltas, sealed, error };
 }
 
 function toolChunksOf(state: TranscriptState) {
@@ -177,6 +202,58 @@ async function main() {
 		.map((c) => (c as { text: string }).text)
 		.join("");
 	record("turn 1 committed transcript has assistant text", committedText.length > 0);
+
+	// ─── Metrics: LIVE token + timing (wire@0.3.0 usage/step-complete/done) ──────
+	const liveTurns = selectOrderedTurnMetrics(t1.metrics);
+	const m1 = liveTurns[0];
+	record(
+		"turn 1 LIVE metrics: a turn with output tokens",
+		m1 !== undefined && m1.usage.outputTokens > 0,
+		m1
+			? `in=${m1.usage.inputTokens} out=${m1.usage.outputTokens} steps=${m1.steps.length}`
+			: "no turn",
+	);
+	if (m1 !== undefined) {
+		const anyGen = m1.steps.some((s) => s.genTotalMs !== undefined);
+		const anyTtft = m1.steps.some((s) => s.ttftMs !== undefined);
+		note(
+			`live timing: durationMs=${m1.durationMs ?? "—"}, ` +
+				`genTotalMs present=${anyGen}, ttftMs present=${anyTtft}`,
+		);
+		record(
+			"turn 1 LIVE metrics carries timing (durationMs or step genTotalMs)",
+			m1.durationMs !== undefined || anyGen,
+			"requires the backend runtime to have a clock",
+		);
+	}
+
+	// ─── Metrics: DURABLE endpoint (GET /conversations/:id/metrics) ──────────────
+	const dm = await metricsSync(textConv);
+	if ("status" in dm) {
+		note(
+			`durable /metrics not available yet (HTTP ${dm.status}) — FE degrades to live-only, as designed`,
+		);
+		record(
+			"durable /metrics is implemented OR gracefully absent (404)",
+			dm.status === 404 || dm.status === 405,
+			`HTTP ${dm.status}`,
+		);
+	} else {
+		record(
+			"durable /metrics returned TurnMetrics[]",
+			Array.isArray(dm.turns),
+			`${dm.turns.length} turn(s)`,
+		);
+		const durableMerged = selectOrderedTurnMetrics(
+			applyDurableMetrics(initialMetricsState(), dm.turns),
+		);
+		const d1 = durableMerged[0];
+		record(
+			"durable /metrics turn has token usage",
+			d1 !== undefined && d1.usage.outputTokens > 0,
+			d1 ? `out=${d1.usage.outputTokens} steps=${d1.steps.length}` : "no turn",
+		);
+	}
 
 	// ─── Turn 2: tool-call batching (wire@0.2.0 stepId) ─────────────────────────
 	console.log(`\n[live-probe] TURN 2 (tools): "${TOOL_PROMPT}"`);

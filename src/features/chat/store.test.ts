@@ -1,7 +1,12 @@
 import type { AgentEvent, StepId, StoredChunk } from "@dispatch/wire";
 import { describe, expect, it, vi } from "vitest";
 import { createChatStore } from "./store.svelte";
-import { createFakeCache, createFakeHistorySync, createFakeTransport } from "./test-helpers";
+import {
+	createFakeCache,
+	createFakeHistorySync,
+	createFakeMetricsSync,
+	createFakeTransport,
+} from "./test-helpers";
 
 const CONV_ID = "test-conv-1";
 
@@ -21,11 +26,13 @@ describe("createChatStore", () => {
 	it("folding a chat.delta updates messages", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -51,11 +58,13 @@ describe("createChatStore", () => {
 	it("turn-sealed triggers a history sync, commits to cache, and applies merged history", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -92,11 +101,13 @@ describe("createChatStore", () => {
 	it("send posts a chat.send with conversationId", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -114,12 +125,14 @@ describe("createChatStore", () => {
 	it("send posts a chat.send with model when set", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			model: "openai/gpt-4",
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -134,11 +147,13 @@ describe("createChatStore", () => {
 	it("chat.error sets error", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -154,6 +169,7 @@ describe("createChatStore", () => {
 	it("load hydrates from cache then syncs the tail", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 
 		// Pre-populate cache
@@ -166,6 +182,7 @@ describe("createChatStore", () => {
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -184,6 +201,7 @@ describe("createChatStore", () => {
 	it("load with empty cache still syncs", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 
 		historySync.returnChunks = [makeStoredChunk(1, "assistant")];
@@ -192,6 +210,7 @@ describe("createChatStore", () => {
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -206,11 +225,13 @@ describe("createChatStore", () => {
 	it("error is cleared on successful sync", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -236,11 +257,13 @@ describe("createChatStore", () => {
 	it("dispose prevents further syncs", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -262,6 +285,7 @@ describe("createChatStore", () => {
 	it("overlapping syncs are guarded", async () => {
 		const transport = createFakeTransport();
 		const _historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 
 		// Make the first sync slow
@@ -283,6 +307,7 @@ describe("createChatStore", () => {
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: slowHistorySync,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -310,11 +335,13 @@ describe("createChatStore", () => {
 	it("handles tool-call and tool-result chunks", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -353,12 +380,14 @@ describe("createChatStore", () => {
 	it("setModel changes the model used by the next send", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			model: "openai/gpt-4",
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -375,11 +404,13 @@ describe("createChatStore", () => {
 	it("setModel from undefined to a model", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -396,11 +427,13 @@ describe("createChatStore", () => {
 	it("handleDelta ignores a chat.delta for a different conversationId", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -424,11 +457,13 @@ describe("createChatStore", () => {
 	it("handleDelta ignores a chat.error for a different conversationId", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -442,11 +477,13 @@ describe("createChatStore", () => {
 	it("send optimistically shows the user message immediately", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -464,11 +501,13 @@ describe("createChatStore", () => {
 	it("the optimistic user message is replaced after turn-sealed + history sync", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
 		const store = createChatStore({
 			conversationId: CONV_ID,
 			transport: transport.impl,
 			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
 			cache: cache.impl,
 		});
 
@@ -493,6 +532,273 @@ describe("createChatStore", () => {
 
 		expect(store.messages[0]?.role).toBe("user");
 		expect(store.messages[1]?.role).toBe("assistant");
+
+		store.dispose();
+	});
+
+	it("folding usage/step-complete/done deltas exposes turnMetrics", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		expect(store.turnMetrics).toHaveLength(0);
+
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(
+			deltaEvent({
+				type: "usage",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				stepId: "t1#0" as StepId,
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+		store.handleDelta(
+			deltaEvent({
+				type: "step-complete",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				stepId: "t1#0" as StepId,
+				ttftMs: 200,
+				genTotalMs: 800,
+			}),
+		);
+		store.handleDelta(
+			deltaEvent({
+				type: "done",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				reason: "end-turn",
+				durationMs: 1200,
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+
+		expect(store.turnMetrics).toHaveLength(1);
+		const entry = store.turnMetrics[0];
+		expect(entry?.turnId).toBe("t1");
+		expect(entry?.steps).toHaveLength(1);
+		expect(entry?.steps[0]?.stepId).toBe("t1#0" as StepId);
+		expect(entry?.steps[0]?.usage.inputTokens).toBe(100);
+		expect(entry?.steps[0]?.genTotalMs).toBe(800);
+		expect(entry?.total).not.toBeNull();
+		expect(entry?.total?.usage.inputTokens).toBe(100);
+		expect(entry?.total?.usage.outputTokens).toBe(50);
+		expect(entry?.total?.durationMs).toBe(1200);
+
+		store.dispose();
+	});
+
+	it("turnMetrics entry has total: null before done (progressive turn)", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(
+			deltaEvent({
+				type: "usage",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				stepId: "t1#0" as StepId,
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+		store.handleDelta(
+			deltaEvent({
+				type: "step-complete",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				stepId: "t1#0" as StepId,
+				ttftMs: 200,
+				genTotalMs: 800,
+			}),
+		);
+
+		expect(store.turnMetrics).toHaveLength(1);
+		const entry = store.turnMetrics[0];
+		expect(entry?.turnId).toBe("t1");
+		expect(entry?.steps).toHaveLength(1);
+		expect(entry?.steps[0]?.stepId).toBe("t1#0" as StepId);
+		expect(entry?.total).toBeNull();
+
+		store.dispose();
+	});
+
+	it("metricsSync durable result overrides live by turnId", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		// Live fold gives some metrics
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(
+			deltaEvent({
+				type: "usage",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				stepId: "t1#0" as StepId,
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+		store.handleDelta(
+			deltaEvent({
+				type: "done",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				reason: "end-turn",
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+
+		expect(store.turnMetrics).toHaveLength(1);
+		expect(store.turnMetrics[0]?.total?.usage.outputTokens).toBe(50);
+
+		// Durable sync returns different numbers for the same turnId
+		metricsSync.returnTurns = [
+			{
+				turnId: "t1",
+				usage: { inputTokens: 200, outputTokens: 80 },
+				durationMs: 500,
+				steps: [
+					{
+						stepId: "t1#0" as StepId,
+						usage: { inputTokens: 200, outputTokens: 80 },
+						genTotalMs: 400,
+					},
+				],
+			},
+		];
+
+		// Trigger metrics sync via turn-sealed
+		historySync.returnChunks = [];
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+
+		await vi.waitFor(() => {
+			expect(metricsSync.calls).toHaveLength(1);
+		});
+
+		// Durable should now override live (syncMetrics is async, wait for it)
+		await vi.waitFor(() => {
+			expect(store.turnMetrics[0]?.total?.usage.outputTokens).toBe(80);
+		});
+
+		expect(store.turnMetrics).toHaveLength(1);
+		expect(store.turnMetrics[0]?.total?.durationMs).toBe(500);
+
+		store.dispose();
+	});
+
+	it("rejected metricsSync leaves live metrics intact and does not throw", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		// Live fold some metrics
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(
+			deltaEvent({
+				type: "usage",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				stepId: "t1#0" as StepId,
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+		store.handleDelta(
+			deltaEvent({
+				type: "done",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				reason: "end-turn",
+				usage: { inputTokens: 100, outputTokens: 50 },
+			}),
+		);
+
+		expect(store.turnMetrics).toHaveLength(1);
+
+		// Make the metrics sync reject
+		metricsSync.nextError = "metrics endpoint unavailable";
+
+		historySync.returnChunks = [];
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+
+		await vi.waitFor(() => {
+			expect(metricsSync.calls).toHaveLength(1);
+		});
+
+		// Live metrics should still be intact
+		expect(store.turnMetrics).toHaveLength(1);
+		expect(store.turnMetrics[0]?.total?.usage.outputTokens).toBe(50);
+
+		// No error should have been thrown to the store
+		expect(store.error).toBeNull();
+
+		store.dispose();
+	});
+
+	it("load calls metricsSync after history sync", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+
+		metricsSync.returnTurns = [
+			{
+				turnId: "t1",
+				usage: { inputTokens: 300, outputTokens: 100 },
+				durationMs: 900,
+				steps: [],
+			},
+		];
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		await store.load();
+
+		expect(historySync.calls).toHaveLength(1);
+		expect(metricsSync.calls).toHaveLength(1);
+		expect(metricsSync.calls[0]).toBe(CONV_ID);
+		expect(store.turnMetrics).toHaveLength(1);
+		expect(store.turnMetrics[0]?.total?.usage.inputTokens).toBe(300);
 
 		store.dispose();
 	});

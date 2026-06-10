@@ -13,20 +13,29 @@ import {
 	selectChunks,
 	selectMessages,
 } from "../../core/chunks";
+import type { MetricsState, TurnMetricsEntry } from "../../core/metrics";
+import {
+	applyDurableMetrics,
+	foldMetricsEvent,
+	initialMetricsState,
+	selectOrderedTurnMetrics,
+} from "../../core/metrics";
 import type { ConversationCache } from "../conversation-cache";
-import type { ChatTransport, HistorySync } from "./ports";
+import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 
 export interface ChatStoreDependencies {
 	readonly conversationId: string;
 	readonly model?: string;
 	readonly transport: ChatTransport;
 	readonly historySync: HistorySync;
+	readonly metricsSync: MetricsSync;
 	readonly cache: ConversationCache;
 }
 
 export interface ChatStore {
 	readonly messages: readonly ChatMessage[];
 	readonly chunks: readonly RenderedChunk[];
+	readonly turnMetrics: readonly TurnMetricsEntry[];
 	readonly pendingSync: boolean;
 	readonly error: string | null;
 	readonly model: string | undefined;
@@ -39,6 +48,7 @@ export interface ChatStore {
 
 export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 	let transcript = $state<TranscriptState>(initialState());
+	let metrics = $state<MetricsState>(initialMetricsState());
 	let _pendingSync = $state(false);
 	let _error = $state<string | null>(null);
 	let _model = $state<string | undefined>(deps.model);
@@ -60,12 +70,26 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		}
 	}
 
+	async function syncMetrics(): Promise<void> {
+		if (disposed) return;
+		try {
+			const res = await deps.metricsSync(deps.conversationId);
+			metrics = applyDurableMetrics(metrics, res.turns);
+		} catch {
+			// Metrics fetch failure must not block history sync or throw;
+			// live-folded metrics remain intact.
+		}
+	}
+
 	return {
 		get messages(): readonly ChatMessage[] {
 			return selectMessages(transcript);
 		},
 		get chunks(): readonly RenderedChunk[] {
 			return selectChunks(transcript);
+		},
+		get turnMetrics(): readonly TurnMetricsEntry[] {
+			return selectOrderedTurnMetrics(metrics);
 		},
 		get pendingSync(): boolean {
 			return _pendingSync;
@@ -89,8 +113,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 				return;
 			}
 			transcript = foldEvent(transcript, msg.event);
+			metrics = foldMetricsEvent(metrics, msg.event);
 			if (transcript.sealedTurnId !== null) {
 				void syncTail();
+				void syncMetrics();
 			}
 		},
 
@@ -115,6 +141,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 				transcript = applyHistory(transcript, cached);
 			}
 			await syncTail();
+			await syncMetrics();
 		},
 
 		dispose(): void {

@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RenderedChunk } from "../../core/chunks";
+import type { TurnMetricsEntry } from "../../core/metrics";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
 import ModelSelector from "./ui/ModelSelector.svelte";
@@ -277,6 +278,224 @@ describe("ChatView", () => {
 		expect(container.querySelector(".loading")).toBeNull();
 		expect(screen.getByRole("checkbox", { name: "Toggle thoughts" })).toBeChecked();
 		expect(container).toHaveTextContent("hmm, all done");
+	});
+
+	it("renders step and turn metrics as separate rows", () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "Hi" }, provisional: false },
+			{
+				seq: 2,
+				role: "assistant",
+				chunk: { type: "text", text: "Hello!" },
+				provisional: false,
+			},
+		];
+
+		const turnMetrics: TurnMetricsEntry[] = [
+			{
+				turnId: "t1",
+				steps: [
+					{
+						stepId: "t1#0" as StepId,
+						usage: { inputTokens: 100, outputTokens: 50 },
+						genTotalMs: 800,
+					},
+				],
+				total: {
+					turnId: "t1",
+					usage: { inputTokens: 100, outputTokens: 50 },
+					durationMs: 1200,
+					steps: [
+						{
+							stepId: "t1#0" as StepId,
+							usage: { inputTokens: 100, outputTokens: 50 },
+							genTotalMs: 800,
+						},
+					],
+				},
+			},
+		];
+
+		render(ChatView, { props: { chunks, turnMetrics } });
+
+		expect(screen.getByText("Hi")).toBeInTheDocument();
+		expect(screen.getByText("Hello!")).toBeInTheDocument();
+		expect(screen.getByText(/step 1/)).toBeInTheDocument();
+		expect(screen.getAllByText(/150 tok/)).toHaveLength(2);
+		expect(screen.getByText(/turn · 150 tok \(100 in \/ 50 out\)/)).toBeInTheDocument();
+		expect(screen.getByText(/1\.2s/)).toBeInTheDocument();
+	});
+
+	it("renders step-metrics inline after tool group", () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "Run it" }, provisional: false },
+			{
+				seq: 2,
+				role: "assistant",
+				chunk: {
+					type: "tool-call",
+					toolCallId: "tc1",
+					toolName: "bash",
+					input: { command: "ls" },
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
+			{
+				seq: 3,
+				role: "tool",
+				chunk: {
+					type: "tool-result",
+					toolCallId: "tc1",
+					toolName: "bash",
+					content: "file.txt",
+					isError: false,
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
+			{
+				seq: 4,
+				role: "assistant",
+				chunk: { type: "text", text: "Done!" },
+				provisional: false,
+			},
+		];
+
+		const turnMetrics: TurnMetricsEntry[] = [
+			{
+				turnId: "t1",
+				steps: [
+					{
+						stepId: "t1#0" as StepId,
+						usage: { inputTokens: 80, outputTokens: 20 },
+						genTotalMs: 300,
+					},
+				],
+				total: {
+					turnId: "t1",
+					usage: { inputTokens: 80, outputTokens: 20 },
+					durationMs: 500,
+					steps: [
+						{
+							stepId: "t1#0" as StepId,
+							usage: { inputTokens: 80, outputTokens: 20 },
+							genTotalMs: 300,
+						},
+					],
+				},
+			},
+		];
+
+		render(ChatView, { props: { chunks, turnMetrics } });
+
+		// Both step-metrics and turn-metrics render
+		expect(screen.getByText(/step 1/)).toBeInTheDocument();
+		expect(screen.getByText(/turn · 100 tok/)).toBeInTheDocument();
+
+		// They are in separate elements (different rows)
+		const stepEl = screen.getByText(/step 1 · 100 tok/).closest("div");
+		const turnEl = screen.getByText(/turn · 100 tok/).closest("div");
+		expect(stepEl).not.toBe(turnEl);
+	});
+
+	it("renders no metrics bubble when turnMetrics is empty", () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "Hi" }, provisional: false },
+			{
+				seq: 2,
+				role: "assistant",
+				chunk: { type: "text", text: "Hello!" },
+				provisional: false,
+			},
+		];
+
+		render(ChatView, { props: { chunks, turnMetrics: [] } });
+
+		expect(screen.getByText("Hi")).toBeInTheDocument();
+		expect(screen.getByText("Hello!")).toBeInTheDocument();
+		expect(screen.queryByText(/step 1/)).toBeNull();
+		expect(screen.queryByText(/^turn/)).toBeNull();
+	});
+
+	it("omits null view values from metrics bubbles", () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "Test" }, provisional: false },
+			{
+				seq: 2,
+				role: "assistant",
+				chunk: { type: "text", text: "Response" },
+				provisional: false,
+			},
+		];
+
+		const turnMetrics: TurnMetricsEntry[] = [
+			{
+				turnId: "t1",
+				steps: [
+					{
+						stepId: "t1#0" as StepId,
+						usage: { inputTokens: 10, outputTokens: 5 },
+					},
+				],
+				total: {
+					turnId: "t1",
+					usage: { inputTokens: 10, outputTokens: 5 },
+					steps: [
+						{
+							stepId: "t1#0" as StepId,
+							usage: { inputTokens: 10, outputTokens: 5 },
+						},
+					],
+				},
+			},
+		];
+
+		render(ChatView, { props: { chunks, turnMetrics } });
+
+		// Step metrics rendered
+		expect(screen.getByText(/step 1/)).toBeInTheDocument();
+		expect(screen.getAllByText(/15 tok/)).toHaveLength(2);
+		// Turn metrics rendered
+		expect(screen.getByText(/turn · 15 tok \(10 in \/ 5 out\)/)).toBeInTheDocument();
+		// No "null" or "undefined" in the DOM
+		expect(screen.queryByText("null")).toBeNull();
+		expect(screen.queryByText("undefined")).toBeNull();
+	});
+
+	it("renders step text but no turn total for a progressive turn (total: null)", () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "Hi" }, provisional: false },
+			{
+				seq: 2,
+				role: "assistant",
+				chunk: { type: "text", text: "Hello!" },
+				provisional: false,
+			},
+		];
+
+		const turnMetrics: TurnMetricsEntry[] = [
+			{
+				turnId: "t1",
+				steps: [
+					{
+						stepId: "t1#0" as StepId,
+						usage: { inputTokens: 100, outputTokens: 50 },
+						genTotalMs: 800,
+					},
+				],
+				total: null,
+			},
+		];
+
+		render(ChatView, { props: { chunks, turnMetrics } });
+
+		// Step metrics should render
+		expect(screen.getByText(/step 1/)).toBeInTheDocument();
+		expect(screen.getByText(/150 tok/)).toBeInTheDocument();
+
+		// Turn total should NOT render (total is null — turn still in progress)
+		expect(screen.queryByText(/^turn/)).toBeNull();
 	});
 });
 

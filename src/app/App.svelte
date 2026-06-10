@@ -62,7 +62,7 @@
 
 		<div class="flex-1 overflow-y-auto">
 			{#key store.activeConversationId}
-				<ChatView chunks={store.activeChat.chunks} />
+				<ChatView chunks={store.activeChat.chunks} turnMetrics={store.activeChat.turnMetrics} />
 			{/key}
 		</div>
 

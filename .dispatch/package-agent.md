@@ -26,7 +26,8 @@ it, test it, and write a report — nothing else. If no single unit is named, st
 - **The contracts you consume:** reproduced IN-REPO under `.dispatch/*.reference.md` — read THOSE:
   - `.dispatch/ui-contract.reference.md` — `@dispatch/ui-contract` (surfaces + surface WS protocol).
   - `.dispatch/wire.reference.md` — `@dispatch/wire` (`Chunk`/`StoredChunk`+`seq`/`ChatMessage`/
-    `AgentEvent`/`TurnSealedEvent`/`Usage` — the chat wire types).
+    `AgentEvent`/`TurnSealedEvent`/`Usage` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`,
+    `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs` — the chat wire types).
   - `.dispatch/transport-contract.reference.md` — `@dispatch/transport-contract` (HTTP endpoints +
     `ChatRequest`/`ModelsResponse`/`ConversationHistoryResponse` + WS chat ops + the unified
     `WsClientMessage`/`WsServerMessage` unions).

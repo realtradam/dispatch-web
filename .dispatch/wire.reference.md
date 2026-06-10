@@ -4,13 +4,27 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.2.0`. Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.4.0` (committed, backend `6db12ff`; the metrics types below
+> shipped + version-bumped). Regenerate whenever `@dispatch/wire` changes.
 >
-> **0.2.0 change (step grouping):** `ToolCallChunk`/`ToolResultChunk` gained an OPTIONAL
-> `stepId?: StepId`; `TurnToolCallEvent`/`TurnToolResultEvent` gained a REQUIRED `stepId: StepId`.
-> A `StepId` is the per-step grouping key for batched/parallel tool calls — group by equality.
-> Live: read `event.stepId`. Replay: read `storedChunk.chunk.stepId` (NOT the envelope; absent on
-> pre-0.2.0 rows / non-tool chunks — tolerate absence). `StoredChunk` envelope is UNCHANGED.
+> **0.3.0 changes (token + timing metrics):**
+> - **Live per-step/per-turn telemetry on the event stream** (transient — NOT persisted):
+>   `TurnUsageEvent` gained an OPTIONAL `stepId?` (attribute tokens per step). A NEW
+>   `TurnStepCompleteEvent` (`type: "step-complete"`, REQUIRED `stepId`) carries the per-step
+>   generation timing `ttftMs?` / `decodeMs?` / `genTotalMs?` (all optional — present only when the
+>   runtime had a clock; `ttftMs`/`decodeMs` additionally require a first content token). `TurnDoneEvent`
+>   gained an OPTIONAL `durationMs?` (total turn wall-clock) + OPTIONAL `usage?` (aggregate across
+>   steps). `TurnToolResultEvent` gained an OPTIONAL `durationMs?` (tool execution time).
+> - **Durable, replayable metrics** (persisted, keyed per turn): NEW `StepMetrics` + `TurnMetrics`
+>   — the persisted counterparts of the live `usage` + `step-complete` + `done` packets. Served by
+>   `GET /conversations/:id/metrics` (see `transport-contract.reference.md`). Build the SAME
+>   `TurnMetrics` shape from the live events for the in-flight turn; the durable endpoint supplies it
+>   for sealed turns. TPS is derived (`usage.outputTokens / (genTotalMs / 1000)`), not on the wire.
+> - **0.2.0 (still current — step grouping):** `ToolCallChunk`/`ToolResultChunk` carry an OPTIONAL
+>   `stepId?: StepId`; `TurnToolCallEvent`/`TurnToolResultEvent` carry a REQUIRED `stepId: StepId`.
+>   Group batched/parallel tool calls by `stepId` equality. Live: read `event.stepId`. Replay: read
+>   `storedChunk.chunk.stepId` (NOT the envelope; tolerate absence). `StoredChunk` envelope is
+>   UNCHANGED (`{ seq, role, chunk }` — carries NO `turnId`).
 
 ```ts
 /**
@@ -168,6 +182,47 @@ export interface Usage {
 	readonly cacheWriteTokens?: number;
 }
 
+// ─── Persisted metrics ───────────────────────────────────────────────────────
+
+/**
+ * Durable per-step metrics for a completed step — the persisted, replayable
+ * counterpart of the live `usage` + `step-complete` events. Combines the step's
+ * token usage with its generation timing so a client reopening a past
+ * conversation renders the same per-step token/latency breakdown it would have
+ * seen live. Built from the turn's events, stored by `conversation-store`, and
+ * served by `GET /conversations/:id/metrics`.
+ */
+export interface StepMetrics {
+	readonly stepId: StepId;
+	/** The step's token usage (all four counters; cache fields optional per `Usage`). */
+	readonly usage: Usage;
+	/** Time to first token (stream start → first text/reasoning delta). Optional — see `TurnStepCompleteEvent.ttftMs`. */
+	readonly ttftMs?: number;
+	/** Decode time (first token → stream end). Optional — see `TurnStepCompleteEvent.decodeMs`. */
+	readonly decodeMs?: number;
+	/** Total generation time for the step (stream start → stream end). Optional: present only when a clock was available. */
+	readonly genTotalMs?: number;
+}
+
+/**
+ * Durable per-turn metrics for a completed (sealed) turn — the persisted,
+ * replayable counterpart of the live `done` event's aggregate `usage` +
+ * `durationMs`, plus the per-step breakdown. `usage` is the aggregate across all
+ * steps; `steps` carries each step's `StepMetrics` in step order. Stored by
+ * `conversation-store` keyed by `turnId` and served by
+ * `GET /conversations/:id/metrics`. (`turnId` is the plain wire string carried
+ * on every `AgentEvent`, the join key to the live stream.)
+ */
+export interface TurnMetrics {
+	readonly turnId: string;
+	/** Aggregate token usage across all steps in the turn. */
+	readonly usage: Usage;
+	/** Total wall-clock duration of the turn (turn start → turn end). Optional: present only when a clock was available. */
+	readonly durationMs?: number;
+	/** Per-step metrics in step order. */
+	readonly steps: readonly StepMetrics[];
+}
+
 // ─── Outward events ─────────────────────────────────────────────────────────
 
 /**
@@ -183,6 +238,7 @@ export type AgentEvent =
 	| TurnToolResultEvent
 	| TurnToolOutputEvent
 	| TurnUsageEvent
+	| TurnStepCompleteEvent
 	| TurnErrorEvent
 	| TurnDoneEvent
 	| TurnSealedEvent;
@@ -251,6 +307,12 @@ export interface TurnToolResultEvent {
 	readonly toolName: string;
 	readonly content: string;
 	readonly isError: boolean;
+	/**
+	 * How long the tool took to execute (dispatch → result), in milliseconds —
+	 * the backend's authoritative execution time, distinct from any client-side
+	 * wall-clock. Optional: present only when the runtime was given a clock.
+	 */
+	readonly durationMs?: number;
 }
 
 /** Streaming output from a tool execution (e.g. shell stdout/stderr). */
@@ -268,7 +330,41 @@ export interface TurnUsageEvent {
 	readonly type: "usage";
 	readonly conversationId: string;
 	readonly turnId: string;
+	/**
+	 * The step this usage report belongs to, so a consumer can attribute tokens
+	 * per step (and join with the matching `step-complete` timing by `stepId`).
+	 * Optional: absent when the runtime had no step context, and on usage emitted
+	 * before this field existed.
+	 */
+	readonly stepId?: StepId;
 	readonly usage: Usage;
+}
+
+/**
+ * A step (one LLM round-trip) has completed — the authoritative per-step metrics
+ * packet, emitted once at the step's end (after the generation stream finishes),
+ * so its timing is final (unlike `usage`, which may arrive mid-stream). Carries
+ * the step's generation timing; join to the step's tokens via `stepId` on the
+ * `usage` event. All timing fields are optional: present only when the runtime
+ * was given a clock, and `ttftMs`/`decodeMs` additionally require that a first
+ * content token (text or reasoning) was observed this step.
+ */
+export interface TurnStepCompleteEvent {
+	readonly type: "step-complete";
+	readonly conversationId: string;
+	readonly turnId: string;
+	readonly stepId: StepId;
+	/** Time to first token: stream start → first text/reasoning delta. */
+	readonly ttftMs?: number;
+	/** Decode time: first token → stream end (generation total − TTFT). */
+	readonly decodeMs?: number;
+	/**
+	 * Total generation time for the step: stream start → stream end. Present
+	 * whenever a clock was available, even if no first token was seen (in which
+	 * case `ttftMs`/`decodeMs` are absent). When a first token was seen,
+	 * `genTotalMs === ttftMs + decodeMs`.
+	 */
+	readonly genTotalMs?: number;
 }
 
 /** An error occurred during the turn. */
@@ -286,6 +382,17 @@ export interface TurnDoneEvent {
 	readonly conversationId: string;
 	readonly turnId: string;
 	readonly reason: string;
+	/**
+	 * Total wall-clock duration of the turn (turn start → turn end), in
+	 * milliseconds. Optional: present only when the runtime was given a clock.
+	 */
+	readonly durationMs?: number;
+	/**
+	 * Aggregate token usage across all steps in the turn — a convenience total so
+	 * a consumer need not sum the per-step `usage` events. Optional (absent if the
+	 * provider reported no usage).
+	 */
+	readonly usage?: Usage;
 }
 
 /**
