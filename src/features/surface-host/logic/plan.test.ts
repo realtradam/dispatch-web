@@ -1,6 +1,7 @@
 import type { SurfaceField, SurfaceSpec } from "@dispatch/ui-contract";
 import { describe, expect, it } from "vitest";
-import { buildInvoke, planSurface } from "./plan";
+import { buildInvoke, groupRenderFields, planSurface } from "./plan";
+import type { FieldView } from "./types";
 
 const makeSpec = (...fields: SurfaceField[]): SurfaceSpec => ({
 	id: "test-surface",
@@ -74,7 +75,7 @@ describe("planSurface", () => {
 				{ kind: "button", label: "D", action: { actionId: "d" } },
 			),
 		);
-		expect(plan.fields.map((f) => f.label)).toEqual(["A", "B", "C", "D"]);
+		expect(plan.fields.map((f) => ("label" in f ? f.label : null))).toEqual(["A", "B", "C", "D"]);
 	});
 
 	it("drops unknown field kinds gracefully", () => {
@@ -86,10 +87,11 @@ describe("planSurface", () => {
 			} as SurfaceField),
 		);
 		expect(plan.fields).toHaveLength(1);
-		expect(plan.fields[0]?.label).toBe("Known");
+		const first = plan.fields[0];
+		expect(first && "label" in first ? first.label : null).toBe("Known");
 	});
 
-	it("drops custom fields (no renderer registered)", () => {
+	it("carries custom fields through verbatim, preserving order", () => {
 		const plan = planSurface(
 			makeSpec(
 				{ kind: "stat", label: "Before", value: "1" },
@@ -97,8 +99,12 @@ describe("planSurface", () => {
 				{ kind: "stat", label: "After", value: "2" },
 			),
 		);
-		expect(plan.fields).toHaveLength(2);
-		expect(plan.fields.map((f) => f.label)).toEqual(["Before", "After"]);
+		expect(plan.fields).toHaveLength(3);
+		expect(plan.fields[1]).toEqual({
+			kind: "custom",
+			rendererId: "chart",
+			payload: { data: [1, 2, 3] },
+		});
 	});
 
 	it("returns empty fields for an empty spec", () => {
@@ -106,14 +112,56 @@ describe("planSurface", () => {
 		expect(plan.fields).toEqual([]);
 	});
 
-	it("drops all fields when all are custom", () => {
+	it("keeps every custom field (render-time decides whether to show each)", () => {
 		const plan = planSurface(
 			makeSpec(
 				{ kind: "custom", rendererId: "x", payload: null },
 				{ kind: "custom", rendererId: "y", payload: 42 },
 			),
 		);
-		expect(plan.fields).toEqual([]);
+		expect(plan.fields.map((f) => f.kind)).toEqual(["custom", "custom"]);
+	});
+});
+
+describe("groupRenderFields", () => {
+	const stat = (label: string, value: string): FieldView => ({ kind: "stat", label, value });
+	const toggle = (label: string): FieldView => ({
+		kind: "toggle",
+		label,
+		value: false,
+		action: { actionId: label },
+	});
+
+	it("coalesces consecutive stats into a single stats group", () => {
+		const groups = groupRenderFields([stat("a", "1"), stat("b", "2"), stat("c", "3")]);
+		expect(groups).toHaveLength(1);
+		expect(groups[0]).toEqual({
+			type: "stats",
+			stats: [
+				{ kind: "stat", label: "a", value: "1" },
+				{ kind: "stat", label: "b", value: "2" },
+				{ kind: "stat", label: "c", value: "3" },
+			],
+		});
+	});
+
+	it("keeps non-stat fields as standalone groups and preserves order", () => {
+		const groups = groupRenderFields([stat("a", "1"), toggle("t"), stat("b", "2")]);
+		expect(groups.map((g) => g.type)).toEqual(["stats", "field", "stats"]);
+		const first = groups[0];
+		const last = groups[2];
+		if (first?.type !== "stats" || last?.type !== "stats") throw new Error("bad grouping");
+		expect(first.stats.map((s) => s.label)).toEqual(["a"]);
+		expect(last.stats.map((s) => s.label)).toEqual(["b"]);
+	});
+
+	it("starts a new stats run after an interrupting field", () => {
+		const groups = groupRenderFields([stat("a", "1"), stat("b", "2"), toggle("t"), stat("c", "3")]);
+		expect(groups.map((g) => g.type)).toEqual(["stats", "field", "stats"]);
+	});
+
+	it("returns no groups for an empty field list", () => {
+		expect(groupRenderFields([])).toEqual([]);
 	});
 });
 

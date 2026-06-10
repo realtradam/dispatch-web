@@ -105,7 +105,7 @@ function activeConversationId(store: ReturnType<typeof createAppStore>): string 
 }
 
 describe("createAppStore", () => {
-	it("starts with empty catalog and no selection", () => {
+	it("starts with empty catalog and no surfaces", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
@@ -116,8 +116,7 @@ describe("createAppStore", () => {
 		ws.resolveOpen();
 
 		expect(store.catalog).toEqual([]);
-		expect(store.selectedId).toBeNull();
-		expect(store.selectedSpec).toBeNull();
+		expect(store.surfaces).toEqual([]);
 		expect(store.lastError).toBeNull();
 
 		store.dispose();
@@ -148,7 +147,7 @@ describe("createAppStore", () => {
 		store.dispose();
 	});
 
-	it("select sends subscribe and sets selectedId", () => {
+	it("auto-subscribes to every catalog entry when the catalog arrives", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
@@ -158,25 +157,26 @@ describe("createAppStore", () => {
 		});
 		ws.resolveOpen();
 
+		ws.sent.length = 0;
 		ws.feedSurfaceMessage({
 			type: "catalog",
-			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
+			catalog: [
+				{ id: "s1", region: "sidebar", title: "Surface One" },
+				{ id: "s2", region: "panel", title: "Surface Two" },
+			],
 		});
 
-		ws.sent.length = 0;
-		store.select("s1");
-
-		expect(store.selectedId).toBe("s1");
-		const subscribeMsg = ws.sent.find((s) => {
-			const parsed = JSON.parse(s);
-			return parsed.type === "subscribe" && parsed.surfaceId === "s1";
-		});
-		expect(subscribeMsg).toBeTruthy();
+		const subscribed = ws.sent
+			.map((s) => JSON.parse(s))
+			.filter((p) => p.type === "subscribe")
+			.map((p) => p.surfaceId);
+		expect(subscribed).toContain("s1");
+		expect(subscribed).toContain("s2");
 
 		store.dispose();
 	});
 
-	it("selecting a different surface unsubscribes from previous", () => {
+	it("unsubscribes from entries that vanish from a new catalog", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
@@ -195,25 +195,22 @@ describe("createAppStore", () => {
 		});
 
 		ws.sent.length = 0;
-		store.select("s1");
-		store.select("s2");
-
-		const unsubscribeMsg = ws.sent.find((s) => {
-			const parsed = JSON.parse(s);
-			return parsed.type === "unsubscribe" && parsed.surfaceId === "s1";
+		ws.feedSurfaceMessage({
+			type: "catalog",
+			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
 		});
-		expect(unsubscribeMsg).toBeTruthy();
 
-		const subscribeMsg = ws.sent.find((s) => {
-			const parsed = JSON.parse(s);
-			return parsed.type === "subscribe" && parsed.surfaceId === "s2";
-		});
-		expect(subscribeMsg).toBeTruthy();
+		const unsubscribed = ws.sent
+			.map((s) => JSON.parse(s))
+			.filter((p) => p.type === "unsubscribe")
+			.map((p) => p.surfaceId);
+		expect(unsubscribed).toContain("s2");
+		expect(unsubscribed).not.toContain("s1");
 
 		store.dispose();
 	});
 
-	it("surface message updates selectedSpec", () => {
+	it("exposes received surface specs via `surfaces`, in catalog order", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
@@ -225,11 +222,13 @@ describe("createAppStore", () => {
 
 		ws.feedSurfaceMessage({
 			type: "catalog",
-			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
+			catalog: [
+				{ id: "s1", region: "sidebar", title: "Surface One" },
+				{ id: "s2", region: "panel", title: "Surface Two" },
+			],
 		});
 
-		store.select("s1");
-
+		// Only s1's spec has arrived: surfaces reflects what's actually received.
 		ws.feedSurfaceMessage({
 			type: "surface",
 			spec: {
@@ -239,10 +238,15 @@ describe("createAppStore", () => {
 				fields: [{ kind: "stat", label: "Tokens", value: "1,234" }],
 			},
 		});
+		expect(store.surfaces.map((s) => s.id)).toEqual(["s1"]);
 
-		expect(store.selectedSpec).not.toBeNull();
-		expect(store.selectedSpec?.id).toBe("s1");
-		expect(store.selectedSpec?.fields).toHaveLength(1);
+		ws.feedSurfaceMessage({
+			type: "surface",
+			spec: { id: "s2", region: "panel", title: "Surface Two", fields: [] },
+		});
+		// Catalog order preserved (s1 before s2).
+		expect(store.surfaces.map((s) => s.id)).toEqual(["s1", "s2"]);
+		expect(store.surfaces[0]?.fields).toHaveLength(1);
 
 		store.dispose();
 	});

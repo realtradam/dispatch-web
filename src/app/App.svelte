@@ -1,21 +1,38 @@
 <script lang="ts">
 	import type { InvokeMessage } from "@dispatch/ui-contract";
-	import { ChatView, Composer, ModelSelector } from "../features/chat";
-	import { TabBar } from "../features/tabs";
-	import { SurfaceView } from "../features/surface-host";
+	import Table from "../components/Table.svelte";
+	import { ChatView, Composer, manifest as chatManifest, ModelSelector } from "../features/chat";
+	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
+	import { manifest as surfaceHostManifest, SurfaceView } from "../features/surface-host";
+	import { manifest as tabsManifest, TabBar } from "../features/tabs";
+	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
 	import type { AppStore } from "./store.svelte";
 
 	let { store }: { store: AppStore } = $props();
+
+	// The view kinds offered in the sidebar's dropdown. Generic data — the
+	// `viewContent` snippet below maps each kind id to its renderer.
+	const viewKinds = [{ id: "extensions", label: "Extensions" }] as const;
+
+	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
+	// feature's public `manifest` export so it can't drift from what's actually
+	// composed. (The backend's "Loaded Extensions" surface is a SEPARATE,
+	// backend-owned list.) FE features are internal units of this single repo, so
+	// there is no per-module version — they all share dispatch-web's version.
+	const MODULE_COLUMNS = ["Module", "Description"] as const;
+	const loadedModules: readonly (readonly [string, string])[] = [
+		chatManifest,
+		tabsManifest,
+		surfaceHostManifest,
+		viewsManifest,
+		conversationCacheManifest,
+	].map((m) => [m.name, m.description] as const);
 
 	// Right sidebar: open by default on wide screens (pushes the chat aside),
 	// closed by default on narrow screens (overlays the chat). Initial state is
 	// derived from the viewport width once; the hamburger toggles it thereafter.
 	const WIDE_BREAKPOINT = 1024; // Tailwind `lg`
 	let sidebarOpen = $state(typeof window !== "undefined" ? window.innerWidth >= WIDE_BREAKPOINT : true);
-
-	function handleSelect(surfaceId: string) {
-		store.select(surfaceId);
-	}
 
 	function handleInvoke(msg: InvokeMessage) {
 		store.invoke(msg.surfaceId, msg.actionId, msg.payload);
@@ -106,31 +123,6 @@
 		</div>
 
 		<Composer onSend={handleSend} />
-
-		{#if store.catalog.length > 0}
-			<section class="border-t border-base-300 p-4">
-				<h2 class="mb-2 text-sm font-semibold">Surfaces</h2>
-				<div class="flex flex-wrap gap-2">
-					{#each store.catalog as entry (entry.id)}
-						<button
-							class="btn btn-sm"
-							class:btn-active={entry.id === store.selectedId}
-							aria-current={entry.id === store.selectedId ? "true" : undefined}
-							onclick={() => handleSelect(entry.id)}
-						>
-							{entry.title}
-							<span class="text-xs opacity-60">({entry.region})</span>
-						</button>
-					{/each}
-				</div>
-			</section>
-		{/if}
-
-		{#if store.selectedSpec}
-			<section class="border-t border-base-300 p-4">
-				<SurfaceView spec={store.selectedSpec} onInvoke={handleInvoke} />
-			</section>
-		{/if}
 	</div>
 
 	<!-- Full-height right sidebar. On wide screens (`lg:relative`) it is in-flow, so
@@ -145,7 +137,7 @@
 			class="flex h-full w-80 flex-col gap-2 overflow-y-auto border-l border-base-300 bg-base-100 p-3 transition-transform duration-300 ease-out"
 			style="transform: translateX({sidebarOpen ? '0' : '100%'})"
 		>
-			<h2 class="text-sm font-semibold opacity-60">Sidebar</h2>
+			<ViewSidebar kinds={viewKinds} content={viewContent} />
 		</div>
 	</aside>
 
@@ -164,3 +156,18 @@
 		></div>
 	{/if}
 </main>
+
+{#snippet viewContent(kind: string)}
+	{#if kind === "extensions"}
+		<section>
+			<h3 class="mb-1 text-xs font-semibold uppercase opacity-60">Frontend modules</h3>
+			<Table columns={MODULE_COLUMNS} rows={loadedModules} />
+		</section>
+		<section class="mt-4 flex flex-col gap-3">
+			<h3 class="text-xs font-semibold uppercase opacity-60">Surfaces</h3>
+			{#each store.surfaces as spec (spec.id)}
+				<SurfaceView {spec} onInvoke={handleInvoke} />
+			{/each}
+		</section>
+	{/if}
+{/snippet}

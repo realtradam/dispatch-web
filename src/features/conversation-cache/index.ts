@@ -6,3 +6,9 @@ export type {
 	ConversationChunkStore,
 	ReconcileResult,
 } from "./types";
+
+/** Public module manifest — aggregated by the shell's "Loaded Modules" view. */
+export const manifest = {
+	name: "conversation-cache",
+	description: "IndexedDB-backed chunk cache with reconciliation",
+} as const;

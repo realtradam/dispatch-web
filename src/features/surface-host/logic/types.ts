@@ -38,15 +38,36 @@ export interface ButtonFieldView {
 	readonly action: ActionRef;
 }
 
+/**
+ * Normalised view-model for a custom (escape-hatch) field. The plan carries it
+ * through verbatim; the renderer dispatches on `rendererId` (a renderer KIND,
+ * never a surface id) and gracefully skips ids it has no renderer for.
+ */
+export interface CustomFieldView {
+	readonly kind: "custom";
+	readonly rendererId: string;
+	readonly payload: unknown;
+}
+
 /** A normalised field view-model — one entry per renderable field kind. */
 export type FieldView =
 	| ToggleFieldView
 	| ProgressFieldView
 	| SelectorFieldView
 	| StatFieldView
-	| ButtonFieldView;
+	| ButtonFieldView
+	| CustomFieldView;
 
 /** The output of `planSurface`: the ordered list of renderable fields. */
 export interface SurfaceRenderPlan {
 	readonly fields: readonly FieldView[];
 }
+
+/**
+ * A render group: a maximal run of consecutive `stat` fields (rendered together
+ * as one aligned label/value table), or a single non-stat field. Grouping is a
+ * GENERIC presentation rule keyed on field kind — it never inspects a surface id.
+ */
+export type RenderGroup =
+	| { readonly type: "stats"; readonly stats: readonly StatFieldView[] }
+	| { readonly type: "field"; readonly field: Exclude<FieldView, StatFieldView> };
