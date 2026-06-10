@@ -5,7 +5,7 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-10 — metrics display slice FE-complete + live-verified (probe 17/17). No open backend asks._
+_Last updated: 2026-06-10 — "Extensions" view shipped FE-side. ONE open ask: CR-1 (Loaded Extensions as a real multi-column table). The surface is already readable today; CR-1 is the enhancement that finishes the user's "nice table" request._
 
 ---
 
@@ -28,7 +28,43 @@ Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-con
 
 ## 2. Open asks FOR THE BACKEND
 
-- _(none open)_
+### CR-1 — emit the **Loaded Extensions** surface as a true table
+
+The user wants the Loaded Extensions surface rendered as a nice multi-column
+table (e.g. `Name | Version | Trust | Scope`), listing **all** loaded extensions.
+
+**Already covered — do NOT redo these (no contract change needed):**
+- The `custom` field kind + `rendererId` + graceful-skip already exist in
+  `ui-contract@0.1.0`. CR-1 uses that escape hatch — no `@dispatch/ui-contract` bump.
+- The FE renderer is **done and shipped**: `SurfaceView` → `SurfaceTable` →
+  shared `Table`, dispatched on `rendererId === "table"`. It renders the moment
+  the surface emits the field below.
+- The FE already groups consecutive `stat` fields into an aligned 2-column
+  (label → value) table, so the current surface (one `stat` per extension:
+  name → version) is **already readable as a table today**. CR-1 is the upgrade
+  to real columns, not a fix for something broken.
+- The "frontend modules" half of the Extensions view is **100% FE-owned**
+  (aggregated from each FE feature's `manifest`) — backend has nothing to provide there.
+
+**What I NEED from the backend to finish it:** replace the N per-extension
+`stat` fields with a SINGLE `custom` field:
+```ts
+{
+  kind: "custom",
+  rendererId: "table",
+  payload: {
+    columns: string[],                      // header labels
+    rows: (string | number | boolean)[][],  // each row aligns cell-for-cell to columns
+  },
+}
+```
+- Cells are coerced to strings; a malformed payload renders nothing (safe skip).
+- `rows` should enumerate **every** loaded extension (all trust tiers / kinds),
+  so "show all" is satisfied from this one surface.
+
+**Optional (data quality, not a blocker):** extension manifest `version`s all
+read `0.0.0` (unversioned). If real versions should appear in the table column,
+bump each extension's manifest `version` — otherwise the column is all `0.0.0`.
 
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 

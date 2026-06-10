@@ -5,7 +5,7 @@ import type {
 	ConversationMetricsResponse,
 	ModelsResponse,
 } from "@dispatch/transport-contract";
-import type { SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
+import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
 import type { WebSocketLike } from "../adapters/ws";
@@ -37,15 +37,14 @@ export interface AppStore {
 	readonly models: readonly string[];
 	readonly activeModel: string;
 	readonly catalog: ProtocolState["catalog"];
-	readonly selectedId: string | null;
-	readonly selectedSpec: SurfaceSpec | null;
+	/** Every received surface spec, in catalog order — all auto-subscribed + expanded. */
+	readonly surfaces: readonly SurfaceSpec[];
 	readonly lastError: ProtocolState["lastError"];
 	send(text: string): void;
 	selectModel(model: string): void;
 	newDraft(): void;
 	selectTab(conversationId: string): void;
 	closeTab(conversationId: string): void;
-	select(surfaceId: string): void;
 	invoke(surfaceId: string, actionId: string, payload?: unknown): void;
 	dispose(): void;
 }
@@ -85,7 +84,6 @@ function createMetricsSync(httpBase: string, fetchImpl: typeof fetch): MetricsSy
 
 export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let protocol = $state<ProtocolState>(protocolInitialState());
-	let selectedId = $state<string | null>(null);
 	let models = $state<readonly string[]>([]);
 	let activeModel = $state(DEFAULT_MODEL);
 
@@ -183,6 +181,32 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	function handleServerMessage(msg: SurfaceServerMessage): void {
 		protocol = applyServerMessage(protocol, msg);
+		// Surfaces are auto-expanded: whenever the catalog changes, subscribe to
+		// every entry (and drop subscriptions for entries that vanished).
+		if (msg.type === "catalog") {
+			syncSubscriptions();
+		}
+	}
+
+	/** Subscribe to every catalog entry not yet subscribed; unsubscribe stragglers. */
+	function syncSubscriptions(): void {
+		for (const entry of protocol.catalog) {
+			const result = protocolSubscribe(protocol, entry.id);
+			protocol = result.state;
+			for (const msg of result.outgoing) {
+				socket?.send(msg);
+			}
+		}
+		const catalogIds = new Set(protocol.catalog.map((e) => e.id));
+		for (const id of [...protocol.subscriptions.keys()]) {
+			if (!catalogIds.has(id)) {
+				const result = protocolUnsubscribe(protocol, id);
+				protocol = result.state;
+				for (const msg of result.outgoing) {
+					socket?.send(msg);
+				}
+			}
+		}
 	}
 
 	let socket: ReturnType<typeof createSurfaceSocket> | null = null;
@@ -192,12 +216,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		onMessage: handleServerMessage,
 		onChat: handleChatMessage,
 		onReopen() {
-			if (selectedId !== null) {
-				const result = protocolSubscribe(protocol, selectedId);
-				protocol = result.state;
-				for (const msg of result.outgoing) {
-					socket?.send(msg);
-				}
+			// The server forgot our subscriptions on reconnect; re-send for all
+			// catalog entries (protocolSubscribe would no-op since they're still in
+			// our local map, so emit the wire messages directly).
+			for (const entry of protocol.catalog) {
+				const msg: SubscribeMessage = { type: "subscribe", surfaceId: entry.id };
+				socket?.send(msg);
 			}
 		},
 	};
@@ -265,12 +289,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get catalog() {
 			return protocol.catalog;
 		},
-		get selectedId() {
-			return selectedId;
-		},
-		get selectedSpec() {
-			if (selectedId === null) return null;
-			return protocol.subscriptions.get(selectedId) ?? null;
+		get surfaces(): readonly SurfaceSpec[] {
+			const out: SurfaceSpec[] = [];
+			for (const entry of protocol.catalog) {
+				const spec = protocol.subscriptions.get(entry.id);
+				if (spec) out.push(spec);
+			}
+			return out;
 		},
 		get lastError() {
 			return protocol.lastError;
@@ -341,21 +366,6 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 		},
 
-		select(surfaceId: string): void {
-			if (selectedId !== null && selectedId !== surfaceId) {
-				const unsub = protocolUnsubscribe(protocol, selectedId);
-				protocol = unsub.state;
-				for (const msg of unsub.outgoing) {
-					socket?.send(msg);
-				}
-			}
-			selectedId = surfaceId;
-			const sub = protocolSubscribe(protocol, surfaceId);
-			protocol = sub.state;
-			for (const msg of sub.outgoing) {
-				socket?.send(msg);
-			}
-		},
 		invoke(surfaceId: string, actionId: string, payload?: unknown): void {
 			const result = protocolInvoke(protocol, surfaceId, actionId, payload);
 			protocol = result.state;

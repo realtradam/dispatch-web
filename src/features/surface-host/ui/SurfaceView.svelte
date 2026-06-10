@@ -1,10 +1,11 @@
 <script lang="ts">
 	import type { InvokeMessage, SurfaceSpec } from "@dispatch/ui-contract";
-	import { planSurface } from "../logic/plan";
+	import { groupRenderFields, planSurface } from "../logic/plan";
 	import Button from "./Button.svelte";
 	import Progress from "./Progress.svelte";
 	import Selector from "./Selector.svelte";
-	import Stat from "./Stat.svelte";
+	import StatTable from "./StatTable.svelte";
+	import SurfaceTable from "./SurfaceTable.svelte";
 	import Toggle from "./Toggle.svelte";
 
 	let {
@@ -13,21 +14,30 @@
 	}: { spec: SurfaceSpec; onInvoke: (msg: InvokeMessage) => void } = $props();
 
 	const plan = $derived(planSurface(spec));
+	// Consecutive stats render together as one aligned table; everything else is
+	// a standalone widget. Grouping keys on field KIND only — never the surface id.
+	const groups = $derived(groupRenderFields(plan.fields));
 </script>
 
 <article>
 	<h2>{spec.title}</h2>
-	{#each plan.fields as field (field)}
-		{#if field.kind === "toggle"}
-			<Toggle {field} surfaceId={spec.id} {onInvoke} />
-		{:else if field.kind === "progress"}
-			<Progress {field} />
-		{:else if field.kind === "selector"}
-			<Selector {field} surfaceId={spec.id} {onInvoke} />
-		{:else if field.kind === "stat"}
-			<Stat {field} />
-		{:else if field.kind === "button"}
-			<Button {field} surfaceId={spec.id} {onInvoke} />
+	{#each groups as group, i (i)}
+		{#if group.type === "stats"}
+			<StatTable stats={group.stats} />
+		{:else if group.field.kind === "toggle"}
+			<Toggle field={group.field} surfaceId={spec.id} {onInvoke} />
+		{:else if group.field.kind === "progress"}
+			<Progress field={group.field} />
+		{:else if group.field.kind === "selector"}
+			<Selector field={group.field} surfaceId={spec.id} {onInvoke} />
+		{:else if group.field.kind === "button"}
+			<Button field={group.field} surfaceId={spec.id} {onInvoke} />
+		{:else if group.field.kind === "custom"}
+			<!-- Dispatch on rendererId (a renderer KIND, never a surface id);
+			     unknown ids gracefully render nothing. -->
+			{#if group.field.rendererId === "table"}
+				<SurfaceTable payload={group.field.payload} />
+			{/if}
 		{/if}
 	{/each}
 </article>

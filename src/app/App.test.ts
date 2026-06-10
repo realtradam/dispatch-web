@@ -1,6 +1,6 @@
 import type { WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
-import { render, screen, within } from "@testing-library/svelte";
+import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
@@ -119,7 +119,36 @@ describe("App component interaction tests", () => {
 		store.dispose();
 	});
 
-	it("renders catalog buttons when surfaces are available", () => {
+	it("auto-subscribes to every catalog entry on render (no buttons to click)", () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		ws.sent.length = 0;
+		ws.feedSurfaceMessage({
+			type: "catalog",
+			catalog: [
+				{ id: "s1", region: "sidebar", title: "Surface One" },
+				{ id: "s2", region: "panel", title: "Surface Two" },
+			],
+		});
+
+		render(App, { props: { store } });
+
+		const subscribed = sentMessages(ws)
+			.filter((m: { type: string }) => m.type === "subscribe")
+			.map((m: { surfaceId: string }) => m.surfaceId);
+		expect(subscribed).toContain("s1");
+		expect(subscribed).toContain("s2");
+
+		store.dispose();
+	});
+
+	it("renders every surface expanded once their specs arrive", async () => {
 		const ws = fakeSocket();
 		const store = createAppStore({
 			socketFactory: () => ws,
@@ -138,43 +167,7 @@ describe("App component interaction tests", () => {
 
 		render(App, { props: { store } });
 
-		const surfacesSection = screen.getByRole("heading", { name: "Surfaces" }).closest("section");
-		if (surfacesSection === null) throw new Error("Surfaces section not found");
-		const buttons = within(surfacesSection).getAllByRole("button");
-		expect(buttons).toHaveLength(2);
-		expect(buttons[0]).toHaveTextContent("Surface One");
-		expect(buttons[1]).toHaveTextContent("Surface Two");
-
-		store.dispose();
-	});
-
-	it("clicking a catalog entry subscribes and renders its surface", async () => {
-		const ws = fakeSocket();
-		const store = createAppStore({
-			socketFactory: () => ws,
-			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
-		});
-		ws.resolveOpen();
-
-		ws.feedSurfaceMessage({
-			type: "catalog",
-			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
-		});
-
-		render(App, { props: { store } });
-
-		const user = userEvent.setup();
-		const button = screen.getByRole("button", { name: /Surface One/ });
-		ws.sent.length = 0;
-		await user.click(button);
-
-		const msgs = sentMessages(ws);
-		const subscribe = msgs.find(
-			(m: { type: string; surfaceId: string }) => m.type === "subscribe" && m.surfaceId === "s1",
-		);
-		expect(subscribe).toBeTruthy();
-
+		// No interaction: specs arrive and both surfaces render expanded.
 		ws.feedSurfaceMessage({
 			type: "surface",
 			spec: {
@@ -184,79 +177,15 @@ describe("App component interaction tests", () => {
 				fields: [{ kind: "stat", label: "Tokens", value: "1,234" }],
 			},
 		});
+		ws.feedSurfaceMessage({
+			type: "surface",
+			spec: { id: "s2", region: "panel", title: "Surface Two", fields: [] },
+		});
 
 		expect(await screen.findByRole("heading", { name: "Surface One" })).toBeInTheDocument();
+		expect(await screen.findByRole("heading", { name: "Surface Two" })).toBeInTheDocument();
 		expect(await screen.findByText("Tokens")).toBeInTheDocument();
 		expect(await screen.findByText("1,234")).toBeInTheDocument();
-
-		store.dispose();
-	});
-
-	it("clicking a different entry unsubscribes the previous then subscribes the new", async () => {
-		const ws = fakeSocket();
-		const store = createAppStore({
-			socketFactory: () => ws,
-			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
-		});
-		ws.resolveOpen();
-
-		ws.feedSurfaceMessage({
-			type: "catalog",
-			catalog: [
-				{ id: "s1", region: "sidebar", title: "Surface One" },
-				{ id: "s2", region: "panel", title: "Surface Two" },
-			],
-		});
-
-		render(App, { props: { store } });
-
-		const user = userEvent.setup();
-		await user.click(screen.getByRole("button", { name: /Surface One/ }));
-		ws.sent.length = 0;
-
-		await user.click(screen.getByRole("button", { name: /Surface Two/ }));
-
-		const msgs = sentMessages(ws) as Array<{ type: string; surfaceId: string }>;
-		const unsubIdx = msgs.findIndex((m) => m.type === "unsubscribe" && m.surfaceId === "s1");
-		const subIdx = msgs.findIndex((m) => m.type === "subscribe" && m.surfaceId === "s2");
-		expect(unsubIdx).toBeGreaterThanOrEqual(0);
-		expect(subIdx).toBeGreaterThanOrEqual(0);
-		expect(unsubIdx).toBeLessThan(subIdx);
-
-		store.dispose();
-	});
-
-	it("selected catalog button reflects aria-current", async () => {
-		const ws = fakeSocket();
-		const store = createAppStore({
-			socketFactory: () => ws,
-			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
-		});
-		ws.resolveOpen();
-
-		ws.feedSurfaceMessage({
-			type: "catalog",
-			catalog: [
-				{ id: "s1", region: "sidebar", title: "Surface One" },
-				{ id: "s2", region: "panel", title: "Surface Two" },
-			],
-		});
-
-		render(App, { props: { store } });
-
-		const user = userEvent.setup();
-		const btn1 = screen.getByRole("button", { name: /Surface One/ });
-		const btn2 = screen.getByRole("button", { name: /Surface Two/ });
-
-		await user.click(btn1);
-		expect(btn1).toHaveAttribute("aria-current", "true");
-		expect(btn2).not.toHaveAttribute("aria-current");
-
-		await user.click(btn2);
-		expect(btn2).toHaveAttribute("aria-current", "true");
-		expect(btn1).not.toHaveAttribute("aria-current");
 
 		store.dispose();
 	});
@@ -300,8 +229,7 @@ describe("App component interaction tests", () => {
 		render(App, { props: { store } });
 
 		const user = userEvent.setup();
-		await user.click(screen.getByRole("button", { name: /Surface One/ }));
-
+		// Surface is auto-subscribed; its spec arrives and renders expanded.
 		ws.feedSurfaceMessage({
 			type: "surface",
 			spec: {
@@ -400,6 +328,69 @@ describe("App component interaction tests", () => {
 		});
 
 		expect(await screen.findByText("Hi there!")).toBeInTheDocument();
+
+		store.dispose();
+	});
+
+	it("renders a custom 'table' field of a surface as a table", async () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		ws.feedSurfaceMessage({
+			type: "catalog",
+			catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
+		});
+
+		render(App, { props: { store } });
+
+		// Auto-subscribed; the custom-table spec arrives and renders expanded.
+		ws.feedSurfaceMessage({
+			type: "surface",
+			spec: {
+				id: "s1",
+				region: "sidebar",
+				title: "Surface One",
+				fields: [
+					{
+						kind: "custom",
+						rendererId: "table",
+						payload: {
+							columns: ["Name", "Scope"],
+							rows: [["cache-warm", "backend"]],
+						},
+					},
+				],
+			},
+		});
+
+		expect(await screen.findByRole("columnheader", { name: "Name" })).toBeInTheDocument();
+		expect(await screen.findByText("cache-warm")).toBeInTheDocument();
+		expect(await screen.findByText("backend")).toBeInTheDocument();
+
+		store.dispose();
+	});
+
+	it("the Extensions view lists frontend modules aggregated from feature manifests", () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		render(App, { props: { store } });
+
+		// Extensions is the default view, so the modules table renders immediately.
+		expect(screen.getByRole("columnheader", { name: "Module" })).toBeInTheDocument();
+		for (const name of ["chat", "tabs", "surface-host", "views", "conversation-cache"]) {
+			expect(screen.getByRole("cell", { name })).toBeInTheDocument();
+		}
 
 		store.dispose();
 	});

@@ -1,12 +1,14 @@
 import type { InvokeMessage, SurfaceSpec } from "@dispatch/ui-contract";
-import type { FieldView, SurfaceRenderPlan } from "./types";
+import type { FieldView, RenderGroup, StatFieldView, SurfaceRenderPlan } from "./types";
 
-const KNOWN_KINDS = new Set(["toggle", "progress", "selector", "stat", "button"]);
+const KNOWN_KINDS = new Set(["toggle", "progress", "selector", "stat", "button", "custom"]);
 
 /**
  * Validate and normalise a SurfaceSpec into a renderable plan.
- * Keeps known field kinds in order; drops unknown kinds and `custom` fields
- * (no renderer registry yet — graceful skip, never throw).
+ * Keeps known field kinds in order (including `custom`, carried through verbatim
+ * for the renderer to dispatch on `rendererId`); drops unknown kinds — graceful
+ * skip, never throw. Whether a `custom` field actually renders is a RENDER-time
+ * decision (unknown `rendererId` → skipped there), not a planning one.
  */
 export function planSurface(spec: SurfaceSpec): SurfaceRenderPlan {
 	const fields: FieldView[] = [];
@@ -51,9 +53,42 @@ export function planSurface(spec: SurfaceSpec): SurfaceRenderPlan {
 					action: field.action,
 				});
 				break;
+			case "custom":
+				fields.push({
+					kind: "custom",
+					rendererId: field.rendererId,
+					payload: field.payload,
+				});
+				break;
 		}
 	}
 	return { fields };
+}
+
+/**
+ * Coalesce a field list into render groups: maximal runs of consecutive `stat`
+ * fields become one `stats` group (rendered as a single aligned table), every
+ * other field stays a standalone `field` group. Order is preserved. Pure.
+ */
+export function groupRenderFields(fields: readonly FieldView[]): RenderGroup[] {
+	const groups: RenderGroup[] = [];
+	let run: StatFieldView[] = [];
+	const flush = (): void => {
+		if (run.length > 0) {
+			groups.push({ type: "stats", stats: run });
+			run = [];
+		}
+	};
+	for (const field of fields) {
+		if (field.kind === "stat") {
+			run.push(field);
+		} else {
+			flush();
+			groups.push({ type: "field", field });
+		}
+	}
+	flush();
+	return groups;
 }
 
 /**
