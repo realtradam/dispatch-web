@@ -2,7 +2,7 @@ import type { StepId, StepMetrics, TurnMetrics } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import type { RenderGroup } from "../chunks";
 import { interleaveTurnMetrics } from "./place";
-import type { TurnMetricsEntry } from "./types";
+import type { MetricsRow, TurnMetricsEntry } from "./types";
 
 function userGroup(seq: number, text: string): RenderGroup {
 	return {
@@ -465,5 +465,65 @@ describe("interleaveTurnMetrics", () => {
 		expectGroupAt(rows, 1, g2);
 		expectStepMetricsAt(rows, 2, "s1", 0);
 		expectStepMetricsAt(rows, 3, "s2", 1);
+	});
+});
+
+describe("interleaveTurnMetrics — cumulative usage (cache total)", () => {
+	function turnMetricsRows(rows: readonly MetricsRow[]) {
+		return rows.filter((r): r is Extract<MetricsRow, { kind: "turn-metrics" }> => {
+			return r.kind === "turn-metrics";
+		});
+	}
+
+	function cacheEntry(
+		turnId: string,
+		inputTokens: number,
+		outputTokens: number,
+		cacheReadTokens: number,
+	): TurnMetricsEntry {
+		const total: TurnMetrics = {
+			turnId,
+			usage: { inputTokens, outputTokens, cacheReadTokens },
+			steps: [],
+		};
+		return { turnId, steps: [], total };
+	}
+
+	it("turn-metrics row carries this turn's usage and the running cumulative", () => {
+		const rows = interleaveTurnMetrics(
+			[userGroup(1, "q1"), assistantGroup(2, "a1")],
+			[makeEntry("t1", 1000, 100)],
+		);
+		const tm = turnMetricsRows(rows);
+		expect(tm).toHaveLength(1);
+		expect(tm[0]?.turn.turnId).toBe("t1");
+		expect(tm[0]?.cumulativeUsage).toEqual({ inputTokens: 1000, outputTokens: 100 });
+	});
+
+	it("accumulates cache read + input across turns (chat total)", () => {
+		const rows = interleaveTurnMetrics(
+			[userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
+			[cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
+		);
+		const tm = turnMetricsRows(rows);
+		expect(tm).toHaveLength(2);
+		// turn 1: only its own usage
+		expect(tm[0]?.cumulativeUsage.inputTokens).toBe(2669);
+		expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(384);
+		// turn 2: sum of both (input 5406, cacheRead 2944 → matches the backend's 54% example)
+		expect(tm[1]?.cumulativeUsage.inputTokens).toBe(5406);
+		expect(tm[1]?.cumulativeUsage.cacheReadTokens).toBe(2944);
+	});
+
+	it("an in-flight (total=null) turn does not contribute to the cumulative", () => {
+		const rows = interleaveTurnMetrics(
+			[userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
+			[cacheEntry("t1", 1000, 10, 500), makeProgressiveEntry("t2", [makeStep("s1", 200, 5)])],
+		);
+		const tm = turnMetricsRows(rows);
+		// only the finalized turn emits a turn-metrics row; its cumulative is just itself
+		expect(tm).toHaveLength(1);
+		expect(tm[0]?.cumulativeUsage.inputTokens).toBe(1000);
+		expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(500);
 	});
 });

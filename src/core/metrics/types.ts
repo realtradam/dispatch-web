@@ -47,7 +47,22 @@ export interface TurnMetricsEntry {
 export type MetricsRow =
 	| { readonly kind: "group"; readonly group: RenderGroup }
 	| { readonly kind: "step-metrics"; readonly step: StepMetrics; readonly index: number }
-	| { readonly kind: "turn-metrics"; readonly turn: TurnMetrics };
+	| {
+			readonly kind: "turn-metrics";
+			readonly turn: TurnMetrics;
+			/** Cumulative usage across all finalized turns up to and including this one. */
+			readonly cumulativeUsage: Usage;
+	  };
+
+/** Formatted cache hit-rate view: percentage + colour severity + hit flag. */
+export interface CacheRateView {
+	/** Cache hit rate as a 0..100 integer percentage (`cacheReadTokens / inputTokens`). */
+	readonly pct: number;
+	/** Colour severity for a badge (maps to DaisyUI `badge-{level}`). */
+	readonly level: "success" | "warning" | "error";
+	/** Whether any input tokens were served from cache. */
+	readonly isHit: boolean;
+}
 
 /** Formatted per-step view for display. */
 export interface StepMetricsView {

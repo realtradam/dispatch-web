@@ -1,3 +1,4 @@
+import type { Usage } from "@dispatch/wire";
 import type { RenderGroup } from "../chunks";
 import type { MetricsRow, TurnMetricsEntry } from "./types";
 
@@ -5,6 +6,19 @@ function groupStepId(g: RenderGroup): string | undefined {
 	if (g.kind === "tool-batch") return g.stepId;
 	const c = g.chunk.chunk;
 	return c.type === "tool-call" || c.type === "tool-result" ? c.stepId : undefined;
+}
+
+/** Element-wise sum of two token usages (cache fields included only when nonzero). */
+function addUsage(a: Usage, b: Usage): Usage {
+	const out: Usage = {
+		inputTokens: a.inputTokens + b.inputTokens,
+		outputTokens: a.outputTokens + b.outputTokens,
+	};
+	const read = (a.cacheReadTokens ?? 0) + (b.cacheReadTokens ?? 0);
+	const write = (a.cacheWriteTokens ?? 0) + (b.cacheWriteTokens ?? 0);
+	if (read > 0) (out as { cacheReadTokens?: number }).cacheReadTokens = read;
+	if (write > 0) (out as { cacheWriteTokens?: number }).cacheWriteTokens = write;
+	return out;
 }
 
 /**
@@ -62,6 +76,15 @@ export function interleaveTurnMetrics(
 		if (entry !== undefined) {
 			segmentEntries.set(i, entry);
 		}
+	}
+
+	// Running cumulative usage across finalized turns (conversation total at each
+	// entry index), for the per-turn "chat total" cache rate.
+	const cumulativeByEntry: Usage[] = [];
+	let runningUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+	for (const e of entries) {
+		if (e.total !== null) runningUsage = addUsage(runningUsage, e.total.usage);
+		cumulativeByEntry.push(runningUsage);
 	}
 
 	const rows: MetricsRow[] = [];
@@ -143,7 +166,11 @@ export function interleaveTurnMetrics(
 			rows.push({ kind: "step-metrics", step, index: stepIndex });
 		}
 		if (entry.total !== null) {
-			rows.push({ kind: "turn-metrics", turn: entry.total });
+			rows.push({
+				kind: "turn-metrics",
+				turn: entry.total,
+				cumulativeUsage: cumulativeByEntry[seg] ?? entry.total.usage,
+			});
 		}
 	}
 
