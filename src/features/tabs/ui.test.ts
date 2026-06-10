@@ -175,4 +175,39 @@ describe("TabBar", () => {
 		const newChat = screen.getByRole("button", { name: "New chat" });
 		expect(newChat).not.toHaveTextContent("New Chat");
 	});
+
+	it("renders a short-handle tab ID badge (shortest unique prefix) per tab", () => {
+		const tabs: readonly Tab[] = [
+			{ conversationId: "3f9a1b2c-1111", model: "m", title: "Alpha" },
+			{ conversationId: "7c2db4e5-2222", model: "m", title: "Beta" },
+		];
+		render(TabBar, {
+			props: {
+				tabs,
+				activeConversationId: "3f9a1b2c-1111",
+				onSelect: vi.fn(),
+				onClose: vi.fn(),
+				onNewDraft: vi.fn(),
+			},
+		});
+
+		expect(screen.getByText("3f9a")).toBeInTheDocument();
+		expect(screen.getByText("7c2d")).toBeInTheDocument();
+	});
+
+	it("renders fixed-width tabs", () => {
+		render(TabBar, {
+			props: {
+				tabs: sampleTabs,
+				activeConversationId: "c1",
+				onSelect: vi.fn(),
+				onClose: vi.fn(),
+				onNewDraft: vi.fn(),
+			},
+		});
+
+		for (const t of screen.getAllByRole("tab")) {
+			expect(t).toHaveClass("w-48");
+		}
+	});
 });

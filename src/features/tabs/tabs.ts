@@ -92,3 +92,22 @@ export function deriveTitle(message: string, max: number = DEFAULT_MAX_TITLE_LEN
 	if (trimmed.length <= max) return trimmed;
 	return `${trimmed.slice(0, max)}\u2026`;
 }
+
+/** Minimum length of a tab handle (git-style short id). */
+export const MIN_HANDLE_LENGTH = 4;
+
+/**
+ * The short "handle" shown on a tab: the shortest prefix of `conversationId`
+ * (at least `MIN_HANDLE_LENGTH` chars) that is unique among all open tabs — a
+ * git-style short id. Grows by a char only when another open tab shares the
+ * prefix, and shrinks back when that sibling closes. Pure: the id + every open
+ * id in, the handle string out. (`allIds` may include `conversationId` itself.)
+ */
+export function shortHandle(conversationId: string, allIds: readonly string[]): string {
+	const others = allIds.filter((id) => id !== conversationId);
+	for (let len = MIN_HANDLE_LENGTH; len < conversationId.length; len++) {
+		const candidate = conversationId.slice(0, len);
+		if (!others.some((id) => id.startsWith(candidate))) return candidate;
+	}
+	return conversationId;
+}
