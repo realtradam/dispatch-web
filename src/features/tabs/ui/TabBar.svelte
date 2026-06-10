@@ -1,6 +1,6 @@
 <script lang="ts">
 	import type { Tab } from "../tabs";
-	import { isStuckToEnd } from "../tabs";
+	import { isStuckToEnd, shortHandle } from "../tabs";
 
 	let {
 		tabs,
@@ -22,6 +22,15 @@
 	// DOM-measurement at the edge here.
 	let scrollEl = $state<HTMLDivElement>();
 	let stuck = $state(false);
+
+	// Git-style short handle (shortest unique prefix) per open tab — the visible
+	// "tab ID". Derived from the set of open conversation ids; pure helper.
+	const handles = $derived.by(() => {
+		const ids = tabs.map((t) => t.conversationId);
+		const map = new Map<string, string>();
+		for (const id of ids) map.set(id, shortHandle(id, ids));
+		return map;
+	});
 
 	function recompute(): void {
 		const el = scrollEl;
@@ -55,11 +64,11 @@
 	});
 </script>
 
-<div bind:this={scrollEl} class="overflow-x-auto border-b border-base-300">
-	<div class="tabs tabs-border min-w-max">
+<div bind:this={scrollEl} class="min-w-0 flex-1 overflow-x-auto">
+	<div class="tabs tabs-lift min-w-max">
 		{#each tabs as tab (tab.conversationId)}
 			<div
-				class="tab"
+				class="tab flex w-48 shrink-0 items-center gap-1.5"
 				class:tab-active={tab.conversationId === activeConversationId}
 				role="tab"
 				tabindex="0"
@@ -68,9 +77,15 @@
 					if (e.key === "Enter") onSelect(tab.conversationId);
 				}}
 			>
-				<span class="max-w-[120px] truncate">{tab.title}</span>
+				<span
+					class="shrink-0 rounded bg-base-300 px-1 py-0.5 font-mono text-[10px] leading-none text-base-content/60"
+					title="Tab ID"
+				>
+					{handles.get(tab.conversationId) ?? tab.conversationId}
+				</span>
+				<span class="min-w-0 flex-1 truncate text-left">{tab.title}</span>
 				<button
-					class="btn btn-ghost btn-xs ml-1"
+					class="btn btn-ghost btn-xs shrink-0"
 					aria-label="Close tab"
 					onclick={(e) => {
 						e.stopPropagation();

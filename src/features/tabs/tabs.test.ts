@@ -7,10 +7,12 @@ import {
 	deriveTitle,
 	initialState,
 	isStuckToEnd,
+	MIN_HANDLE_LENGTH,
 	newDraft,
 	selectTab,
 	setModel,
 	setTitle,
+	shortHandle,
 } from "./tabs";
 
 const tab = (conversationId: string, model = "default", title = "Chat"): Tab => ({
@@ -211,5 +213,36 @@ describe("isStuckToEnd", () => {
 
 	it("treats a 1px subpixel gap at the end as at-rest (epsilon)", () => {
 		expect(isStuckToEnd({ scrollLeft: 499, clientWidth: 500, scrollWidth: 1000 })).toBe(false);
+	});
+});
+
+describe("shortHandle", () => {
+	it("uses the minimum length when the id is unique", () => {
+		const h = shortHandle("3f9a1b2c-aaaa", ["3f9a1b2c-aaaa", "7c2d-bbbb"]);
+		expect(h).toBe("3f9a");
+		expect(h.length).toBe(MIN_HANDLE_LENGTH);
+	});
+
+	it("grows the prefix until unique among open tabs", () => {
+		// two ids share the first 5 chars → handle grows to 6 to disambiguate
+		expect(shortHandle("abcde1-xxxx", ["abcde1-xxxx", "abcde2-yyyy"])).toBe("abcde1");
+		expect(shortHandle("abcde2-yyyy", ["abcde1-xxxx", "abcde2-yyyy"])).toBe("abcde2");
+	});
+
+	it("shrinks back to the minimum when the colliding sibling is gone", () => {
+		expect(shortHandle("abcde1-xxxx", ["abcde1-xxxx"])).toBe("abcd");
+	});
+
+	it("ignores the id itself when present in the list", () => {
+		expect(shortHandle("deadbeef", ["deadbeef"])).toBe("dead");
+	});
+
+	it("returns the whole id when shorter than the minimum length", () => {
+		expect(shortHandle("ab", ["ab", "cd"])).toBe("ab");
+	});
+
+	it("falls back to the full id when one id is a prefix of another", () => {
+		// "abcd" is a prefix of "abcd1234" → no unique shorter prefix exists for it
+		expect(shortHandle("abcd", ["abcd", "abcd1234"])).toBe("abcd");
 	});
 });

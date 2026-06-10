@@ -6,3 +6,15 @@
 @plugin "daisyui" {
 	themes: dracula --default;
 }
+
+/* App shell fills the viewport and never scrolls/overflows at the page level —
+   the inner regions (tab strip, chat transcript) own their own scrolling. */
+html,
+body,
+#app {
+	height: 100%;
+}
+
+body {
+	overflow: hidden;
+}
