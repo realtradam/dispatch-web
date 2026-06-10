@@ -1,5 +1,5 @@
 import type { StepId } from "@dispatch/wire";
-import { render, screen } from "@testing-library/svelte";
+import { render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RenderedChunk } from "../../core/chunks";
@@ -605,36 +605,54 @@ describe("Composer", () => {
 });
 
 describe("ModelSelector", () => {
-	it("renders the options and current selection", () => {
-		const models = ["openai/gpt-4", "anthropic/claude-3", "google/gemini"];
+	const optionValues = (el: HTMLElement): string[] =>
+		within(el)
+			.getAllByRole("option")
+			.map((o) => (o as HTMLOptionElement).value);
+
+	it("renders a key selector (distinct keys) and a model selector (models for the current key)", () => {
+		const models = ["openai/gpt-4", "openai/gpt-4o", "anthropic/claude-3", "google/gemini"];
 		render(ModelSelector, {
 			props: { models, selected: "anthropic/claude-3", onSelect: vi.fn() },
 		});
 
-		const select = screen.getByRole("combobox", { name: "Model selector" });
-		expect(select).toBeInTheDocument();
-		expect(select).toHaveValue("anthropic/claude-3");
+		const keySelect = screen.getByRole("combobox", { name: "Key selector" });
+		const modelSelect = screen.getByRole("combobox", { name: "Model selector" });
+		expect(keySelect).toHaveValue("anthropic");
+		expect(modelSelect).toHaveValue("claude-3");
 
-		const options = screen.getAllByRole("option");
-		expect(options).toHaveLength(3);
-		expect(options[0]).toHaveValue("openai/gpt-4");
-		expect(options[1]).toHaveValue("anthropic/claude-3");
-		expect(options[2]).toHaveValue("google/gemini");
+		expect(optionValues(keySelect)).toEqual(["openai", "anthropic", "google"]);
+		// only the models under the selected key
+		expect(optionValues(modelSelect)).toEqual(["claude-3"]);
 	});
 
-	it("calls onSelect on change", async () => {
+	it("selecting a key switches to the first model under it", async () => {
 		const onSelect = vi.fn();
 		const user = userEvent.setup();
-		const models = ["openai/gpt-4", "anthropic/claude-3"];
+		const models = ["openai/gpt-4", "openai/gpt-4o", "anthropic/claude-3"];
+
+		render(ModelSelector, {
+			props: { models, selected: "openai/gpt-4o", onSelect },
+		});
+
+		await user.selectOptions(screen.getByRole("combobox", { name: "Key selector" }), "anthropic");
+
+		expect(onSelect).toHaveBeenCalledTimes(1);
+		expect(onSelect).toHaveBeenCalledWith("anthropic/claude-3");
+	});
+
+	it("selecting a model keeps the current key", async () => {
+		const onSelect = vi.fn();
+		const user = userEvent.setup();
+		const models = ["openai/gpt-4", "openai/gpt-4o"];
 
 		render(ModelSelector, {
 			props: { models, selected: "openai/gpt-4", onSelect },
 		});
 
-		const select = screen.getByRole("combobox", { name: "Model selector" });
-		await user.selectOptions(select, "anthropic/claude-3");
+		await user.selectOptions(screen.getByRole("combobox", { name: "Model selector" }), "gpt-4o");
 
 		expect(onSelect).toHaveBeenCalledTimes(1);
-		expect(onSelect).toHaveBeenCalledWith("anthropic/claude-3");
+		expect(onSelect).toHaveBeenCalledWith("openai/gpt-4o");
 	});
 });
