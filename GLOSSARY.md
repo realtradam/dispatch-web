@@ -15,6 +15,10 @@
 | **AgentEvent** | An outward event the runtime emits during a turn (text-delta, tool-call, usage, done, turn-sealed, …). | — |
 | **model name** | The selectable id in `<credentialName>/<model>` form. | model id, model reference |
 | **model catalog** | The list of available model names. | model list |
+| **turn metrics** | The durable, replayable per-turn metrics record for a sealed turn: aggregate `Usage` (tokens) + turn `durationMs` + its per-step `StepMetrics` (`TurnMetrics`). Persisted backend-side keyed by `turnId`, served by `GET /conversations/:id/metrics`. The persisted counterpart of the live `done` event's metrics; the FE folds the SAME shape from the live `usage`/`step-complete`/`done` events for the in-flight turn. | usage record, turn stats |
+| **step metrics** | The durable per-step metrics within a `TurnMetrics`: the step's `Usage` (tokens) + `ttftMs`/`decodeMs`/`genTotalMs` timing, keyed by `stepId` (`StepMetrics`). The persisted counterpart of the live `usage` + `step-complete` events. | step stats |
+| **TTFT** (time to first token) | Per-step latency: generation stream start → first content token (text or reasoning). One per step (each step re-prefills). On the wire as `step-complete.ttftMs` / `StepMetrics.ttftMs` (optional). | time-to-first-byte |
+| **decode time** | Per-step generation time after the first token (first token → stream end = `genTotalMs − ttftMs`). On the wire as `step-complete.decodeMs` / `StepMetrics.decodeMs` (optional). | — |
 
 ## Frontend-specific
 | Term | Meaning | Aliases to avoid |
@@ -29,3 +33,5 @@
 | **feature module** | A self-contained FE feature (chat, history explorer, …); feature-as-a-library, composed at the root. | — |
 | **composition root** | The single place (`src/app/`) that imports + wires feature modules + the surface host. | — |
 | **surface interpreter** | The generic renderer: field kind → component. Knows kinds, never surface ids. | — |
+| **metrics bubble** | The FE chat element that renders a turn's **turn metrics** (one per-turn total) and **step metrics** (one per step) as muted system-style bubbles at a turn's tail. UI presentation of `TurnMetrics`/`StepMetrics`; never a surface. | telemetry bubble, usage bubble, stats bubble |
+| **TPS** (tokens per second) | A FE-DERIVED decode rate: `outputTokens / (decodeMs / 1000)` (per step; per turn over Σ `decodeMs`), falling back to `genTotalMs` when `decodeMs` is absent. The backend-recommended basis (excludes first-token latency). Not carried on the wire; omitted when timing is absent. | throughput |

@@ -2,6 +2,7 @@ import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
 	ConversationHistoryResponse,
+	ConversationMetricsResponse,
 	ModelsResponse,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
@@ -17,7 +18,7 @@ import {
 	subscribe as protocolSubscribe,
 	unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
-import type { ChatStore } from "../features/chat";
+import type { ChatStore, MetricsSync } from "../features/chat";
 import { createChatStore } from "../features/chat";
 import type { ConversationCache } from "../features/conversation-cache";
 import { createConversationCache } from "../features/conversation-cache";
@@ -73,6 +74,15 @@ function createHistorySync(
 	};
 }
 
+function createMetricsSync(httpBase: string, fetchImpl: typeof fetch): MetricsSync {
+	return async (conversationId: string) => {
+		const url = `${httpBase}/conversations/${encodeURIComponent(conversationId)}/metrics`;
+		const res = await fetchImpl(url);
+		if (!res.ok) return { turns: [] };
+		return (await res.json()) as ConversationMetricsResponse;
+	};
+}
+
 export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let protocol = $state<ProtocolState>(protocolInitialState());
 	let selectedId = $state<string | null>(null);
@@ -112,6 +122,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	);
 
 	const historySync = createHistorySync(httpBase, fetchImpl);
+	const metricsSync = createMetricsSync(httpBase, fetchImpl);
 
 	const chatStores = new Map<string, ChatStore>();
 
@@ -125,6 +136,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				},
 			},
 			historySync,
+			metricsSync,
 			cache,
 		});
 	}

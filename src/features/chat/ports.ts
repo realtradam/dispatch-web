@@ -1,4 +1,8 @@
-import type { ChatSendMessage, ConversationHistoryResponse } from "@dispatch/transport-contract";
+import type {
+	ChatSendMessage,
+	ConversationHistoryResponse,
+	ConversationMetricsResponse,
+} from "@dispatch/transport-contract";
 
 /** Injected transport port — sends chat messages to the server. */
 export interface ChatTransport {
@@ -10,3 +14,6 @@ export type HistorySync = (
 	conversationId: string,
 	sinceSeq: number,
 ) => Promise<ConversationHistoryResponse>;
+
+/** Injected metrics-sync port — fetches persisted per-turn metrics from the server. */
+export type MetricsSync = (conversationId: string) => Promise<ConversationMetricsResponse>;

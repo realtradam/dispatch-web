@@ -1,17 +1,33 @@
 <script lang="ts">
 	import { groupRenderedChunks, type RenderedChunk } from "../index";
+	import { interleaveTurnMetrics, viewStepMetrics, viewTurnMetrics, type TurnMetricsEntry } from "../../../core/metrics";
 
-	let { chunks }: { chunks: readonly RenderedChunk[] } = $props();
+	let {
+		chunks,
+		turnMetrics = [],
+	}: {
+		chunks: readonly RenderedChunk[];
+		turnMetrics?: readonly TurnMetricsEntry[];
+	} = $props();
 
 	const groups = $derived(groupRenderedChunks(chunks));
+
+	const rows = $derived(interleaveTurnMetrics(groups, turnMetrics));
 
 	// Stable per-row keys. Thinking blocks get an ordinal key (`think<n>`) that
 	// survives the provisional→committed (seq null → seq N) transition, so the
 	// collapse's open/close state is NOT lost when a turn seals. (App isolates
 	// these keys per conversation via {#key}.)
-	const rows = $derived.by(() => {
+	const keyedRows = $derived.by(() => {
 		let thinking = 0;
-		return groups.map((group, i) => {
+		return rows.map((row, i) => {
+			if (row.kind === "step-metrics") {
+				return { row, key: `s${row.step.stepId}` };
+			}
+			if (row.kind === "turn-metrics") {
+				return { row, key: `m${row.turn.turnId}` };
+			}
+			const group = row.group;
 			let key: string;
 			if (group.kind === "tool-batch") {
 				key = `b${group.stepId}`;
@@ -22,7 +38,7 @@
 			} else {
 				key = `p${i}`;
 			}
-			return { group, key };
+			return { row, key };
 		});
 	});
 </script>
@@ -102,9 +118,31 @@
 {/snippet}
 
 <div class="flex flex-col gap-2 p-4 pl-6" role="log" aria-live="polite">
-	{#each rows as { group, key } (key)}
-		{#if group.kind === "single"}
-			{@render chunkRow(group.chunk)}
+	{#each keyedRows as { row, key } (key)}
+		{#if row.kind === "step-metrics"}
+			{@const sv = viewStepMetrics(row.step, row.index)}
+			<div class="chat chat-start">
+				<div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
+					<div class="text-xs opacity-70">
+						{sv.label} · {sv.tokensLabel}
+						{#if sv.tps} · {sv.tps}{/if}
+						{#if sv.genTotal} · {sv.genTotal}{/if}
+					</div>
+				</div>
+			</div>
+		{:else if row.kind === "turn-metrics"}
+			{@const turnView = viewTurnMetrics(row.turn)}
+			<div class="chat chat-start">
+				<div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
+					<div class="text-xs opacity-70">
+						turn · {turnView.tokensLabel} ({turnView.breakdown})
+						{#if turnView.tps} · {turnView.tps}{/if}
+						{#if turnView.duration} · {turnView.duration}{/if}
+					</div>
+				</div>
+			</div>
+		{:else if row.group.kind === "single"}
+			{@render chunkRow(row.group.chunk)}
 		{:else}
 			<!-- Batched tool calls (one step): a single bubble holding a DaisyUI list,
 			     one row per call paired with its result. Same chat-start grid shim as
@@ -112,7 +150,7 @@
 			<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
 				<div class="chat-bubble bg-transparent">
 					<ul class="list w-fit max-w-full rounded-box bg-base-200 text-sm">
-						{#each group.entries as entry (entry.call.toolCallId)}
+						{#each row.group.entries as entry (entry.call.toolCallId)}
 							<li class="list-row">
 								<div>
 									<strong>{entry.call.toolName}</strong>

@@ -1,6 +1,6 @@
 import type { StoredChunk } from "@dispatch/wire";
 import type { ConversationCache } from "../conversation-cache";
-import type { ChatTransport, HistorySync } from "./ports";
+import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 
 export interface FakeTransport {
 	readonly sent: import("@dispatch/transport-contract").ChatSendMessage[];
@@ -42,6 +42,44 @@ export function createFakeHistorySync(): FakeHistorySync {
 			const chunks = returnChunks;
 			const latestSeq = chunks.length > 0 ? Math.max(...chunks.map((c) => c.seq)) : sinceSeq;
 			return { chunks, latestSeq };
+		},
+	};
+}
+
+export interface FakeMetricsSync {
+	readonly calls: string[];
+	returnTurns: import("@dispatch/wire").TurnMetrics[];
+	/** If set, the next call will reject with this error. */
+	nextError: string | undefined;
+	readonly impl: MetricsSync;
+}
+
+export function createFakeMetricsSync(): FakeMetricsSync {
+	const calls: string[] = [];
+	let returnTurns: import("@dispatch/wire").TurnMetrics[] = [];
+	let nextError: string | undefined;
+	return {
+		calls,
+		get returnTurns() {
+			return returnTurns;
+		},
+		set returnTurns(v: import("@dispatch/wire").TurnMetrics[]) {
+			returnTurns = v;
+		},
+		get nextError() {
+			return nextError;
+		},
+		set nextError(v: string | undefined) {
+			nextError = v;
+		},
+		impl: async (conversationId) => {
+			calls.push(conversationId);
+			if (nextError !== undefined) {
+				const err = nextError;
+				nextError = undefined;
+				throw new Error(err);
+			}
+			return { turns: returnTurns };
 		},
 	};
 }

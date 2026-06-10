@@ -5,17 +5,21 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.2.0`. Regenerate whenever it changes.
-> Depends on `@dispatch/wire@0.2.0` (see `wire.reference.md`) + `@dispatch/ui-contract`
-> (see `ui-contract.reference.md`).
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.4.0` (committed, backend `6db12ff`; the metrics
+> endpoint shipped + version-bumped + LIVE-VERIFIED). Depends on `@dispatch/wire@0.4.0` (see
+> `wire.reference.md`) + `@dispatch/ui-contract` (see `ui-contract.reference.md`).
 >
-> **0.2.0 change (step grouping):** no shape change HERE — this contract's own types are
-> identical. It only re-exports the bumped `@dispatch/wire`, whose `AgentEvent` tool variants
-> now carry a required `stepId` and whose tool `Chunk`s carry an optional `stepId`. The
-> `chat.delta` events streamed over WS and the `ConversationHistoryResponse.chunks` you already
-> consume therefore now carry the step grouping key (see `wire.reference.md`).
+> **0.3.0 change (token + timing metrics):** adds the durable metrics READ endpoint
+> `GET /conversations/:id/metrics` → `ConversationMetricsResponse` (`{ turns: TurnMetrics[] }`), and
+> re-exports `StepMetrics` / `TurnMetrics` from `@dispatch/wire`. This is a SEPARATE read axis from
+> the seq-cursor history (`GET /conversations/:id`): metrics are keyed PER TURN (not per chunk), so
+> they get their own route. `turns` is every SEALED turn's `TurnMetrics` in turn order (an in-flight
+> turn is absent until its metrics persist post-seal). The live `usage`/`step-complete`/`done`
+> packets it mirrors are transient (NOT persisted) and ride the `chat.delta`/NDJSON `AgentEvent`
+> stream you already consume — see `wire.reference.md`. The contract's OWN chat/history shapes are
+> otherwise unchanged from 0.2.0.
 
-## Endpoints (backend, confirmed live — CORS wildcard `*`, HTTP port 24203, WS port 24205)
+## Endpoints (backend — CORS wildcard `*`, HTTP port 24203, WS port 24205)
 
 - `POST /chat` — body `ChatRequest` (JSON); response NDJSON stream, one `AgentEvent` per line;
   resolved id also in `X-Conversation-Id` header.
@@ -23,6 +27,8 @@
 - `GET /conversations/:id?sinceSeq=<n>` — `ConversationHistoryResponse`: RAW, append-order,
   seq-ordered slice with `seq > n` (NOT reconciled — dangling tool-calls returned as-is).
   `latestSeq` = last chunk's `seq`, or the requested `sinceSeq` when caught up (empty `chunks`).
+- `GET /conversations/:id/metrics` — `ConversationMetricsResponse`: every SEALED turn's `TurnMetrics`
+  in turn order (per-turn token + timing; NOT seq-filtered). IMPLEMENTED + LIVE-VERIFIED (probe 17/17).
 - WebSocket on :24205 — ONE path-agnostic socket multiplexes surface ops
   (`@dispatch/ui-contract`) + chat ops (below). Open once, send `WsClientMessage`, receive
   `WsServerMessage`. Live `AgentEvent` deltas carry `conversationId`+`turnId` but **no `seq`**
@@ -42,9 +48,9 @@
  */
 
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
-import type { AgentEvent, StoredChunk } from "@dispatch/wire";
+import type { AgentEvent, StoredChunk, TurnMetrics } from "@dispatch/wire";
 
-export type { AgentEvent, StoredChunk } from "@dispatch/wire";
+export type { AgentEvent, StepMetrics, StoredChunk, TurnMetrics } from "@dispatch/wire";
 
 /**
  * Request body for `POST /chat` (sent as JSON).
@@ -86,6 +92,25 @@ export interface ModelsResponse {
 export interface ConversationHistoryResponse {
 	readonly chunks: readonly StoredChunk[];
 	readonly latestSeq: number;
+}
+
+/**
+ * Response body for `GET /conversations/:id/metrics` — the persisted per-turn
+ * (and per-step) token + timing metrics for a conversation, for a client
+ * reopening a past conversation to render historical usage/latency.
+ *
+ * This is a SEPARATE axis from the two other read concerns and is deliberately
+ * its own endpoint: the live `usage`/`step-complete`/`done` events are transient
+ * (not persisted), and `ConversationHistoryResponse` carries seq-cursor chunk
+ * CONTENT. Metrics are keyed per TURN (not per chunk) and so are not seq-filtered
+ * — hence a sibling route rather than a field on the history response.
+ *
+ * `turns` is every SEALED turn's `TurnMetrics` in turn order. A turn appears only
+ * after its metrics were persisted (post-seal); an in-flight or unsealed turn is
+ * absent until then.
+ */
+export interface ConversationMetricsResponse {
+	readonly turns: readonly TurnMetrics[];
 }
 
 // ─── WebSocket chat ops ───────────────────────────────────────────────────────
