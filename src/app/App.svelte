@@ -12,7 +12,13 @@
 
 	// The view kinds offered in the sidebar's dropdown. Generic data — the
 	// `viewContent` snippet below maps each kind id to its renderer.
-	const viewKinds = [{ id: "extensions", label: "Extensions" }] as const;
+	const viewKinds = [
+		{ id: "model", label: "Model" },
+		{ id: "extensions", label: "Extensions" },
+	] as const;
+
+	// Default sidebar layout: a Model panel on top, Extensions below.
+	const initialViews = ["model", "extensions"] as const;
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -100,14 +106,6 @@
 			</div>
 		{/if}
 
-		<div class="flex items-center gap-2 px-4 py-2">
-			<ModelSelector
-				models={store.models}
-				selected={store.activeModel}
-				onSelect={handleSelectModel}
-			/>
-		</div>
-
 		<div class="relative min-w-0 flex-1 overflow-y-auto">
 			{#key store.activeConversationId}
 				<ChatView chunks={store.activeChat.chunks} turnMetrics={store.activeChat.turnMetrics} />
@@ -137,7 +135,7 @@
 			class="flex h-full w-80 flex-col gap-2 overflow-y-auto border-l border-base-300 bg-base-100 p-3 transition-transform duration-300 ease-out"
 			style="transform: translateX({sidebarOpen ? '0' : '100%'})"
 		>
-			<ViewSidebar kinds={viewKinds} content={viewContent} />
+			<ViewSidebar kinds={viewKinds} initial={initialViews} content={viewContent} />
 		</div>
 	</aside>
 
@@ -158,7 +156,9 @@
 </main>
 
 {#snippet viewContent(kind: string)}
-	{#if kind === "extensions"}
+	{#if kind === "model"}
+		<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
+	{:else if kind === "extensions"}
 		<section>
 			<h3 class="mb-1 text-xs font-semibold uppercase opacity-60">Frontend modules</h3>
 			<Table columns={MODULE_COLUMNS} rows={loadedModules} />
