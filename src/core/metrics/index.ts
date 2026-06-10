@@ -1,4 +1,10 @@
-export { computeTps, viewStepMetrics, viewTurnMetrics } from "./format";
+export {
+	computeCachePct,
+	computeTps,
+	viewCacheRate,
+	viewStepMetrics,
+	viewTurnMetrics,
+} from "./format";
 export { interleaveTurnMetrics } from "./place";
 export {
 	applyDurableMetrics,
@@ -7,6 +13,7 @@ export {
 	selectOrderedTurnMetrics,
 } from "./reducer";
 export type {
+	CacheRateView,
 	MetricsRow,
 	MetricsState,
 	StepMetrics,

@@ -1,6 +1,12 @@
 import type { StepId, StepMetrics, TurnMetrics } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
-import { computeTps, viewStepMetrics, viewTurnMetrics } from "./format";
+import {
+	computeCachePct,
+	computeTps,
+	viewCacheRate,
+	viewStepMetrics,
+	viewTurnMetrics,
+} from "./format";
 
 describe("computeTps", () => {
 	it("null when elapsed missing", () => {
@@ -195,5 +201,51 @@ describe("viewTurnMetrics", () => {
 		// step1 uses decodeMs=800, step2 falls back to genTotalMs=2000 → total=2800ms
 		// 150 / (2800/1000) = 53.57 → rounds to 54
 		expect(view.tps).toBe("54 tok/s");
+	});
+});
+
+describe("computeCachePct", () => {
+	it("is cacheReadTokens / inputTokens as a rounded percentage", () => {
+		expect(computeCachePct({ inputTokens: 2737, outputTokens: 10, cacheReadTokens: 2560 })).toBe(
+			94,
+		);
+		expect(computeCachePct({ inputTokens: 2669, outputTokens: 10, cacheReadTokens: 384 })).toBe(14);
+	});
+
+	it("is 0 when cacheReadTokens absent (legitimate miss, not missing data)", () => {
+		expect(computeCachePct({ inputTokens: 1000, outputTokens: 50 })).toBe(0);
+	});
+
+	it("is 0 when there are no input tokens (guard divide-by-zero)", () => {
+		expect(computeCachePct({ inputTokens: 0, outputTokens: 0, cacheReadTokens: 5 })).toBe(0);
+	});
+
+	it("clamps to 100 if read somehow exceeds input", () => {
+		expect(computeCachePct({ inputTokens: 100, outputTokens: 0, cacheReadTokens: 250 })).toBe(100);
+	});
+});
+
+describe("viewCacheRate", () => {
+	it("success level for a high hit rate (>= 66)", () => {
+		const v = viewCacheRate({ inputTokens: 100, outputTokens: 0, cacheReadTokens: 93 });
+		expect(v.pct).toBe(93);
+		expect(v.level).toBe("success");
+		expect(v.isHit).toBe(true);
+	});
+
+	it("warning level for a mid hit rate (33..65)", () => {
+		const v = viewCacheRate({ inputTokens: 100, outputTokens: 0, cacheReadTokens: 54 });
+		expect(v.pct).toBe(54);
+		expect(v.level).toBe("warning");
+	});
+
+	it("error level for a low hit rate (< 33), including a legitimate 0%", () => {
+		expect(viewCacheRate({ inputTokens: 100, outputTokens: 0, cacheReadTokens: 14 }).level).toBe(
+			"error",
+		);
+		const miss = viewCacheRate({ inputTokens: 1000, outputTokens: 50 });
+		expect(miss.pct).toBe(0);
+		expect(miss.level).toBe("error");
+		expect(miss.isHit).toBe(false);
 	});
 });

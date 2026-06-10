@@ -1,6 +1,18 @@
 <script lang="ts">
 	import { groupRenderedChunks, type RenderedChunk } from "../index";
-	import { interleaveTurnMetrics, viewStepMetrics, viewTurnMetrics, type TurnMetricsEntry } from "../../../core/metrics";
+	import {
+		interleaveTurnMetrics,
+		viewCacheRate,
+		viewStepMetrics,
+		viewTurnMetrics,
+		type TurnMetricsEntry,
+	} from "../../../core/metrics";
+
+	const badgeClass = {
+		success: "badge-success",
+		warning: "badge-warning",
+		error: "badge-error",
+	} as const;
 
 	let {
 		chunks,
@@ -132,12 +144,26 @@
 			</div>
 		{:else if row.kind === "turn-metrics"}
 			{@const turnView = viewTurnMetrics(row.turn)}
+			{@const lastCache = viewCacheRate(row.turn.usage)}
+			{@const chatCache = viewCacheRate(row.cumulativeUsage)}
 			<div class="chat chat-start">
 				<div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
-					<div class="text-xs opacity-70">
-						turn · {turnView.tokensLabel} ({turnView.breakdown})
-						{#if turnView.tps} · {turnView.tps}{/if}
-						{#if turnView.duration} · {turnView.duration}{/if}
+					<div class="flex flex-col gap-1 text-xs">
+						<div class="opacity-70">
+							turn · {turnView.tokensLabel} ({turnView.breakdown})
+							{#if turnView.tps} · {turnView.tps}{/if}
+							{#if turnView.duration} · {turnView.duration}{/if}
+						</div>
+						<div class="flex flex-wrap items-center gap-x-3 gap-y-1">
+							<span class="flex items-center gap-1">
+								<span class="opacity-70">Last turn:</span>
+								<span class="badge badge-sm {badgeClass[lastCache.level]}">{lastCache.pct}%</span>
+							</span>
+							<span class="flex items-center gap-1">
+								<span class="opacity-70">Chat Total:</span>
+								<span class="badge badge-sm {badgeClass[chatCache.level]}">{chatCache.pct}%</span>
+							</span>
+						</div>
 					</div>
 				</div>
 			</div>

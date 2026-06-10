@@ -1,5 +1,5 @@
 import type { StepMetrics, TurnMetrics, Usage } from "@dispatch/wire";
-import type { StepMetricsView, TurnMetricsView } from "./types";
+import type { CacheRateView, StepMetricsView, TurnMetricsView } from "./types";
 
 function formatTokens(n: number): string {
 	return n.toLocaleString("en-US");
@@ -47,6 +47,32 @@ export function viewStepMetrics(step: StepMetrics, index: number): StepMetricsVi
 		decode: formatDuration(step.decodeMs),
 		genTotal: formatDuration(step.genTotalMs),
 	};
+}
+
+/**
+ * Cache hit rate as a 0..100 integer percentage: `cacheReadTokens / inputTokens`,
+ * clamped to [0,1]. Absent cache field counts as 0; a 0% rate is legitimate (not
+ * missing data). Returns 0 when there are no input tokens.
+ */
+export function computeCachePct(u: Usage): number {
+	const read = u.cacheReadTokens ?? 0;
+	if (u.inputTokens <= 0) return 0;
+	const rate = read / u.inputTokens;
+	const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
+	return Math.round(clamped * 100);
+}
+
+/** Colour severity for a cache hit percentage (badge colour). */
+function cacheLevel(pct: number): "success" | "warning" | "error" {
+	if (pct >= 66) return "success";
+	if (pct >= 33) return "warning";
+	return "error";
+}
+
+/** Build a view of a cache hit rate (percentage + colour level + hit flag). */
+export function viewCacheRate(u: Usage): CacheRateView {
+	const pct = computeCachePct(u);
+	return { pct, level: cacheLevel(pct), isHit: (u.cacheReadTokens ?? 0) > 0 };
 }
 
 /** Build a formatted view of a turn's aggregate metrics. */
