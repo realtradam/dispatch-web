@@ -1,7 +1,10 @@
 export {
+	type ContextUsage,
 	computeCachePct,
+	computeContextUsage,
 	computeExpectedCachePct,
 	computeTps,
+	formatCompactTokens,
 	formatContextSize,
 	viewCacheRate,
 	viewExpectedCache,

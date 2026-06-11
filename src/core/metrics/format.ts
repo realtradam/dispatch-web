@@ -28,6 +28,45 @@ export function formatContextSize(n: number | undefined): string {
 	return `${formatTokens(n)} tokens in context`;
 }
 
+/**
+ * Compact token count for a slim status bar: `812`, `12.3k`, `1.2M`. Full
+ * thousands-separated numbers live elsewhere; this trades precision for width.
+ */
+export function formatCompactTokens(n: number): string {
+	if (n < 1000) return `${n}`;
+	if (n < 1_000_000) {
+		const k = n / 1000;
+		return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+	}
+	const m = n / 1_000_000;
+	return `${m >= 100 ? Math.round(m) : m.toFixed(1)}M`;
+}
+
+/**
+ * Context-window occupancy: the current size against a max window limit.
+ *
+ * `current` is the latest turn's context size (0 when unknown); `max` is the
+ * model's window limit (or `null` when unknown). `percent` is
+ * `current / max * 100` clamped to [0, 100], UNROUNDED (the UI picks the
+ * precision) — so a few-thousand-token context against a 1,000,000 window still
+ * reads non-zero. `percent` is `null` when `max` is unknown (no bar/denominator).
+ */
+export interface ContextUsage {
+	readonly current: number;
+	readonly max: number | null;
+	readonly percent: number | null;
+}
+
+export function computeContextUsage(
+	contextSize: number | undefined,
+	contextLimit: number | null | undefined,
+): ContextUsage {
+	const current = contextSize ?? 0;
+	const max = typeof contextLimit === "number" && contextLimit > 0 ? contextLimit : null;
+	const percent = max === null ? null : Math.max(0, Math.min(100, (current / max) * 100));
+	return { current, max, percent };
+}
+
 /** Compute tokens-per-second. Returns null when elapsed time is absent or zero. */
 export function computeTps(outputTokens: number, elapsedMs: number | undefined): number | null {
 	if (elapsedMs === undefined || elapsedMs <= 0) return null;

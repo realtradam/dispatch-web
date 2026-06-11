@@ -111,11 +111,12 @@ harden `/chat` to treat blank as "not provided" if we ever want it — not neede
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
 - **Model max context-window LIMIT** (the denominator for context size) — the context-size handoff
-  flagged this as the separate, later field. The FE now shows current size alone (e.g. "34,102 tokens
-  in context"); once a per-model/per-turn `contextWindow` (max token capacity) ships, the FE can render
-  `contextSize / limit` (e.g. "34,102 / 200,000") + a usage bar. GLOSSARY term reserved: "context window"
-  = the limit (distinct from "context size" = current usage). **Likely the next ask** — raise when the
-  backend can source the model's advertised window.
+  flagged this as the separate, later field. **The FE already renders `contextSize / limit · pct%` + a
+  fill bar in the composer status bar, but the limit is currently HARDCODED to `1,000,000` as a
+  placeholder** (`MAX_CONTEXT` in `features/chat/ui/Composer.svelte`; GLOSSARY "context window" notes it).
+  When a per-model/per-turn `contextWindow` (max token capacity) ships, wire the real value through (drop
+  the hardcode) so the bar/percent are accurate. **Likely the next ask** — raise when the backend can
+  source the model's advertised window.
 - `GET /conversations` — conversation list / sidebar (history explorer / switcher); could also expose a
   per-conversation "last model" so a reopened tab seeds its model from the server instead of localStorage.
 - `POST /conversations/:id/cancel` — "stop generating".

@@ -2,8 +2,10 @@ import type { StepId, StepMetrics, TurnMetrics } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import {
 	computeCachePct,
+	computeContextUsage,
 	computeExpectedCachePct,
 	computeTps,
+	formatCompactTokens,
 	formatContextSize,
 	viewCacheRate,
 	viewExpectedCache,
@@ -321,5 +323,47 @@ describe("formatContextSize", () => {
 
 	it("renders an explicit 0 as zero tokens (a real reported value)", () => {
 		expect(formatContextSize(0)).toBe("0 tokens in context");
+	});
+});
+
+describe("formatCompactTokens", () => {
+	it("renders sub-1k counts as-is", () => {
+		expect(formatCompactTokens(0)).toBe("0");
+		expect(formatCompactTokens(812)).toBe("812");
+	});
+
+	it("renders thousands with one decimal (rounded ≥100k)", () => {
+		expect(formatCompactTokens(12300)).toBe("12.3k");
+		expect(formatCompactTokens(150000)).toBe("150k");
+	});
+
+	it("renders millions with one decimal", () => {
+		expect(formatCompactTokens(1_200_000)).toBe("1.2M");
+		expect(formatCompactTokens(1_000_000)).toBe("1.0M");
+	});
+});
+
+describe("computeContextUsage", () => {
+	it("computes an unrounded clamped percent against the limit", () => {
+		const u = computeContextUsage(34102, 1_000_000);
+		expect(u.current).toBe(34102);
+		expect(u.max).toBe(1_000_000);
+		expect(u.percent).toBeCloseTo(3.4102, 4);
+	});
+
+	it("treats unknown contextSize as current 0", () => {
+		const u = computeContextUsage(undefined, 1_000_000);
+		expect(u.current).toBe(0);
+		expect(u.percent).toBe(0);
+	});
+
+	it("clamps percent to [0,100] and over-limit reads 100", () => {
+		expect(computeContextUsage(2_000_000, 1_000_000).percent).toBe(100);
+	});
+
+	it("max null (no/zero limit) ⇒ percent null", () => {
+		expect(computeContextUsage(5000, null).percent).toBeNull();
+		expect(computeContextUsage(5000, 0).percent).toBeNull();
+		expect(computeContextUsage(5000, null).max).toBeNull();
 	});
 });
