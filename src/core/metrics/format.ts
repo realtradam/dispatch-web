@@ -75,6 +75,35 @@ export function viewCacheRate(u: Usage): CacheRateView {
 	return { pct, level: cacheLevel(pct), isHit: (u.cacheReadTokens ?? 0) > 0 };
 }
 
+/**
+ * Expected cache (retention): of the cache that existed going INTO this turn, how
+ * much was read back — `clamp01(cacheRead_N / (cacheRead_{N-1} + cacheWrite_{N-1}))`.
+ * The denominator is the PRIOR turn's cached prefix (what it read + what it wrote).
+ * Ideally ~100% on every turn after the first; <100% = the cache busted/expired.
+ *
+ * Returns `null` when it cannot be derived: no prior turn (`prev === null`) or the
+ * prior turn cached nothing (denominator <= 0) — distinct from a real 0%.
+ */
+export function computeExpectedCachePct(current: Usage, prev: Usage | null): number | null {
+	if (prev === null) return null;
+	const denom = (prev.cacheReadTokens ?? 0) + (prev.cacheWriteTokens ?? 0);
+	if (denom <= 0) return null;
+	const read = current.cacheReadTokens ?? 0;
+	const rate = read / denom;
+	const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
+	return Math.round(clamped * 100);
+}
+
+/**
+ * Build a view of the cross-turn retention (percentage + colour level + hit flag),
+ * or `null` when it can't be derived (see `computeExpectedCachePct`).
+ */
+export function viewExpectedCache(current: Usage, prev: Usage | null): CacheRateView | null {
+	const pct = computeExpectedCachePct(current, prev);
+	if (pct === null) return null;
+	return { pct, level: cacheLevel(pct), isHit: (current.cacheReadTokens ?? 0) > 0 };
+}
+
 /** Build a formatted view of a turn's aggregate metrics. */
 export function viewTurnMetrics(turn: TurnMetrics): TurnMetricsView {
 	const total = totalTokens(turn.usage);

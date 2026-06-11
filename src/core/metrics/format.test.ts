@@ -2,8 +2,10 @@ import type { StepId, StepMetrics, TurnMetrics } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import {
 	computeCachePct,
+	computeExpectedCachePct,
 	computeTps,
 	viewCacheRate,
+	viewExpectedCache,
 	viewStepMetrics,
 	viewTurnMetrics,
 } from "./format";
@@ -247,5 +249,62 @@ describe("viewCacheRate", () => {
 		expect(miss.pct).toBe(0);
 		expect(miss.level).toBe("error");
 		expect(miss.isHit).toBe(false);
+	});
+});
+
+describe("computeExpectedCachePct", () => {
+	it("null when there is no prior turn (first turn has no baseline)", () => {
+		expect(computeExpectedCachePct({ inputTokens: 100, outputTokens: 0 }, null)).toBeNull();
+	});
+
+	it("null when the prior turn cached nothing (denominator 0)", () => {
+		const prev = { inputTokens: 100, outputTokens: 0 };
+		const current = { inputTokens: 200, outputTokens: 0, cacheReadTokens: 50 };
+		expect(computeExpectedCachePct(current, prev)).toBeNull();
+	});
+
+	it("100% when the whole prior cached prefix was read back (backend worked example)", () => {
+		// turn 1: cacheRead 0, cacheWrite 5146 → prefix 5146; turn 2 reads 5146 back.
+		const prev = { inputTokens: 5149, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 5146 };
+		const current = {
+			inputTokens: 8462,
+			outputTokens: 0,
+			cacheReadTokens: 5146,
+			cacheWriteTokens: 3313,
+		};
+		expect(computeExpectedCachePct(current, prev)).toBe(100);
+	});
+
+	it("drops below 100% when the cache busted (read < prior prefix)", () => {
+		const prev = {
+			inputTokens: 1000,
+			outputTokens: 0,
+			cacheReadTokens: 100,
+			cacheWriteTokens: 900,
+		};
+		const current = { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 500 };
+		// 500 / (100 + 900) = 50%
+		expect(computeExpectedCachePct(current, prev)).toBe(50);
+	});
+
+	it("clamps to 100 if read somehow exceeds the prior prefix", () => {
+		const prev = { inputTokens: 100, outputTokens: 0, cacheWriteTokens: 100 };
+		const current = { inputTokens: 100, outputTokens: 0, cacheReadTokens: 250 };
+		expect(computeExpectedCachePct(current, prev)).toBe(100);
+	});
+});
+
+describe("viewExpectedCache", () => {
+	it("null view when it cannot be derived (no prior turn)", () => {
+		expect(viewExpectedCache({ inputTokens: 100, outputTokens: 0 }, null)).toBeNull();
+	});
+
+	it("success level + hit flag for full retention", () => {
+		const prev = { inputTokens: 5149, outputTokens: 0, cacheWriteTokens: 5146 };
+		const current = { inputTokens: 8462, outputTokens: 0, cacheReadTokens: 5146 };
+		const v = viewExpectedCache(current, prev);
+		expect(v?.pct).toBe(100);
+		expect(v?.level).toBe("success");
+		expect(v?.isHit).toBe(true);
 	});
 });

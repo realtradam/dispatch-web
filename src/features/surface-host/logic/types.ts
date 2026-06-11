@@ -31,6 +31,22 @@ export interface StatFieldView {
 	readonly value: string;
 }
 
+/**
+ * Normalised view-model for a number field — the free-value counterpart to
+ * selector. `min`/`max`/`step`/`unit` are optional semantic hints (absent when
+ * the spec omits them). The renderer posts the new number as the action payload.
+ */
+export interface NumberFieldView {
+	readonly kind: "number";
+	readonly label: string;
+	readonly value: number;
+	readonly min?: number;
+	readonly max?: number;
+	readonly step?: number;
+	readonly unit?: string;
+	readonly action: ActionRef;
+}
+
 /** Normalised view-model for a button field. */
 export interface ButtonFieldView {
 	readonly kind: "button";
@@ -55,6 +71,7 @@ export type FieldView =
 	| ProgressFieldView
 	| SelectorFieldView
 	| StatFieldView
+	| NumberFieldView
 	| ButtonFieldView
 	| CustomFieldView;
 

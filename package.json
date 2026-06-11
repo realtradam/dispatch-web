@@ -16,7 +16,11 @@
 	"dependencies": {
 		"@dispatch/transport-contract": "file:../arch-rewrite/packages/transport-contract",
 		"@dispatch/ui-contract": "file:../arch-rewrite/packages/ui-contract",
-		"@dispatch/wire": "file:../arch-rewrite/packages/wire"
+		"@dispatch/wire": "file:../arch-rewrite/packages/wire",
+		"dompurify": "^3.4.5",
+		"highlight.js": "^11.11.1",
+		"marked": "^18.0.4",
+		"marked-highlight": "^2.2.4"
 	},
 	"overrides": {
 		"@dispatch/ui-contract": "file:../arch-rewrite/packages/ui-contract",

@@ -1,8 +1,14 @@
 <script lang="ts">
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import Table from "../components/Table.svelte";
+	import {
+		CacheWarmingView,
+		manifest as cacheWarmingManifest,
+		type WarmFeedback,
+	} from "../features/cache-warming";
 	import { ChatView, Composer, manifest as chatManifest, ModelSelector } from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
+	import { manifest as markdownManifest } from "../features/markdown";
 	import { manifest as surfaceHostManifest, SurfaceView } from "../features/surface-host";
 	import { manifest as tabsManifest, TabBar } from "../features/tabs";
 	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
@@ -10,15 +16,22 @@
 
 	let { store }: { store: AppStore } = $props();
 
+	// The backend's conversation-scoped cache-warming surface. Referenced by id at
+	// the composition root (sanctioned discovery-by-id) to give it a dedicated view
+	// and keep it out of the generic Extensions surface list — SurfaceView itself
+	// stays fully generic (it never switches on a surface id).
+	const CACHE_WARMING_ID = "cache-warming";
+
 	// The view kinds offered in the sidebar's dropdown. Generic data — the
 	// `viewContent` snippet below maps each kind id to its renderer.
 	const viewKinds = [
 		{ id: "model", label: "Model" },
 		{ id: "extensions", label: "Extensions" },
+		{ id: "cache-warming", label: "Cache Warming" },
 	] as const;
 
-	// Default sidebar layout: a Model panel on top, Extensions below.
-	const initialViews = ["model", "extensions"] as const;
+	// Default sidebar layout: a Model panel on top, then Extensions, then Cache Warming.
+	const initialViews = ["model", "extensions", "cache-warming"] as const;
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -32,6 +45,8 @@
 		surfaceHostManifest,
 		viewsManifest,
 		conversationCacheManifest,
+		markdownManifest,
+		cacheWarmingManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Right sidebar: open by default on wide screens (pushes the chat aside),
@@ -50,6 +65,19 @@
 
 	function handleSelectModel(model: string) {
 		store.selectModel(model);
+	}
+
+	// Adapt the store's WarmResult to the cache-warming feature's WarmNow port.
+	async function warmNow(): Promise<WarmFeedback | null> {
+		const result = await store.warmNow();
+		if (result === null) return null;
+		return result.ok
+			? {
+					ok: true,
+					cachePct: result.response.cachePct,
+					expectedCacheRate: result.response.expectedCacheRate,
+				}
+			: { ok: false, error: result.error };
 	}
 </script>
 
@@ -165,9 +193,20 @@
 		</section>
 		<section class="mt-4 flex flex-col gap-3">
 			<h3 class="text-xs font-semibold uppercase opacity-60">Surfaces</h3>
-			{#each store.surfaces as spec (spec.id)}
+			{#each store.surfaces.filter((s) => s.id !== CACHE_WARMING_ID) as spec (spec.id)}
 				<SurfaceView {spec} onInvoke={handleInvoke} />
 			{/each}
 		</section>
+	{:else if kind === "cache-warming"}
+		<!-- Re-mount per conversation (like ChatView) so the view's local warming
+		     history / manual-warm feedback can't bleed across tabs. -->
+		{#key store.activeConversationId}
+			<CacheWarmingView
+				spec={store.surface(CACHE_WARMING_ID)}
+				canWarm={store.activeConversationId !== null}
+				onInvoke={handleInvoke}
+				{warmNow}
+			/>
+		{/key}
 	{/if}
 {/snippet}

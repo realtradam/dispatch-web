@@ -1,7 +1,9 @@
 export {
 	computeCachePct,
+	computeExpectedCachePct,
 	computeTps,
 	viewCacheRate,
+	viewExpectedCache,
 	viewStepMetrics,
 	viewTurnMetrics,
 } from "./format";

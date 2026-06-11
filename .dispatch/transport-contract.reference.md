@@ -9,6 +9,20 @@
 > endpoint shipped + version-bumped + LIVE-VERIFIED). Depends on `@dispatch/wire@0.4.0` (see
 > `wire.reference.md`) + `@dispatch/ui-contract` (see `ui-contract.reference.md`).
 >
+> **2026-06 delta (cache-warming handoff, additive — package still `0.4.0`):** adds
+> `POST /chat/warm` (`WarmRequest` → `WarmResponse`) for an on-demand prompt-cache warm, and the
+> throughput axis `GET /metrics/throughput` (`ThroughputResponse`/`ThroughputModelStat`/
+> `ThroughputPeriod`). The warm is NEVER persisted/streamed and NEVER folded into a conversation's
+> real usage. Pairs with the `cache-warming` conversation-scoped surface + `NumberField` in
+> `ui-contract.reference.md`.
+>
+> **2026-06-11 delta (cache-rate fix handoff, additive — package still `0.4.0`):** `WarmResponse`
+> gains `expectedCacheRate` (the warming HEALTH/retention signal,
+> `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)`). Consumed FE-side: headlined
+> on the "Warm now" result. (No `ui-contract` change — the `cache-warming` surface's new
+> `cache-warming-timer` payload + second "cache retention" `stat` ride the EXISTING `custom`/`stat`
+> kinds; the FE cache-warming feature parses them.)
+>
 > **0.3.0 change (token + timing metrics):** adds the durable metrics READ endpoint
 > `GET /conversations/:id/metrics` → `ConversationMetricsResponse` (`{ turns: TurnMetrics[] }`), and
 > re-exports `StepMetrics` / `TurnMetrics` from `@dispatch/wire`. This is a SEPARATE read axis from
@@ -29,6 +43,11 @@
   `latestSeq` = last chunk's `seq`, or the requested `sinceSeq` when caught up (empty `chunks`).
 - `GET /conversations/:id/metrics` — `ConversationMetricsResponse`: every SEALED turn's `TurnMetrics`
   in turn order (per-turn token + timing; NOT seq-filtered). IMPLEMENTED + LIVE-VERIFIED (probe 17/17).
+- `POST /chat/warm` — body `WarmRequest` (JSON) → `200 WarmResponse` (cache-warm usage incl.
+  `cachePct`); `409 { error }` when the conversation is currently generating; `400 { error }` on a
+  missing/invalid `conversationId`. The warm is NEVER persisted/streamed/folded into real usage.
+- `GET /metrics/throughput?period=day|week|month&date=<...>` — `ThroughputResponse` (token-weighted
+  tokens/sec per model over the window). Not part of cache-warming; listed for completeness.
 - WebSocket on :24205 — ONE path-agnostic socket multiplexes surface ops
   (`@dispatch/ui-contract`) + chat ops (below). Open once, send `WsClientMessage`, receive
   `WsServerMessage`. Live `AgentEvent` deltas carry `conversationId`+`turnId` but **no `seq`**
@@ -111,6 +130,66 @@ export interface ConversationHistoryResponse {
  */
 export interface ConversationMetricsResponse {
 	readonly turns: readonly TurnMetrics[];
+}
+
+/** The aggregation window for `GET /metrics/throughput`. */
+export type ThroughputPeriod = "day" | "week" | "month";
+
+/** One model's token-weighted throughput over a period. */
+export interface ThroughputModelStat {
+	readonly model: string;
+	readonly tokensPerSecond: number;
+	readonly totalOutputTokens: number;
+	readonly totalGenMs: number;
+	readonly turns: number;
+}
+
+/** Response body for `GET /metrics/throughput?period=...&date=...`. */
+export interface ThroughputResponse {
+	readonly period: ThroughputPeriod;
+	readonly date: string;
+	readonly start: number; // inclusive window start, epoch-ms
+	readonly end: number; // exclusive window end, epoch-ms
+	readonly models: readonly ThroughputModelStat[];
+}
+
+/**
+ * Request body for `POST /chat/warm` — manually trigger a prompt-cache WARMING
+ * request for a conversation (e.g. a "warm now" button). The warm replays the
+ * conversation's existing prefix to refresh the provider cache; it is NEVER
+ * persisted and NEVER streamed. Pass the SAME `model`/`cwd` the conversation
+ * chats with so the prefix is byte-identical to a real turn (that's the cache hit).
+ */
+export interface WarmRequest {
+	readonly conversationId: string;
+	readonly model?: string; // `<credentialName>/<model>`; omit = server default
+	readonly cwd?: string;
+}
+
+/**
+ * Response body for `POST /chat/warm` (HTTP 200). The warm's usage — never folded
+ * into the conversation's real usage. A client surfaces `cachePct` as the "last
+ * warming" cache-hit indicator. A 409 (currently generating) returns `{ error }` instead.
+ */
+export interface WarmResponse {
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly cacheReadTokens: number;
+	readonly cacheWriteTokens: number;
+	/**
+	 * **Cache rate** — what fraction of THIS request's prompt was served from cache:
+	 * `round(cacheReadTokens / inputTokens * 100)` (0 when `inputTokens <= 0`).
+	 * (`inputTokens` is the TOTAL prompt incl. cached, so this is in [0,100].)
+	 */
+	readonly cachePct: number;
+	/**
+	 * **Expected cache (retention)** — of the cacheable prefix this warm touched, how
+	 * much was still warm and read back vs. had to be (re)written:
+	 * `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)` (0 when the
+	 * sum is 0). For a healthy warm this is ~**100%**; it drops toward 0 as the cache
+	 * expires/busts. This is the warming HEALTH signal — headline it for "Warm now".
+	 */
+	readonly expectedCacheRate: number;
 }
 
 // ─── WebSocket chat ops ───────────────────────────────────────────────────────

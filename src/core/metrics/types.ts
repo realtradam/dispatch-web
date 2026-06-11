@@ -52,6 +52,11 @@ export type MetricsRow =
 			readonly turn: TurnMetrics;
 			/** Cumulative usage across all finalized turns up to and including this one. */
 			readonly cumulativeUsage: Usage;
+			/**
+			 * Usage of the most recent EARLIER finalized turn, or `null` when this is the
+			 * first finalized turn. The baseline for cross-turn retention (expected cache).
+			 */
+			readonly prevTurnUsage: Usage | null;
 	  };
 
 /** Formatted cache hit-rate view: percentage + colour severity + hit flag. */

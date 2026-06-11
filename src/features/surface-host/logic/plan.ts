@@ -1,7 +1,21 @@
 import type { InvokeMessage, SurfaceSpec } from "@dispatch/ui-contract";
-import type { FieldView, RenderGroup, StatFieldView, SurfaceRenderPlan } from "./types";
+import type {
+	FieldView,
+	NumberFieldView,
+	RenderGroup,
+	StatFieldView,
+	SurfaceRenderPlan,
+} from "./types";
 
-const KNOWN_KINDS = new Set(["toggle", "progress", "selector", "stat", "button", "custom"]);
+const KNOWN_KINDS = new Set([
+	"toggle",
+	"progress",
+	"selector",
+	"stat",
+	"number",
+	"button",
+	"custom",
+]);
 
 /**
  * Validate and normalise a SurfaceSpec into a renderable plan.
@@ -46,6 +60,21 @@ export function planSurface(spec: SurfaceSpec): SurfaceRenderPlan {
 					value: field.value,
 				});
 				break;
+			case "number": {
+				// Carry optional hints only when present (exactOptionalPropertyTypes).
+				const view: NumberFieldView = {
+					kind: "number",
+					label: field.label,
+					value: field.value,
+					action: field.action,
+					...(field.min !== undefined ? { min: field.min } : {}),
+					...(field.max !== undefined ? { max: field.max } : {}),
+					...(field.step !== undefined ? { step: field.step } : {}),
+					...(field.unit !== undefined ? { unit: field.unit } : {}),
+				};
+				fields.push(view);
+				break;
+			}
 			case "button":
 				fields.push({
 					kind: "button",

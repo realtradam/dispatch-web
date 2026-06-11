@@ -4,6 +4,8 @@ import type {
 	ConversationHistoryResponse,
 	ConversationMetricsResponse,
 	ModelsResponse,
+	WarmRequest,
+	WarmResponse,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
 import { createIdbChunkStore } from "../adapters/idb";
@@ -12,6 +14,7 @@ import type { WebSocketLike } from "../adapters/ws";
 import { createSurfaceSocket, type SurfaceSocketOptions } from "../adapters/ws";
 import {
 	applyServerMessage,
+	getSurfaceSpec,
 	type ProtocolState,
 	initialState as protocolInitialState,
 	invoke as protocolInvoke,
@@ -30,6 +33,11 @@ import { randomId } from "./uuid";
 
 const DEFAULT_MODEL = "opencode/deepseek-v4-flash";
 
+/** Outcome of a manual `POST /chat/warm` (the "warm now" affordance). */
+export type WarmResult =
+	| { readonly ok: true; readonly response: WarmResponse }
+	| { readonly ok: false; readonly error: string };
+
 export interface AppStore {
 	readonly tabs: readonly Tab[];
 	readonly activeConversationId: string | null;
@@ -40,12 +48,19 @@ export interface AppStore {
 	/** Every received surface spec, in catalog order — all auto-subscribed + expanded. */
 	readonly surfaces: readonly SurfaceSpec[];
 	readonly lastError: ProtocolState["lastError"];
+	/** The current spec for one surface by id (discovery-by-id), or null if absent. */
+	surface(surfaceId: string): SurfaceSpec | null;
 	send(text: string): void;
 	selectModel(model: string): void;
 	newDraft(): void;
 	selectTab(conversationId: string): void;
 	closeTab(conversationId: string): void;
 	invoke(surfaceId: string, actionId: string, payload?: unknown): void;
+	/**
+	 * Manually warm the focused conversation's prompt cache (`POST /chat/warm`).
+	 * Returns null when no conversation is focused (a draft has nothing to warm).
+	 */
+	warmNow(): Promise<WarmResult | null>;
 	dispose(): void;
 }
 
@@ -179,6 +194,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		}
 	}
 
+	/** The conversation the surfaces should scope to (undefined for a draft). */
+	function focusedConversationId(): string | undefined {
+		return tabsStore.activeConversationId ?? undefined;
+	}
+
 	function handleServerMessage(msg: SurfaceServerMessage): void {
 		protocol = applyServerMessage(protocol, msg);
 		// Surfaces are auto-expanded: whenever the catalog changes, subscribe to
@@ -188,10 +208,16 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		}
 	}
 
-	/** Subscribe to every catalog entry not yet subscribed; unsubscribe stragglers. */
+	/**
+	 * Subscribe to every catalog entry, scoped to the focused conversation, and
+	 * unsubscribe stragglers. Re-run on conversation switch: a conversation-scoped
+	 * surface (e.g. cache-warming) re-scopes to the new id (`protocolSubscribe`
+	 * emits unsubscribe-old + subscribe-new); a global surface ignores the id.
+	 */
 	function syncSubscriptions(): void {
+		const cid = focusedConversationId();
 		for (const entry of protocol.catalog) {
-			const result = protocolSubscribe(protocol, entry.id);
+			const result = protocolSubscribe(protocol, entry.id, cid);
 			protocol = result.state;
 			for (const msg of result.outgoing) {
 				socket?.send(msg);
@@ -216,11 +242,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		onMessage: handleServerMessage,
 		onChat: handleChatMessage,
 		onReopen() {
-			// The server forgot our subscriptions on reconnect; re-send for all
-			// catalog entries (protocolSubscribe would no-op since they're still in
-			// our local map, so emit the wire messages directly).
-			for (const entry of protocol.catalog) {
-				const msg: SubscribeMessage = { type: "subscribe", surfaceId: entry.id };
+			// The server forgot our subscriptions on reconnect; re-send each with the
+			// conversation it was subscribed under (protocolSubscribe would no-op since
+			// they're still in our local map, so emit the wire messages directly).
+			for (const [surfaceId, sub] of protocol.subscriptions) {
+				const msg: SubscribeMessage =
+					sub.conversationId === undefined
+						? { type: "subscribe", surfaceId }
+						: { type: "subscribe", surfaceId, conversationId: sub.conversationId };
 				socket?.send(msg);
 			}
 		},
@@ -292,13 +321,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get surfaces(): readonly SurfaceSpec[] {
 			const out: SurfaceSpec[] = [];
 			for (const entry of protocol.catalog) {
-				const spec = protocol.subscriptions.get(entry.id);
+				const spec = getSurfaceSpec(protocol, entry.id);
 				if (spec) out.push(spec);
 			}
 			return out;
 		},
 		get lastError() {
 			return protocol.lastError;
+		},
+
+		surface(surfaceId: string): SurfaceSpec | null {
+			return getSurfaceSpec(protocol, surfaceId);
 		},
 
 		send(text: string): void {
@@ -320,6 +353,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				draftConversationId = nextDraftId;
 
 				refreshActiveChat();
+				// The draft became a real conversation: re-scope conversation-scoped
+				// surfaces (e.g. cache-warming) to its id.
+				syncSubscriptions();
 				// Now send on the promoted store
 				chatStores.get(conversationId)?.send(text);
 			} else {
@@ -344,6 +380,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			draftStore = createChatFor(nextDraftId, activeModel);
 			draftConversationId = nextDraftId;
 			refreshActiveChat();
+			syncSubscriptions();
 		},
 
 		selectTab(conversationId: string): void {
@@ -353,6 +390,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				activeModel = tab.model;
 			}
 			refreshActiveChat();
+			syncSubscriptions();
 		},
 
 		closeTab(conversationId: string): void {
@@ -364,13 +402,40 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			}
 			void cache.delete(conversationId);
 			refreshActiveChat();
+			syncSubscriptions();
 		},
 
 		invoke(surfaceId: string, actionId: string, payload?: unknown): void {
-			const result = protocolInvoke(protocol, surfaceId, actionId, payload);
+			const result = protocolInvoke(
+				protocol,
+				surfaceId,
+				actionId,
+				payload,
+				focusedConversationId(),
+			);
 			protocol = result.state;
 			for (const msg of result.outgoing) {
 				socket?.send(msg);
+			}
+		},
+
+		async warmNow(): Promise<WarmResult | null> {
+			const conversationId = tabsStore.activeConversationId;
+			if (conversationId === null) return null;
+			const body: WarmRequest = { conversationId, model: activeModel };
+			try {
+				const res = await fetchImpl(`${httpBase}/chat/warm`, {
+					method: "POST",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				});
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return { ok: false, error: errBody?.error ?? `Warm failed (HTTP ${res.status})` };
+				}
+				return { ok: true, response: (await res.json()) as WarmResponse };
+			} catch (err) {
+				return { ok: false, error: err instanceof Error ? err.message : "Warm request failed" };
 			}
 		},
 		dispose(): void {
