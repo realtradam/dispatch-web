@@ -2,6 +2,7 @@
 	import type { InvokeMessage, SurfaceSpec } from "@dispatch/ui-contract";
 	import { groupRenderFields, planSurface } from "../logic/plan";
 	import Button from "./Button.svelte";
+	import Number from "./Number.svelte";
 	import Progress from "./Progress.svelte";
 	import Selector from "./Selector.svelte";
 	import StatTable from "./StatTable.svelte";
@@ -30,6 +31,8 @@
 			<Progress field={group.field} />
 		{:else if group.field.kind === "selector"}
 			<Selector field={group.field} surfaceId={spec.id} {onInvoke} />
+		{:else if group.field.kind === "number"}
+			<Number field={group.field} surfaceId={spec.id} {onInvoke} />
 		{:else if group.field.kind === "button"}
 			<Button field={group.field} surfaceId={spec.id} {onInvoke} />
 		{:else if group.field.kind === "custom"}

@@ -79,11 +79,19 @@ export function interleaveTurnMetrics(
 	}
 
 	// Running cumulative usage across finalized turns (conversation total at each
-	// entry index), for the per-turn "chat total" cache rate.
+	// entry index), for the per-turn "chat total" cache rate. Alongside it, the
+	// previous finalized turn's usage at each index — the baseline for cross-turn
+	// retention (expected cache).
 	const cumulativeByEntry: Usage[] = [];
+	const prevUsageByEntry: (Usage | null)[] = [];
 	let runningUsage: Usage = { inputTokens: 0, outputTokens: 0 };
+	let lastFinalizedUsage: Usage | null = null;
 	for (const e of entries) {
-		if (e.total !== null) runningUsage = addUsage(runningUsage, e.total.usage);
+		prevUsageByEntry.push(lastFinalizedUsage);
+		if (e.total !== null) {
+			runningUsage = addUsage(runningUsage, e.total.usage);
+			lastFinalizedUsage = e.total.usage;
+		}
 		cumulativeByEntry.push(runningUsage);
 	}
 
@@ -170,6 +178,7 @@ export function interleaveTurnMetrics(
 				kind: "turn-metrics",
 				turn: entry.total,
 				cumulativeUsage: cumulativeByEntry[seg] ?? entry.total.usage,
+				prevTurnUsage: prevUsageByEntry[seg] ?? null,
 			});
 		}
 	}

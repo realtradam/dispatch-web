@@ -3,10 +3,12 @@
 	import {
 		interleaveTurnMetrics,
 		viewCacheRate,
+		viewExpectedCache,
 		viewStepMetrics,
 		viewTurnMetrics,
 		type TurnMetricsEntry,
 	} from "../../../core/metrics";
+	import { Markdown } from "../../markdown";
 
 	const badgeClass = {
 		success: "badge-success",
@@ -113,7 +115,7 @@
 		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl">
 			<div class="chat-bubble w-full bg-transparent">
 				{#if rendered.chunk.type === "text"}
-					<p>{rendered.chunk.text}</p>
+					<Markdown text={rendered.chunk.text} streaming={rendered.streaming ?? false} />
 				{:else if rendered.chunk.type === "error"}
 					<div class="text-error" role="alert">
 						{rendered.chunk.message}
@@ -146,6 +148,7 @@
 			{@const turnView = viewTurnMetrics(row.turn)}
 			{@const lastCache = viewCacheRate(row.turn.usage)}
 			{@const chatCache = viewCacheRate(row.cumulativeUsage)}
+			{@const retention = viewExpectedCache(row.turn.usage, row.prevTurnUsage)}
 			<div class="chat chat-start">
 				<div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
 					<div class="flex flex-col gap-1 text-xs">
@@ -163,6 +166,12 @@
 								<span class="opacity-70">Chat Total:</span>
 								<span class="badge badge-sm {badgeClass[chatCache.level]}">{chatCache.pct}%</span>
 							</span>
+							{#if retention}
+								<span class="flex items-center gap-1">
+									<span class="opacity-70">Retention:</span>
+									<span class="badge badge-sm {badgeClass[retention.level]}">{retention.pct}%</span>
+								</span>
+							{/if}
 						</div>
 					</div>
 				</div>

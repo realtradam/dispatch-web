@@ -526,4 +526,17 @@ describe("interleaveTurnMetrics — cumulative usage (cache total)", () => {
 		expect(tm[0]?.cumulativeUsage.inputTokens).toBe(1000);
 		expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(500);
 	});
+
+	it("carries the prior finalized turn's usage as the retention baseline", () => {
+		const rows = interleaveTurnMetrics(
+			[userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
+			[cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
+		);
+		const tm = turnMetricsRows(rows);
+		// first finalized turn has no earlier baseline
+		expect(tm[0]?.prevTurnUsage).toBeNull();
+		// second turn's baseline is the first turn's usage
+		expect(tm[1]?.prevTurnUsage?.inputTokens).toBe(2669);
+		expect(tm[1]?.prevTurnUsage?.cacheReadTokens).toBe(384);
+	});
 });

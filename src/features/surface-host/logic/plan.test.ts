@@ -57,6 +57,47 @@ describe("planSurface", () => {
 		expect(plan.fields).toEqual([{ kind: "stat", label: "Tokens", value: "1,234" }]);
 	});
 
+	it("maps a number field to a NumberFieldView, carrying optional hints", () => {
+		const plan = planSurface(
+			makeSpec({
+				kind: "number",
+				label: "Interval",
+				value: 240,
+				min: 1,
+				step: 1,
+				unit: "s",
+				action: { actionId: "cache-warming/set-interval" },
+			}),
+		);
+		expect(plan.fields).toEqual([
+			{
+				kind: "number",
+				label: "Interval",
+				value: 240,
+				min: 1,
+				step: 1,
+				unit: "s",
+				action: { actionId: "cache-warming/set-interval" },
+			},
+		]);
+	});
+
+	it("omits absent number hints (no max key when undefined)", () => {
+		const plan = planSurface(
+			makeSpec({
+				kind: "number",
+				label: "Interval",
+				value: 240,
+				min: 1,
+				action: { actionId: "set" },
+			}),
+		);
+		const field = plan.fields[0];
+		expect(field).not.toHaveProperty("max");
+		expect(field).not.toHaveProperty("step");
+		expect(field).not.toHaveProperty("unit");
+	});
+
 	it("maps a button field to a ButtonFieldView", () => {
 		const plan = planSurface(
 			makeSpec({ kind: "button", label: "Retry", action: { actionId: "retry" } }),

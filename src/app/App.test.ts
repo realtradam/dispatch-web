@@ -388,7 +388,14 @@ describe("App component interaction tests", () => {
 
 		// Extensions is the default view, so the modules table renders immediately.
 		expect(screen.getByRole("columnheader", { name: "Module" })).toBeInTheDocument();
-		for (const name of ["chat", "tabs", "surface-host", "views", "conversation-cache"]) {
+		for (const name of [
+			"chat",
+			"tabs",
+			"surface-host",
+			"views",
+			"conversation-cache",
+			"markdown",
+		]) {
 			expect(screen.getByRole("cell", { name })).toBeInTheDocument();
 		}
 
