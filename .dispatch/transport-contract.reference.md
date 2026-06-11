@@ -23,6 +23,16 @@
 > `cache-warming-timer` payload + second "cache retention" `stat` ride the EXISTING `custom`/`stat`
 > kinds; the FE cache-warming feature parses them.)
 >
+> **2026-06-11 delta (LSP + cwd handoff — package bumped to `0.5.0`):** adds per-conversation working
+> directory `GET /conversations/:id/cwd` + `PUT /conversations/:id/cwd` (`CwdResponse`/`SetCwdRequest`,
+> CORS now allows `PUT`) and per-conversation LSP status `GET /conversations/:id/lsp`
+> (`LspStatusResponse`/`LspServerInfo`/`LspServerState`). The LSP GET LAZILY spawns+initializes the
+> configured servers (can take a moment the first time per cwd; cached after) and returns once each
+> server settles to `connected`/`error`. `servers` is `[]` when `cwd` is null. A `/chat`(`/warm`)
+> request that omits `cwd` now defaults to the conversation's persisted cwd; one that sends `cwd`
+> persists it. Consumed FE-side by the `workspace` feature (cwd field in the Model view + a
+> "Language Servers" view).
+>
 > **0.3.0 change (token + timing metrics):** adds the durable metrics READ endpoint
 > `GET /conversations/:id/metrics` → `ConversationMetricsResponse` (`{ turns: TurnMetrics[] }`), and
 > re-exports `StepMetrics` / `TurnMetrics` from `@dispatch/wire`. This is a SEPARATE read axis from
@@ -48,6 +58,12 @@
   missing/invalid `conversationId`. The warm is NEVER persisted/streamed/folded into real usage.
 - `GET /metrics/throughput?period=day|week|month&date=<...>` — `ThroughputResponse` (token-weighted
   tokens/sec per model over the window). Not part of cache-warming; listed for completeness.
+- `GET /conversations/:id/cwd` — `CwdResponse` (`cwd` is `null` until set).
+- `PUT /conversations/:id/cwd` — body `SetCwdRequest` → `200 CwdResponse`; `400 { error }` if `cwd`
+  missing/empty. CORS allows `PUT`.
+- `GET /conversations/:id/lsp` — `LspStatusResponse`. LAZILY spawns+initializes the configured servers
+  on the first call per cwd (can take a moment; cached after); returns once each settles to
+  `connected`/`error`. `servers` is `[]` when `cwd` is null.
 - WebSocket on :24205 — ONE path-agnostic socket multiplexes surface ops
   (`@dispatch/ui-contract`) + chat ops (below). Open once, send `WsClientMessage`, receive
   `WsServerMessage`. Live `AgentEvent` deltas carry `conversationId`+`turnId` but **no `seq`**
@@ -190,6 +206,49 @@ export interface WarmResponse {
 	 * expires/busts. This is the warming HEALTH signal — headline it for "Warm now".
 	 */
 	readonly expectedCacheRate: number;
+}
+
+// ─── Per-conversation working directory (cwd) ─────────────────────────────────
+
+/** Response of `GET /conversations/:id/cwd`. `cwd` is null when never set. */
+export interface CwdResponse {
+	readonly conversationId: string;
+	readonly cwd: string | null;
+}
+
+/** Body of `PUT /conversations/:id/cwd`. */
+export interface SetCwdRequest {
+	readonly cwd: string;
+}
+
+// ─── Per-conversation LSP status ──────────────────────────────────────────────
+
+/** The connection state of a single language server for a workspace. */
+export type LspServerState = "connected" | "starting" | "error" | "not-started";
+
+/** One language server's status as reported to the frontend. */
+export interface LspServerInfo {
+	/** Stable server id, e.g. "typescript", "luau-lsp". */
+	readonly id: string;
+	/** Human-readable display name. */
+	readonly name: string;
+	/** The resolved workspace root the server is (or would be) rooted at (absolute). */
+	readonly root: string;
+	/** File extensions this server handles, e.g. [".ts", ".tsx"] or [".luau"]. */
+	readonly extensions: readonly string[];
+	/** Current connection state. */
+	readonly state: LspServerState;
+	/** Present only when `state === "error"`: a short human-readable reason. */
+	readonly error?: string;
+}
+
+/** Response of `GET /conversations/:id/lsp`. */
+export interface LspStatusResponse {
+	readonly conversationId: string;
+	/** The conversation's persisted cwd, or null if unset (then `servers` is empty). */
+	readonly cwd: string | null;
+	/** The language servers configured for `cwd` and their live state. */
+	readonly servers: readonly LspServerInfo[];
 }
 
 // ─── WebSocket chat ops ───────────────────────────────────────────────────────

@@ -5,39 +5,33 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-11 — **Cache-rate fix + retention + CR-3 consumed FE-side** (from `frontend-cache-warming-handoff.md`): (1) per-turn cache rate now reads true on Claude (no FE change); (2) NEW cross-turn **expected cache (retention)** metric in the chat metrics bubble (`computeExpectedCachePct`/`viewExpectedCache`); (3) **CR-3 DONE & consumed** — the countdown is now AUTHORITATIVE off the surface's `cache-warming-timer` `nextWarmAt`/`lastWarmAt` (FE guessing dropped), history keyed off `lastWarmAt`, and `WarmResponse.expectedCacheRate` headlined on "Warm now"; (4) second "cache retention" `stat` parsed. transport mirror regenerated. **Earlier (same day):** `NumberField` + conversation-scoped subscriptions + "Cache Warming" sidebar view. Open asks: CR-1 (Loaded Extensions as a real multi-column table); CR-2 (optional catalog `scope` flag). **CR-3 is RESOLVED** (see §2)._
+_Last updated: 2026-06-11. **FE is current on `transport-contract@0.5.0`.** All handoffs to date are
+consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming (incl.
+authoritative timer + retention + cache-rate fix), and **per-conversation cwd + LSP status** (new
+`workspace` feature — cwd field in the Model view + a "Language Servers" view; works for drafts too).
+**Open asks:** CR-1 (Loaded Extensions as a real table) + CR-2 (optional catalog `scope` flag) below.
+The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed** by the
+backend (answers in their `frontend-lsp-cwd-handoff.md`) — see §2._
 
 ---
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.1.0`; `wire@0.4.0`; `transport-contract@0.4.0`**.
+Pinned as `file:` deps: **`ui-contract@0.1.0`; `wire@0.4.0`; `transport-contract@0.5.0`**.
 
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
 | `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs` |
-| `@dispatch/transport-contract` | `ChatRequest`/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + WS chat ops + `WsClientMessage`/`WsServerMessage` |
+| `@dispatch/transport-contract` | `ChatRequest`/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
-Endpoints in use (HTTP **24203**, WS **24205**, CORS `*`):
+Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` · `GET /conversations/:id?sinceSeq=<n>` ·
-`GET /conversations/:id/metrics` · WS `chat.send`→`chat.delta`.
+`GET /conversations/:id/metrics` · `GET`/`PUT /conversations/:id/cwd` ·
+`GET /conversations/:id/lsp` · `POST /chat/warm` · WS `chat.send`→`chat.delta`.
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
-(regenerate on any contract bump).
-
-**2026-06-11 re-mirror (cache-warming).** Both `ui-contract` and `transport-contract` were left at their
-existing versions by the backend (`ui-contract@0.1.0`, `transport-contract@0.4.0`) but gained ADDITIVE
-members; the `file:` deps already resolve them. The FE mirrors were regenerated to match:
-- `ui-contract.reference.md`: `NumberField` (`kind:"number"`) + optional `conversationId?` on
-  `Subscribe`/`Unsubscribe`/`Invoke`/`Surface`/`SurfaceUpdate`.
-- `transport-contract.reference.md`: `POST /chat/warm` (`WarmRequest`/`WarmResponse`) + the throughput
-  axis (`GET /metrics/throughput`, `ThroughputResponse`/`ThroughputModelStat`/`ThroughputPeriod`).
-- FE consumed: generic `number` renderer; protocol keyed by `surfaceId` carrying the focused
-  conversationId with a staleness rule (drop a `surface`/`update` echoing a non-current conversation;
-  a global no-echo reply is always accepted); store auto-subscribes every catalog surface with the
-  focused conversationId and re-scopes on conversation switch; `warmNow()` posts `/chat/warm` with the
-  conversation's current model name.
+(regenerate on any contract bump; all current as of `transport-contract@0.5.0`).
 
 ## 2. Open asks FOR THE BACKEND
 
@@ -90,24 +84,26 @@ trip per global surface per switch; no user-visible bug, the old spec is retaine
 flicker). An optional `scope?: "global" | "conversation"` on `SurfaceCatalogEntry` would let the FE
 skip re-subscribing globals on switch. **Not blocking** — only raise if cheap.
 
-### CR-3 — next-warm timestamp + manual-warm timer reset → **RESOLVED ✅ (backend `bfbad3a`, consumed FE-side)**
+### cwd + LSP draft path → **VERIFIED ✅ (all 6 asks confirmed; courier `backend-handoff-cwd-lsp.md`)**
 
-Both asks shipped by the backend (no contract bump — `custom` escape hatch) and are now consumed:
-1. **`nextWarmAt` / `lastWarmAt` (epoch-ms)** arrive on the conversation-scoped `cache-warming` surface
-   as a `custom` field `{ rendererId: "cache-warming-timer", payload: { nextWarmAt, lastWarmAt } }`.
-   FE: `parseControls` reads them; the countdown is now derived straight from `nextWarmAt`
-   (`secondsUntilNext(nextWarmAt, now)`) and the history keys off `lastWarmAt` (`observeWarm`). The
-   old FE best-effort anchor/guess logic was DELETED.
-2. **Manual `POST /chat/warm` now re-arms the timer + pushes a surface `update`.** FE: dropped the
-   workaround of recording history from the HTTP response — history is driven authoritatively by the
-   surface's `lastWarmAt`; the HTTP `WarmResponse` is still used for the immediate "Warm now" feedback
-   line (now headlining `expectedCacheRate`). The generic surface-host does NOT render
-   `cache-warming-timer` (no registered renderer → graceful skip); the cache-warming feature owns it.
+The backend confirmed all six asks (answers in their `frontend-lsp-cwd-handoff.md`, code refs
+`transport-http/src/app.ts` + `session-orchestrator/src/orchestrator.ts`; live-verified): unseen-id
+`GET /cwd`⇒`{cwd:null}` and `GET /lsp`⇒`{cwd:null,servers:[]}` (no 404/500); `PUT /cwd` on a draft id
+upserts by key; **draft cwd carries into turn 1** when `/chat` omits `cwd`; CORS preflight for `PUT` is
+answered; no LSP spawn while `cwd` is null; errors are `{error:string}`. **No backend change needed —
+the draft→first-message cwd path the FE built is fully supported.**
 
-(The standalone courier `backend-handoff-cache-warming-timer.md` is now historical — no open asks.)
+**FE invariant to KEEP (don't regress):** the chat send must **omit** `cwd` (send `undefined`), never
+`cwd:""`/`cwd:null`. The `/chat` `cwd` field treats any non-`undefined` value as "provided", so a literal
+empty would override the persisted draft cwd. Verified safe today: `chat/store.svelte.ts` builds
+`chat.send` with only `type`/`conversationId`/`message`/`model` — no `cwd` field. (The backend offered to
+harden `/chat` to treat blank as "not provided" if we ever want it — not needed while we omit the field.)
 
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
 - `GET /conversations` — conversation list / sidebar (history explorer / switcher); could also expose a
   per-conversation "last model" so a reopened tab seeds its model from the server instead of localStorage.
 - `POST /conversations/:id/cancel` — "stop generating".
+- **LSP status over WS** (push) — today the FE HTTP-polls `GET /conversations/:id/lsp` on panel mount /
+  cwd change + a manual refresh; a live surface/WS push would remove the manual refresh and reflect a
+  server flipping to `error`/`connected` without a reload. (Backend flagged this as a future option.)

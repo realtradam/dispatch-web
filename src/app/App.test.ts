@@ -62,6 +62,14 @@ function fakeFetchImpl(): typeof fetch {
 				status: 200,
 			});
 		}
+		if (url.endsWith("/cwd")) {
+			return new Response(JSON.stringify({ conversationId: "c", cwd: null }), { status: 200 });
+		}
+		if (url.endsWith("/lsp")) {
+			return new Response(JSON.stringify({ conversationId: "c", cwd: null, servers: [] }), {
+				status: 200,
+			});
+		}
 		return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
 	};
 }
