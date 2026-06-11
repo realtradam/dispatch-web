@@ -19,6 +19,8 @@
 | **step metrics** | The durable per-step metrics within a `TurnMetrics`: the step's `Usage` (tokens) + `ttftMs`/`decodeMs`/`genTotalMs` timing, keyed by `stepId` (`StepMetrics`). The persisted counterpart of the live `usage` + `step-complete` events. | step stats |
 | **TTFT** (time to first token) | Per-step latency: generation stream start → first content token (text or reasoning). One per step (each step re-prefills). On the wire as `step-complete.ttftMs` / `StepMetrics.ttftMs` (optional). | time-to-first-byte |
 | **decode time** | Per-step generation time after the first token (first token → stream end = `genTotalMs − ttftMs`). On the wire as `step-complete.decodeMs` / `StepMetrics.decodeMs` (optional). | — |
+| **context size** | The tokens a conversation currently occupies: the most recent turn's FINAL step `inputTokens + outputTokens` (NOT the aggregate per-turn `usage`, which sums per-step prompts and overcounts a multi-step turn). On the wire as `TurnDoneEvent.contextSize` (live `done`) + `TurnMetrics.contextSize` (persisted); the FE reads the LATEST turn's value as current usage, and treats `undefined` as "unknown" (renders a placeholder, never `0`). Mirrors the backend GLOSSARY. | context usage, context length, tokens used (and do NOT call it "context window" — that's the limit) |
+| **context window** | The model's MAXIMUM token capacity (the limit a **context size** is measured against). A FUTURE backend field — not on the wire yet; the FE shows context size alone (no `size / limit` denominator) until it ships. | max context, token limit (distinct from **context size**, the current usage) |
 
 ## Frontend-specific
 | Term | Meaning | Aliases to avoid |

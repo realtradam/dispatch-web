@@ -18,6 +18,7 @@ import {
 	applyDurableMetrics,
 	foldMetricsEvent,
 	initialMetricsState,
+	selectCurrentContextSize,
 	selectOrderedTurnMetrics,
 } from "../../core/metrics";
 import type { ConversationCache } from "../conversation-cache";
@@ -36,6 +37,12 @@ export interface ChatStore {
 	readonly messages: readonly ChatMessage[];
 	readonly chunks: readonly RenderedChunk[];
 	readonly turnMetrics: readonly TurnMetricsEntry[];
+	/**
+	 * The conversation's current context size (tokens occupied) — the latest
+	 * finalized turn's `contextSize`, or `undefined` ("unknown") when none is
+	 * known yet. Never `0` for the unknown case.
+	 */
+	readonly currentContextSize: number | undefined;
 	readonly pendingSync: boolean;
 	readonly error: string | null;
 	readonly model: string | undefined;
@@ -90,6 +97,9 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		},
 		get turnMetrics(): readonly TurnMetricsEntry[] {
 			return selectOrderedTurnMetrics(metrics);
+		},
+		get currentContextSize(): number | undefined {
+			return selectCurrentContextSize(metrics);
 		},
 		get pendingSync(): boolean {
 			return _pendingSync;

@@ -4,6 +4,7 @@ import {
 	applyDurableMetrics,
 	foldMetricsEvent,
 	initialMetricsState,
+	selectCurrentContextSize,
 	selectOrderedTurnMetrics,
 } from "./reducer";
 
@@ -39,7 +40,11 @@ const stepCompleteEvent = (
 
 const doneEvent = (
 	turnId: string,
-	extra: { durationMs?: number; usage?: { inputTokens: number; outputTokens: number } } = {},
+	extra: {
+		durationMs?: number;
+		usage?: { inputTokens: number; outputTokens: number };
+		contextSize?: number;
+	} = {},
 ): TurnDoneEvent => ({
 	type: "done",
 	conversationId: "c1",
@@ -364,5 +369,74 @@ describe("applyDurableMetrics", () => {
 			{ turnId: "t1", usage: { inputTokens: 99, outputTokens: 99 }, steps: [] },
 		]);
 		expect(s.durable.get("t1")?.usage.inputTokens).toBe(99);
+	});
+});
+
+describe("contextSize / selectCurrentContextSize", () => {
+	it("live done carries contextSize onto the turn total", () => {
+		let s = initialMetricsState();
+		s = foldMetricsEvent(s, usageEvent("t1", 100, 50, "s1"));
+		s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+		s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 1234 }));
+
+		const ordered = selectOrderedTurnMetrics(s);
+		expect(ordered[0]?.total?.contextSize).toBe(1234);
+		expect(selectCurrentContextSize(s)).toBe(1234);
+	});
+
+	it("contextSize is NOT the aggregate usage sum (multi-step turn)", () => {
+		let s = initialMetricsState();
+		// Two steps: usage sums to 300 in / 130 out = 430, but contextSize is the
+		// backend-stamped final-step occupancy, independent of the sum.
+		s = foldMetricsEvent(s, usageEvent("t1", 100, 50, "s1"));
+		s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+		s = foldMetricsEvent(s, usageEvent("t1", 200, 80, "s2"));
+		s = foldMetricsEvent(s, stepCompleteEvent("t1", "s2"));
+		s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 250 }));
+
+		const ordered = selectOrderedTurnMetrics(s);
+		expect(ordered[0]?.total?.usage).toEqual({ inputTokens: 300, outputTokens: 130 });
+		expect(ordered[0]?.total?.contextSize).toBe(250);
+		expect(selectCurrentContextSize(s)).toBe(250);
+	});
+
+	it("persisted (durable) contextSize is preserved and selected", () => {
+		let s = initialMetricsState();
+		s = applyDurableMetrics(s, [
+			{ turnId: "t1", usage: { inputTokens: 10, outputTokens: 5 }, steps: [], contextSize: 4096 },
+		]);
+		expect(s.durable.get("t1")?.contextSize).toBe(4096);
+		expect(selectCurrentContextSize(s)).toBe(4096);
+	});
+
+	it("selectCurrentContextSize returns the LATEST turn's value", () => {
+		let s = initialMetricsState();
+		s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 100 }));
+		s = foldMetricsEvent(s, doneEvent("t2", { contextSize: 900 }));
+		expect(selectCurrentContextSize(s)).toBe(900);
+	});
+
+	it("selectCurrentContextSize skips a later turn that lacks contextSize", () => {
+		let s = initialMetricsState();
+		s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 700 }));
+		// t2 finishes but the provider reported no per-step usage → no contextSize.
+		s = foldMetricsEvent(s, doneEvent("t2"));
+		expect(selectCurrentContextSize(s)).toBe(700);
+	});
+
+	it("selectCurrentContextSize is undefined (not 0) when nothing reported", () => {
+		let s = initialMetricsState();
+		expect(selectCurrentContextSize(s)).toBeUndefined();
+		s = foldMetricsEvent(s, doneEvent("t1"));
+		expect(selectCurrentContextSize(s)).toBeUndefined();
+	});
+
+	it("durable contextSize wins over live for a shared turnId", () => {
+		let s = initialMetricsState();
+		s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 111 }));
+		s = applyDurableMetrics(s, [
+			{ turnId: "t1", usage: { inputTokens: 1, outputTokens: 1 }, steps: [], contextSize: 222 },
+		]);
+		expect(selectCurrentContextSize(s)).toBe(222);
 	});
 });

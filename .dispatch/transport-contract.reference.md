@@ -5,9 +5,16 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.4.0` (committed, backend `6db12ff`; the metrics
-> endpoint shipped + version-bumped + LIVE-VERIFIED). Depends on `@dispatch/wire@0.4.0` (see
-> `wire.reference.md`) + `@dispatch/ui-contract` (see `ui-contract.reference.md`).
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.6.0` (the metrics endpoint shipped +
+> version-bumped + LIVE-VERIFIED). Depends on `@dispatch/wire@0.5.0` (see `wire.reference.md`) +
+> `@dispatch/ui-contract@0.1.0` (see `ui-contract.reference.md`).
+>
+> **2026-06-12 delta (context-size handoff — package bumped `0.5.0` → `0.6.0`, depends on
+> `wire@0.5.0`):** no NEW transport shape — the optional `contextSize?: number` rides the
+> re-exported `TurnMetrics` (so `ConversationMetricsResponse.turns[].contextSize`) and, live, the
+> `TurnDoneEvent.contextSize` on the `done` AgentEvent (`chat.delta` WS / `/chat` NDJSON). On
+> (re)hydrate take the LAST `turns[]` element with a defined `contextSize`; live, update on `done`.
+> See the `wire.reference.md` context-size delta for the definition.
 >
 > **2026-06 delta (cache-warming handoff, additive — package still `0.4.0`):** adds
 > `POST /chat/warm` (`WarmRequest` → `WarmResponse`) for an on-demand prompt-cache warm, and the

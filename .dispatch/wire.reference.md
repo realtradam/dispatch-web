@@ -4,8 +4,15 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.4.0` (committed, backend `6db12ff`; the metrics types below
-> shipped + version-bumped). Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.5.0` (the metrics types below shipped + version-bumped).
+> Regenerate whenever `@dispatch/wire` changes.
+>
+> **2026-06-12 delta (context-size handoff — package bumped `0.4.0` → `0.5.0`):** adds an OPTIONAL
+> `contextSize?: number` to BOTH `TurnDoneEvent` (live `done`) and `TurnMetrics` (persisted) — the
+> turn's FINAL step `inputTokens + outputTokens` (current context occupancy), NOT the aggregate
+> `usage` (which overcounts multi-step turns). The two carriers are equal for the same turn. Current
+> value = the LATEST turn's `contextSize`; `undefined` ⇒ render "unknown", never `0`. See the field
+> doc-comments on `TurnMetrics`/`TurnDoneEvent` below.
 >
 > **0.3.0 changes (token + timing metrics):**
 > - **Live per-step/per-turn telemetry on the event stream** (transient — NOT persisted):
@@ -221,6 +228,16 @@ export interface TurnMetrics {
 	readonly durationMs?: number;
 	/** Per-step metrics in step order. */
 	readonly steps: readonly StepMetrics[];
+	/**
+	 * **Context size** — tokens the conversation occupies as of this turn: the
+	 * turn's FINAL step `inputTokens + outputTokens` (the last entry of `steps`),
+	 * NOT the aggregate `usage` (which sums per-step prompts and overcounts a
+	 * multi-step turn). The persisted, replayable counterpart of
+	 * `TurnDoneEvent.contextSize` and equal to it for the same turn. A client
+	 * reopening a past conversation reads the LAST turn's `contextSize` as the
+	 * current context usage. Optional: absent when no per-step usage was available.
+	 */
+	readonly contextSize?: number;
 }
 
 // ─── Outward events ─────────────────────────────────────────────────────────
@@ -393,6 +410,21 @@ export interface TurnDoneEvent {
 	 * provider reported no usage).
 	 */
 	readonly usage?: Usage;
+	/**
+	 * **Context size** — tokens the conversation occupies right now: the turn's
+	 * FINAL step `inputTokens + outputTokens` (the prompt sent into the last LLM
+	 * round-trip plus that round-trip's output). This is the "tokens in context"
+	 * figure a client renders as the chat's current context usage, and a client
+	 * treats the LATEST turn's value as the live total.
+	 *
+	 * Deliberately NOT the aggregate `usage` above: `usage` SUMS each step's
+	 * `inputTokens`, which overcounts a multi-step / tool-calling turn because every
+	 * step re-prefills the growing prompt — the final step's input already includes
+	 * all prior context, so its input+output is the true occupancy. Optional: absent
+	 * when no per-step usage was observed this turn (mirrors `usage`). A later field
+	 * will carry the model's max context-window LIMIT; this is only the current size.
+	 */
+	readonly contextSize?: number;
 }
 
 /**

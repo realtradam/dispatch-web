@@ -17,6 +17,17 @@ function formatTps(tps: number | null): string | null {
 	return `${Math.round(tps)} tok/s`;
 }
 
+/**
+ * Format the current context size for display. A defined count renders as
+ * `"<n> tokens in context"` (thousands-separated); `undefined` ("unknown" — no
+ * per-step usage reported yet) renders the placeholder `"context size unknown"`.
+ * Never renders `0` for the unknown case.
+ */
+export function formatContextSize(n: number | undefined): string {
+	if (n === undefined) return "context size unknown";
+	return `${formatTokens(n)} tokens in context`;
+}
+
 /** Compute tokens-per-second. Returns null when elapsed time is absent or zero. */
 export function computeTps(outputTokens: number, elapsedMs: number | undefined): number | null {
 	if (elapsedMs === undefined || elapsedMs <= 0) return null;

@@ -2,6 +2,7 @@ export {
 	computeCachePct,
 	computeExpectedCachePct,
 	computeTps,
+	formatContextSize,
 	viewCacheRate,
 	viewExpectedCache,
 	viewStepMetrics,
@@ -12,6 +13,7 @@ export {
 	applyDurableMetrics,
 	foldMetricsEvent,
 	initialMetricsState,
+	selectCurrentContextSize,
 	selectOrderedTurnMetrics,
 } from "./reducer";
 export type {
