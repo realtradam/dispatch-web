@@ -4,6 +4,7 @@ import {
 	computeCachePct,
 	computeExpectedCachePct,
 	computeTps,
+	formatContextSize,
 	viewCacheRate,
 	viewExpectedCache,
 	viewStepMetrics,
@@ -306,5 +307,19 @@ describe("viewExpectedCache", () => {
 		expect(v?.pct).toBe(100);
 		expect(v?.level).toBe("success");
 		expect(v?.isHit).toBe(true);
+	});
+});
+
+describe("formatContextSize", () => {
+	it("formats a defined count with thousands separators", () => {
+		expect(formatContextSize(34102)).toBe("34,102 tokens in context");
+	});
+
+	it("renders a placeholder for undefined (never 0)", () => {
+		expect(formatContextSize(undefined)).toBe("context size unknown");
+	});
+
+	it("renders an explicit 0 as zero tokens (a real reported value)", () => {
+		expect(formatContextSize(0)).toBe("0 tokens in context");
 	});
 });

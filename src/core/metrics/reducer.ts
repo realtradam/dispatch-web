@@ -62,6 +62,9 @@ function liveTurnToMetrics(lt: LiveTurn): TurnMetrics {
 	if (lt.durationMs !== undefined) {
 		(base as { durationMs?: number }).durationMs = lt.durationMs;
 	}
+	if (lt.doneContextSize !== undefined) {
+		(base as { contextSize?: number }).contextSize = lt.doneContextSize;
+	}
 	return base;
 }
 
@@ -74,6 +77,7 @@ function ensureLiveTurn(state: MetricsState, turnId: string): [MetricsState, Liv
 		done: false,
 		durationMs: undefined,
 		doneUsage: undefined,
+		doneContextSize: undefined,
 		stepMap: new Map(),
 		stepOrder: [],
 	};
@@ -127,7 +131,7 @@ export function initialMetricsState(): MetricsState {
  * - `usage` with `stepId`: upsert that step's usage.
  * - `usage` without `stepId`: ignored.
  * - `step-complete`: upsert that step's timing; default usage to zeros if absent.
- * - `done`: set turn's `durationMs` and optional aggregate `usage`.
+ * - `done`: set turn's `durationMs`, optional aggregate `usage`, and optional `contextSize`.
  * - All other event types: return state unchanged.
  */
 export function foldMetricsEvent(state: MetricsState, event: AgentEvent): MetricsState {
@@ -161,6 +165,7 @@ export function foldMetricsEvent(state: MetricsState, event: AgentEvent): Metric
 				done: true,
 				durationMs: event.durationMs ?? lt.durationMs,
 				doneUsage: event.usage ?? lt.doneUsage,
+				doneContextSize: event.contextSize ?? lt.doneContextSize,
 			};
 			const newLive = new Map(s1.live);
 			newLive.set(event.turnId, updated);
@@ -236,4 +241,23 @@ export function selectOrderedTurnMetrics(state: MetricsState): readonly TurnMetr
 	}
 
 	return result;
+}
+
+/**
+ * Select the conversation's CURRENT context size — the tokens it occupies right
+ * now. Per the wire contract a client reads the LATEST turn's `contextSize`; we
+ * scan the merged ordered turns NEWEST → OLDEST and return the first DEFINED
+ * `contextSize` (a finalized turn whose provider reported per-step usage).
+ *
+ * Returns `undefined` ("unknown") when no finalized turn carries a context size —
+ * the caller renders a placeholder, NEVER `0`. Durable (sealed) data wins over
+ * live for a shared `turnId` (it is the persisted, authoritative value).
+ */
+export function selectCurrentContextSize(state: MetricsState): number | undefined {
+	const ordered = selectOrderedTurnMetrics(state);
+	for (let i = ordered.length - 1; i >= 0; i--) {
+		const total = ordered[i]?.total;
+		if (total?.contextSize !== undefined) return total.contextSize;
+	}
+	return undefined;
 }

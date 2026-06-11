@@ -19,6 +19,12 @@ export interface LiveTurn {
 	readonly done: boolean;
 	readonly durationMs: number | undefined;
 	readonly doneUsage: Usage | undefined;
+	/**
+	 * Context size carried on the turn's `done` event (the turn's FINAL step
+	 * `inputTokens + outputTokens` — current context occupancy). `undefined` when
+	 * the provider reported no per-step usage; never coerced to `0`.
+	 */
+	readonly doneContextSize: number | undefined;
 	readonly stepMap: ReadonlyMap<string, BuildingStep>;
 	readonly stepOrder: readonly string[];
 }

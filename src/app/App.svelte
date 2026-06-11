@@ -6,7 +6,13 @@
 		manifest as cacheWarmingManifest,
 		type WarmFeedback,
 	} from "../features/cache-warming";
-	import { ChatView, Composer, manifest as chatManifest, ModelSelector } from "../features/chat";
+	import {
+		ChatView,
+		Composer,
+		manifest as chatManifest,
+		ContextSizeBadge,
+		ModelSelector,
+	} from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
 	import {
@@ -211,6 +217,7 @@
 			<ScrollToBottom show={smartScroll.showButton} onResume={() => smartScroll.resume()} />
 		</div>
 
+		<ContextSizeBadge contextSize={store.activeChat.currentContextSize} />
 		<Composer onSend={handleSend} />
 	</div>
 

@@ -5,24 +5,33 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-11. **FE is current on `transport-contract@0.5.0`.** All handoffs to date are
-consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming (incl.
-authoritative timer + retention + cache-rate fix), and **per-conversation cwd + LSP status** (new
-`workspace` feature — cwd field in the Model view + a "Language Servers" view; works for drafts too).
+_Last updated: 2026-06-12. **FE is current on `transport-contract@0.6.0` / `wire@0.5.0`.** All handoffs
+to date are consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector,
+cache-warming (incl. authoritative timer + retention + cache-rate fix), **per-conversation cwd + LSP
+status**, and **context size** (the `contextSize` field — `done` live + `TurnMetrics` persisted —
+rendered as a current-usage readout above the composer).
 **Open asks:** CR-1 (Loaded Extensions as a real table) + CR-2 (optional catalog `scope` flag) below.
 The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed** by the
 backend (answers in their `frontend-lsp-cwd-handoff.md`) — see §2._
+
+**Context-size handoff (`frontend-context-size-handoff.md`) → CONSUMED ✅.** Re-pinned `wire@0.4.0→0.5.0`
++ `transport-contract@0.5.0→0.6.0`; re-mirrored both `.dispatch/*.reference.md`; added "context size" +
+"context window" to FE `GLOSSARY.md`. `core/metrics` now threads `contextSize` through the `done` fold +
+durable metrics and exposes `selectCurrentContextSize` (LATEST turn's defined value, `undefined`⇒unknown,
+never `0`, durable-wins-over-live); the chat store exposes `currentContextSize`; `ContextSizeBadge`
+renders "N tokens in context" / "context size unknown" above the composer. 533 tests green. NO new
+backend ask — but the max-limit denominator is now a live FE need; see §3.
 
 ---
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.1.0`; `wire@0.4.0`; `transport-contract@0.5.0`**.
+Pinned as `file:` deps: **`ui-contract@0.1.0`; `wire@0.5.0`; `transport-contract@0.6.0`**.
 
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs` |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`** |
 | `@dispatch/transport-contract` | `ChatRequest`/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
@@ -31,7 +40,7 @@ Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `GET /conversations/:id/lsp` · `POST /chat/warm` · WS `chat.send`→`chat.delta`.
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
-(regenerate on any contract bump; all current as of `transport-contract@0.5.0`).
+(regenerate on any contract bump; all current as of `transport-contract@0.6.0` / `wire@0.5.0`).
 
 ## 2. Open asks FOR THE BACKEND
 
@@ -101,6 +110,12 @@ harden `/chat` to treat blank as "not provided" if we ever want it — not neede
 
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
+- **Model max context-window LIMIT** (the denominator for context size) — the context-size handoff
+  flagged this as the separate, later field. The FE now shows current size alone (e.g. "34,102 tokens
+  in context"); once a per-model/per-turn `contextWindow` (max token capacity) ships, the FE can render
+  `contextSize / limit` (e.g. "34,102 / 200,000") + a usage bar. GLOSSARY term reserved: "context window"
+  = the limit (distinct from "context size" = current usage). **Likely the next ask** — raise when the
+  backend can source the model's advertised window.
 - `GET /conversations` — conversation list / sidebar (history explorer / switcher); could also expose a
   per-conversation "last model" so a reopened tab seeds its model from the server instead of localStorage.
 - `POST /conversations/:id/cancel` — "stop generating".
