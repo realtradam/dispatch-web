@@ -10,7 +10,6 @@
 		ChatView,
 		Composer,
 		manifest as chatManifest,
-		ContextSizeBadge,
 		ModelSelector,
 	} from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
@@ -217,8 +216,11 @@
 			<ScrollToBottom show={smartScroll.showButton} onResume={() => smartScroll.resume()} />
 		</div>
 
-		<ContextSizeBadge contextSize={store.activeChat.currentContextSize} />
-		<Composer onSend={handleSend} />
+		<Composer
+			onSend={handleSend}
+			contextSize={store.activeChat.currentContextSize}
+			status={store.activeChat.error ? "error" : "idle"}
+		/>
 	</div>
 
 	<!-- Full-height right sidebar. On wide screens (`lg:relative`) it is in-flow, so
