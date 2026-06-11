@@ -9,9 +9,21 @@
 	import { ChatView, Composer, manifest as chatManifest, ModelSelector } from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
+	import {
+		createSmartScrollController,
+		manifest as smartScrollManifest,
+		ScrollToBottom,
+	} from "../features/smart-scroll";
 	import { manifest as surfaceHostManifest, SurfaceView } from "../features/surface-host";
 	import { manifest as tabsManifest, TabBar } from "../features/tabs";
 	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
+	import {
+		CwdField,
+		type CwdSaveResult,
+		LspStatusView,
+		type LspStatusResult,
+		manifest as workspaceManifest,
+	} from "../features/workspace";
 	import type { AppStore } from "./store.svelte";
 
 	let { store }: { store: AppStore } = $props();
@@ -26,12 +38,13 @@
 	// `viewContent` snippet below maps each kind id to its renderer.
 	const viewKinds = [
 		{ id: "model", label: "Model" },
+		{ id: "lsp", label: "Language Servers" },
 		{ id: "extensions", label: "Extensions" },
 		{ id: "cache-warming", label: "Cache Warming" },
 	] as const;
 
-	// Default sidebar layout: a Model panel on top, then Extensions, then Cache Warming.
-	const initialViews = ["model", "extensions", "cache-warming"] as const;
+	// Default sidebar layout: Model panel on top, then Language Servers, Extensions, Cache Warming.
+	const initialViews = ["model", "lsp", "extensions", "cache-warming"] as const;
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -47,7 +60,37 @@
 		conversationCacheManifest,
 		markdownManifest,
 		cacheWarmingManifest,
+		workspaceManifest,
+		smartScrollManifest,
 	].map((m) => [m.name, m.description] as const);
+
+	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
+	// unless the reader has scrolled up (then show a "scroll to bottom" button).
+	// One controller owns the chat scroll region; effects below feed it the edges.
+	const smartScroll = createSmartScrollController();
+	let transcriptEl = $state<HTMLElement | undefined>();
+	let transcriptContentEl = $state<HTMLElement | undefined>();
+
+	// Attach/detach the controller to the live scroll element + content (disposed on
+	// unmount). The content element is observed (ResizeObserver) so the view follows
+	// height changes that aren't a transcript append.
+	$effect(() => {
+		if (!transcriptEl) return;
+		return smartScroll.attach(transcriptEl, transcriptContentEl);
+	});
+
+	// New transcript content streamed in (or messages loaded) → follow the bottom
+	// while stuck. Reads `chunks.length` so the effect re-runs on every append.
+	$effect(() => {
+		void store.activeChat.chunks.length;
+		smartScroll.contentChanged();
+	});
+
+	// Conversation/tab switch → snap to the bottom of the new transcript.
+	$effect(() => {
+		void store.activeConversationId;
+		smartScroll.reset();
+	});
 
 	// Right sidebar: open by default on wide screens (pushes the chat aside),
 	// closed by default on narrow screens (overlays the chat). Initial state is
@@ -77,6 +120,21 @@
 					cachePct: result.response.cachePct,
 					expectedCacheRate: result.response.expectedCacheRate,
 				}
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's cwd/LSP results to the workspace feature's ports.
+	async function saveCwd(cwd: string): Promise<CwdSaveResult | null> {
+		const result = await store.setCwd(cwd);
+		if (result === null) return null;
+		return result.ok ? { ok: true, cwd: result.cwd } : { ok: false, error: result.error };
+	}
+
+	async function loadLspStatus(): Promise<LspStatusResult | null> {
+		const result = await store.lspStatus();
+		if (result === null) return null;
+		return result.ok
+			? { ok: true, cwd: result.response.cwd, servers: result.response.servers }
 			: { ok: false, error: result.error };
 	}
 </script>
@@ -134,10 +192,14 @@
 			</div>
 		{/if}
 
-		<div class="relative min-w-0 flex-1 overflow-y-auto">
-			{#key store.activeConversationId}
-				<ChatView chunks={store.activeChat.chunks} turnMetrics={store.activeChat.turnMetrics} />
-			{/key}
+		<div class="relative min-h-0 min-w-0 flex-1">
+			<div bind:this={transcriptEl} class="h-full overflow-y-auto">
+				<div bind:this={transcriptContentEl}>
+					{#key store.activeConversationId}
+						<ChatView chunks={store.activeChat.chunks} turnMetrics={store.activeChat.turnMetrics} />
+					{/key}
+				</div>
+			</div>
 			{#if store.activeChat.chunks.length === 0}
 				<div
 					class="pointer-events-none absolute inset-0 flex items-center justify-center"
@@ -146,6 +208,7 @@
 					<span class="select-none text-4xl font-bold opacity-10">Dispatch</span>
 				</div>
 			{/if}
+			<ScrollToBottom show={smartScroll.showButton} onResume={() => smartScroll.resume()} />
 		</div>
 
 		<Composer onSend={handleSend} />
@@ -185,7 +248,20 @@
 
 {#snippet viewContent(kind: string)}
 	{#if kind === "model"}
-		<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
+		<div class="flex flex-col gap-3">
+			<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
+			<!-- Keyed on the workspace conversation (active tab OR draft) so the input
+			     re-mounts per conversation — incl. switching between drafts — and can't
+			     bleed across tabs. Editable for a draft too (cwd applies from turn 1). -->
+			{#key store.currentConversationId}
+				<CwdField cwd={store.cwd} canEdit={true} save={saveCwd} />
+			{/key}
+		</div>
+	{:else if kind === "lsp"}
+		<!-- Re-mount per conversation (incl. draft) so the loaded server list is isolated. -->
+		{#key store.currentConversationId}
+			<LspStatusView cwd={store.cwd} canView={true} load={loadLspStatus} />
+		{/key}
 	{:else if kind === "extensions"}
 		<section>
 			<h3 class="mb-1 text-xs font-semibold uppercase opacity-60">Frontend modules</h3>

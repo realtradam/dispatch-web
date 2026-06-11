@@ -3,7 +3,10 @@ import type {
 	ChatErrorMessage,
 	ConversationHistoryResponse,
 	ConversationMetricsResponse,
+	CwdResponse,
+	LspStatusResponse,
 	ModelsResponse,
+	SetCwdRequest,
 	WarmRequest,
 	WarmResponse,
 } from "@dispatch/transport-contract";
@@ -38,6 +41,16 @@ export type WarmResult =
 	| { readonly ok: true; readonly response: WarmResponse }
 	| { readonly ok: false; readonly error: string };
 
+/** Outcome of `PUT /conversations/:id/cwd`. */
+export type CwdResult =
+	| { readonly ok: true; readonly cwd: string | null }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `GET /conversations/:id/lsp`. */
+export type LspResult =
+	| { readonly ok: true; readonly response: LspStatusResponse }
+	| { readonly ok: false; readonly error: string };
+
 export interface AppStore {
 	readonly tabs: readonly Tab[];
 	readonly activeConversationId: string | null;
@@ -61,6 +74,20 @@ export interface AppStore {
 	 * Returns null when no conversation is focused (a draft has nothing to warm).
 	 */
 	warmNow(): Promise<WarmResult | null>;
+	/** The workspace conversation's persisted working directory, or null when unset. */
+	readonly cwd: string | null;
+	/** The conversation workspace settings target: the active tab, or the pending draft's id. */
+	readonly currentConversationId: string;
+	/**
+	 * Set the workspace conversation's working directory (`PUT /conversations/:id/cwd`).
+	 * Works for a draft too (its id survives promotion), so the first turn runs in it.
+	 */
+	setCwd(cwd: string): Promise<CwdResult | null>;
+	/**
+	 * Fetch the workspace conversation's language-server status (`GET /conversations/:id/lsp`).
+	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
+	 */
+	lspStatus(): Promise<LspResult | null>;
 	dispose(): void;
 }
 
@@ -160,6 +187,24 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	let activeChat = $state<ChatStore>(draftStore as ChatStore);
 
+	// The active conversation's persisted working directory (per-tab). Seeded from
+	// the backend on focus change; null for a draft / when unset.
+	let cwd = $state<string | null>(null);
+
+	/** Refetch the workspace conversation's cwd into reactive state (works for a draft too). */
+	async function refreshCwd(): Promise<void> {
+		const id = workspaceConversationId();
+		try {
+			const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/cwd`);
+			if (!res.ok) return;
+			const data = (await res.json()) as CwdResponse;
+			// Guard a slow response losing a race with a conversation switch.
+			if (workspaceConversationId() === id) cwd = data.cwd ?? null;
+		} catch {
+			// Non-fatal: a cwd fetch failure just leaves the prior value.
+		}
+	}
+
 	function getActiveChat(): ChatStore {
 		const activeId = tabsStore.activeConversationId;
 		if (activeId === null) {
@@ -197,6 +242,16 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	/** The conversation the surfaces should scope to (undefined for a draft). */
 	function focusedConversationId(): string | undefined {
 		return tabsStore.activeConversationId ?? undefined;
+	}
+
+	/**
+	 * The conversation id workspace settings (cwd / LSP) target: the active tab, or
+	 * the pending draft's id when in draft mode. Unlike `focusedConversationId`, this
+	 * is NEVER undefined — the draft has a stable client-minted id that survives
+	 * promotion (first send), so a cwd set on a draft carries into the real turn.
+	 */
+	function workspaceConversationId(): string {
+		return tabsStore.activeConversationId ?? draftConversationId;
 	}
 
 	function handleServerMessage(msg: SurfaceServerMessage): void {
@@ -298,6 +353,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	}
 
 	refreshActiveChat();
+	void refreshCwd();
 
 	return {
 		get tabs(): readonly Tab[] {
@@ -329,6 +385,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get lastError() {
 			return protocol.lastError;
 		},
+		get cwd(): string | null {
+			return cwd;
+		},
+		get currentConversationId(): string {
+			return workspaceConversationId();
+		},
 
 		surface(surfaceId: string): SurfaceSpec | null {
 			return getSurfaceSpec(protocol, surfaceId);
@@ -356,6 +418,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				// The draft became a real conversation: re-scope conversation-scoped
 				// surfaces (e.g. cache-warming) to its id.
 				syncSubscriptions();
+				void refreshCwd();
 				// Now send on the promoted store
 				chatStores.get(conversationId)?.send(text);
 			} else {
@@ -381,6 +444,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			draftConversationId = nextDraftId;
 			refreshActiveChat();
 			syncSubscriptions();
+			void refreshCwd();
 		},
 
 		selectTab(conversationId: string): void {
@@ -391,6 +455,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			}
 			refreshActiveChat();
 			syncSubscriptions();
+			void refreshCwd();
 		},
 
 		closeTab(conversationId: string): void {
@@ -403,6 +468,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			void cache.delete(conversationId);
 			refreshActiveChat();
 			syncSubscriptions();
+			void refreshCwd();
 		},
 
 		invoke(surfaceId: string, actionId: string, payload?: unknown): void {
@@ -436,6 +502,53 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				return { ok: true, response: (await res.json()) as WarmResponse };
 			} catch (err) {
 				return { ok: false, error: err instanceof Error ? err.message : "Warm request failed" };
+			}
+		},
+
+		async setCwd(value: string): Promise<CwdResult | null> {
+			const id = workspaceConversationId();
+			const body: SetCwdRequest = { cwd: value };
+			try {
+				const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/cwd`, {
+					method: "PUT",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				});
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return { ok: false, error: errBody?.error ?? `Set cwd failed (HTTP ${res.status})` };
+				}
+				const data = (await res.json()) as CwdResponse;
+				const next = data.cwd ?? null;
+				if (workspaceConversationId() === id) cwd = next;
+				return { ok: true, cwd: next };
+			} catch (err) {
+				return { ok: false, error: err instanceof Error ? err.message : "Set cwd request failed" };
+			}
+		},
+
+		async lspStatus(): Promise<LspResult | null> {
+			const id = workspaceConversationId();
+			try {
+				const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/lsp`);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return { ok: false, error: errBody?.error ?? `LSP status failed (HTTP ${res.status})` };
+				}
+				// Normalize the untyped body at this network seam so a malformed/partial
+				// response can never crash the renderer (servers is guaranteed an array).
+				const data = (await res.json()) as Partial<LspStatusResponse>;
+				const response: LspStatusResponse = {
+					conversationId: data.conversationId ?? id,
+					cwd: data.cwd ?? null,
+					servers: Array.isArray(data.servers) ? data.servers : [],
+				};
+				return { ok: true, response };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "LSP status request failed",
+				};
 			}
 		},
 		dispose(): void {
