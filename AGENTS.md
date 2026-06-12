@@ -139,7 +139,8 @@ streaming; tabs + model selector + DaisyUI/dracula), plus per-conversation cwd +
 context size, cache-warming (+ retention/timer), markdown, smart auto-scroll, multi-client
 live view (subscribe/reconnect + the user prompt on the event stream), and the chat limit
 (bulk quarter-unload past `dispatch.chatLimit`, 75% fresh-load window, show-earlier page-in;
-`core/chunks/trim.ts`; backend CR-5 open for `?limit=`/`?beforeSeq=`). Plan in
+`core/chunks/trim.ts`; CR-5 `?limit=`/`?beforeSeq=` CONSUMED — server-windowed cold loads +
+show-earlier server backfill; `hasOlder` from the 1-based gap-free seq contract). Plan in
 `../arch-rewrite/notes/frontend-design.md` §10.
 
 ## Reports

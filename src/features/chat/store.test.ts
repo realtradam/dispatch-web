@@ -1054,12 +1054,12 @@ describe("createChatStore", () => {
 		store.dispose();
 	});
 
-	it("chat limit: a cold cache (fresh browser) windows the full server history to 75%", async () => {
+	it("chat limit: a cold cache (fresh browser) asks the SERVER for the 75% window (CR-5 ?limit=)", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
 		const metricsSync = createFakeMetricsSync();
 		const cache = createFakeCache();
-		// Backend has no limit param yet (CR-5): sinceSeq=0 returns EVERYTHING.
+		// The server holds 500 chunks; the windowed fetch returns the newest 75.
 		historySync.returnChunks = Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1));
 
 		const store = createChatStore({
@@ -1073,12 +1073,77 @@ describe("createChatStore", () => {
 
 		await store.load();
 
+		// The cold-cache initial sync carried the window (`?sinceSeq=0&limit=75`).
+		expect(historySync.calls[0]?.sinceSeq).toBe(0);
+		expect(historySync.calls[0]?.window).toEqual({ limit: 75 });
+
 		expect(store.chunks).toHaveLength(75);
 		expect(store.chunks[0]?.seq).toBe(426);
+		// hasEarlier derives from the 1-based gap-free seq contract (426 > 1) —
+		// no local watermark was ever set.
 		expect(store.hasEarlier).toBe(true);
-		// The full history is still CACHED locally (show-earlier pages from it).
+		// Only the window was shipped + cached (the point of CR-5).
 		const cached = await cache.impl.load(CONV_ID);
-		expect(cached).toHaveLength(500);
+		expect(cached).toHaveLength(75);
+
+		store.dispose();
+	});
+
+	it("chat limit: a warm cache syncs the tail UNWINDOWED (no seq gap behind the cache)", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		await cache.impl.commit(CONV_ID, [makeStoredChunk(1), makeStoredChunk(2)]);
+		historySync.returnChunks = [makeStoredChunk(3)];
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load();
+
+		expect(historySync.calls[0]?.sinceSeq).toBe(2);
+		expect(historySync.calls[0]?.window).toBeUndefined();
+
+		store.dispose();
+	});
+
+	it("chat limit: showEarlier backfills from the server when the cache is too shallow (CR-5 ?beforeSeq=)", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		historySync.returnChunks = Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1));
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load(); // server-windowed: loaded + cached = 426..500
+		expect(store.chunks[0]?.seq).toBe(426);
+
+		await store.showEarlier();
+
+		// Nothing below 426 was cached → fetched the missing run from the server.
+		const backfill = historySync.calls[1];
+		expect(backfill?.window).toEqual({ beforeSeq: 426, limit: 25 });
+		expect(store.chunks).toHaveLength(100);
+		expect(store.chunks[0]?.seq).toBe(401);
+		expect(store.hasEarlier).toBe(true);
+		// The backfilled run is persisted: the NEXT page-in is cache-local.
+		const cached = await cache.impl.load(CONV_ID);
+		expect(cached).toHaveLength(100);
 
 		store.dispose();
 	});
@@ -1109,6 +1174,8 @@ describe("createChatStore", () => {
 		expect(store.chunks).toHaveLength(100);
 		expect(store.chunks[0]?.seq).toBe(401);
 		expect(store.hasEarlier).toBe(true);
+		// The cache reached deep enough — no server backfill was needed.
+		expect(historySync.calls).toHaveLength(1);
 
 		store.dispose();
 	});

@@ -177,26 +177,41 @@ describe("restoreEarlier", () => {
 		expect(selectHasEarlier(restored)).toBe(true);
 	});
 
-	it("clears the watermark when the restore exhausts known earlier history", () => {
+	it("restoring down to seq 1 reaches the contractual origin (hasEarlier clears)", () => {
 		const windowed = windowTranscript(stateWith(chunks(1, 100)), 75); // hidden: 1..25
 		const restored = restoreEarlier(windowed, chunks(1, 100), 64);
 		expect(restored.committed).toHaveLength(100);
 		expect(restored.committed[0]?.seq).toBe(1);
-		expect(restored.hiddenBeforeSeq).toBe(0);
+		expect(restored.hiddenBeforeSeq).toBe(1); // floor at the origin — inert
 		expect(restored.hiddenThinkingCount).toBe(0);
 		expect(selectHasEarlier(restored)).toBe(false);
 	});
 
-	it("clears the watermark when nothing is actually below it", () => {
+	it("is the identity when nothing older is known locally (server may still hold more)", () => {
 		const windowed = windowTranscript(stateWith(chunks(50, 200)), 75);
 		const restored = restoreEarlier(windowed, [], 64);
-		expect(restored.hiddenBeforeSeq).toBe(0);
-		expect(restored.committed).toEqual(windowed.committed);
+		expect(restored).toBe(windowed);
+		// seqs are 1-based gap-free: window starts at 126 ⇒ older chunks DO exist.
+		expect(selectHasEarlier(restored)).toBe(true);
 	});
 
-	it("is the identity when nothing is hidden", () => {
+	it("is the identity when the window already starts at seq 1", () => {
 		const state = stateWith(chunks(1, 10));
 		expect(restoreEarlier(state, chunks(1, 10), 5)).toBe(state);
+	});
+
+	it("works on a server-windowed transcript (no local watermark)", () => {
+		// A cold-cache fresh load with `?limit=` commits a suffix (seq 809..1000)
+		// with hiddenBeforeSeq still 0 — hasEarlier derives from seq > 1, and a
+		// backfilled run merges below it.
+		const state = stateWith(chunks(809, 1000));
+		expect(state.hiddenBeforeSeq).toBe(0);
+		expect(selectHasEarlier(state)).toBe(true);
+		const restored = restoreEarlier(state, chunks(745, 808), 64);
+		expect(restored.committed[0]?.seq).toBe(745);
+		expect(restored.committed).toHaveLength(192 + 64);
+		expect(restored.hiddenBeforeSeq).toBe(745);
+		expect(selectHasEarlier(restored)).toBe(true);
 	});
 
 	it("decrements the hidden thinking count by the restored thinking chunks", () => {
@@ -213,6 +228,7 @@ describe("restoreEarlier", () => {
 		const trimmed = trimTranscript(stateWith(original), 100);
 		const restored = restoreEarlier(trimmed, original, 1000);
 		expect(restored.committed).toEqual(original);
-		expect(restored.hiddenBeforeSeq).toBe(0);
+		expect(restored.hiddenBeforeSeq).toBe(1);
+		expect(selectHasEarlier(restored)).toBe(false);
 	});
 });

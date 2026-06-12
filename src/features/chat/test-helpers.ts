@@ -1,6 +1,6 @@
 import type { StoredChunk } from "@dispatch/wire";
 import type { ConversationCache } from "../conversation-cache";
-import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
+import type { ChatTransport, HistorySync, HistoryWindow, MetricsSync } from "./ports";
 
 export interface FakeTransport {
 	readonly sent: import("@dispatch/transport-contract").ChatSendMessage[];
@@ -20,14 +20,14 @@ export function createFakeTransport(): FakeTransport {
 }
 
 export interface FakeHistorySync {
-	readonly calls: Array<{ conversationId: string; sinceSeq: number }>;
+	readonly calls: Array<{ conversationId: string; sinceSeq: number; window?: HistoryWindow }>;
 	/** Set the chunks to return on the next call. */
 	returnChunks: readonly StoredChunk[];
 	readonly impl: HistorySync;
 }
 
 export function createFakeHistorySync(): FakeHistorySync {
-	const calls: Array<{ conversationId: string; sinceSeq: number }> = [];
+	const calls: Array<{ conversationId: string; sinceSeq: number; window?: HistoryWindow }> = [];
 	let returnChunks: readonly StoredChunk[] = [];
 	return {
 		calls,
@@ -37,9 +37,20 @@ export function createFakeHistorySync(): FakeHistorySync {
 		set returnChunks(v: readonly StoredChunk[]) {
 			returnChunks = v;
 		},
-		impl: async (conversationId, sinceSeq) => {
-			calls.push({ conversationId, sinceSeq });
-			const chunks = returnChunks;
+		impl: async (conversationId, sinceSeq, window) => {
+			calls.push({ conversationId, sinceSeq, ...(window !== undefined ? { window } : {}) });
+			// Apply the CR-5 WINDOW semantics (`beforeSeq` bound, then newest-`limit`)
+			// so store tests exercise the real windowed flows. `sinceSeq` filtering is
+			// deliberately NOT applied — tests set `returnChunks` to the slice they
+			// mean the server to hold past the cursor.
+			let chunks = returnChunks;
+			const before = window?.beforeSeq;
+			if (before !== undefined) {
+				chunks = chunks.filter((c) => c.seq < before);
+			}
+			if (window?.limit !== undefined && chunks.length > window.limit) {
+				chunks = chunks.slice(-window.limit);
+			}
 			const latestSeq = chunks.length > 0 ? Math.max(...chunks.map((c) => c.seq)) : sinceSeq;
 			return { chunks, latestSeq };
 		},

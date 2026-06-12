@@ -92,10 +92,10 @@ export interface ChatStore {
 	setModel(model: string): void;
 	load(): Promise<void>;
 	/**
-	 * Page one unload-unit (`ceil(limit/4)`) of earlier history back in from the
-	 * local cache — the "Show earlier messages" action. (When the backend ships
-	 * CR-5 `?beforeSeq=`, this can fall through to the server once the cache is
-	 * exhausted.)
+	 * Page one unload-unit (`ceil(limit/4)`) of earlier history back in — the
+	 * "Show earlier messages" action. Local cache first; when the cache doesn't
+	 * reach far enough back (a server-windowed fresh load), the missing older
+	 * run is fetched via CR-5 `?beforeSeq=&limit=` and persisted to the cache.
 	 */
 	showEarlier(): Promise<void>;
 	/**
@@ -129,12 +129,21 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		transcript = trimTranscript(transcript, chatLimit);
 	}
 
-	async function syncTail(): Promise<void> {
+	/**
+	 * Pull `seq > cache-cursor` from the server and fold it in. `coldLimit`, when
+	 * given AND the cache is empty (a truly fresh browser), windows the fetch to
+	 * the newest N chunks (CR-5 `?limit=`) so a huge conversation doesn't ship
+	 * whole. It is deliberately NOT applied to a warm-cache tail: windowing a
+	 * tail that grew past N while we were away would leave a silent seq GAP
+	 * between the cache and the fetched window.
+	 */
+	async function syncTail(coldLimit?: number): Promise<void> {
 		if (disposed || _pendingSync) return;
 		_pendingSync = true;
 		try {
 			const since = await deps.cache.sinceSeq(deps.conversationId);
-			const res = await deps.historySync(deps.conversationId, since);
+			const window = since === 0 && coldLimit !== undefined ? { limit: coldLimit } : undefined;
+			const res = await deps.historySync(deps.conversationId, since, window);
 			const merged = await deps.cache.commit(deps.conversationId, res.chunks);
 			transcript = applyHistory(transcript, merged);
 			maybeTrim();
@@ -227,24 +236,48 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
 		async load(): Promise<void> {
 			// Fresh load shows only the newest 75% of the limit — headroom before the
-			// first trim. Window the cached slice SYNCHRONOUSLY with its apply (no
-			// render in between), and again after the tail sync (a cold cache means
-			// syncTail pulled the whole history in one response).
+			// first trim. A warm cache is windowed locally (synchronously with its
+			// apply — no render in between); a COLD cache passes the window to the
+			// server instead (CR-5 `?limit=`), so a huge conversation never ships
+			// whole. The post-sync window re-asserts the cap either way.
 			const windowSize = initialWindowSize(chatLimit);
 			const cached = await deps.cache.load(deps.conversationId);
 			if (cached.length > 0) {
 				transcript = windowTranscript(applyHistory(transcript, cached), windowSize);
 			}
-			await syncTail();
+			await syncTail(windowSize);
 			transcript = windowTranscript(transcript, windowSize);
 			await syncMetrics();
 		},
 
 		async showEarlier(): Promise<void> {
 			if (disposed) return;
-			if (!selectHasEarlier(transcript)) return;
-			const cached = await deps.cache.load(deps.conversationId);
-			transcript = restoreEarlier(transcript, cached, unloadCount(chatLimit));
+			const oldest = transcript.committed[0]?.seq ?? transcript.hiddenBeforeSeq;
+			if (oldest <= 1) return;
+			const want = unloadCount(chatLimit);
+			try {
+				let earlier = (await deps.cache.load(deps.conversationId)).filter((c) => c.seq < oldest);
+				// The local cache may not reach far enough back (a server-windowed
+				// fresh load cached only the window): page the missing OLDER run in
+				// from the server (CR-5 `?beforeSeq=&limit=`) and persist it, so the
+				// next page-in is local. Seqs are gap-free, so the fetched run is
+				// contiguous with what we hold. NOTE: the backfill response's
+				// `latestSeq` is a window cursor — never fed to the tail cursor
+				// (ours derives from the cache's max seq).
+				const oldestKnown = earlier[0]?.seq ?? oldest;
+				if (earlier.length < want && oldestKnown > 1) {
+					const res = await deps.historySync(deps.conversationId, 0, {
+						beforeSeq: oldestKnown,
+						limit: want - earlier.length,
+					});
+					const merged = await deps.cache.commit(deps.conversationId, res.chunks);
+					earlier = merged.filter((c) => c.seq < oldest);
+				}
+				transcript = restoreEarlier(transcript, earlier, want);
+				_error = null;
+			} catch (err) {
+				_error = err instanceof Error ? err.message : String(err);
+			}
 		},
 
 		resync(): void {
