@@ -3,6 +3,7 @@ import type {
 	StoredChunk,
 	TurnDoneEvent,
 	TurnErrorEvent,
+	TurnInputEvent,
 	TurnReasoningDeltaEvent,
 	TurnSealedEvent,
 	TurnStartEvent,
@@ -12,8 +13,14 @@ import type {
 	TurnUsageEvent,
 } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
-import { appendUserMessage, applyHistory, foldEvent, initialState } from "./reducer";
-import { selectChunks, selectMessages } from "./selectors";
+import {
+	appendUserMessage,
+	applyHistory,
+	clearGenerating,
+	foldEvent,
+	initialState,
+} from "./reducer";
+import { selectChunks, selectGenerating, selectMessages } from "./selectors";
 
 const turnStart = (turnId: string): TurnStartEvent => ({
 	type: "turn-start",
@@ -112,6 +119,101 @@ describe("initialState", () => {
 		expect(s.currentTurnId).toBeNull();
 		expect(s.latestUsage).toBeNull();
 		expect(s.sealedTurnId).toBeNull();
+		expect(s.generating).toBe(false);
+	});
+});
+
+describe("foldEvent — generating (turn-running state)", () => {
+	it("turn-start sets generating true", () => {
+		let s = initialState();
+		expect(selectGenerating(s)).toBe(false);
+		s = foldEvent(s, turnStart("t1"));
+		expect(s.generating).toBe(true);
+		expect(selectGenerating(s)).toBe(true);
+	});
+
+	it("a content delta sets generating true (e.g. a late-joiner replay missing turn-start)", () => {
+		let s = initialState();
+		s = foldEvent(s, textDelta("t1", "hi"));
+		expect(s.generating).toBe(true);
+		s = initialState();
+		s = foldEvent(s, reasoningDelta("t1", "hmm"));
+		expect(s.generating).toBe(true);
+		s = initialState();
+		s = foldEvent(s, toolCall("t1", "tc1", "bash", {}));
+		expect(s.generating).toBe(true);
+	});
+
+	it("stays generating across the turn's deltas", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "wor"));
+		s = foldEvent(s, textDelta("t1", "king"));
+		expect(s.generating).toBe(true);
+	});
+
+	it("done clears generating", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "answer"));
+		s = foldEvent(s, doneEvent("t1"));
+		expect(s.generating).toBe(false);
+	});
+
+	it("turn-sealed clears generating", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, turnSealed("t1"));
+		expect(s.generating).toBe(false);
+	});
+
+	it("error clears generating", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, errorEvent("t1", "boom"));
+		expect(s.generating).toBe(false);
+	});
+
+	it("a new turn re-asserts generating after the previous one finished", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, doneEvent("t1"));
+		s = foldEvent(s, turnSealed("t1"));
+		expect(s.generating).toBe(false);
+		s = foldEvent(s, turnStart("t2"));
+		expect(s.generating).toBe(true);
+	});
+
+	it("status does not change generating (free-form string, not inferred)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		const next = foldEvent(s, { type: "status", conversationId: "c1", status: "idle" });
+		expect(next.generating).toBe(true);
+	});
+});
+
+describe("clearGenerating", () => {
+	it("clears a set generating flag", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		expect(s.generating).toBe(true);
+		const cleared = clearGenerating(s);
+		expect(cleared.generating).toBe(false);
+	});
+
+	it("returns the same object when already not generating (no-op)", () => {
+		const s = initialState();
+		expect(clearGenerating(s)).toBe(s);
+	});
+
+	it("preserves transcript content while clearing generating", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "partial"));
+		const cleared = clearGenerating(s);
+		expect(cleared.generating).toBe(false);
+		expect(cleared.accumulating).toEqual({ kind: "text", text: "partial" });
+		expect(cleared.currentTurnId).toBe("t1");
 	});
 });
 
@@ -278,6 +380,60 @@ describe("foldEvent — status and tool-output", () => {
 			stream: "stdout",
 		});
 		expect(next).toBe(s);
+	});
+});
+
+describe("foldEvent — user-message (the turn's user prompt; backend CR-3)", () => {
+	const userMessage = (text: string): TurnInputEvent => ({
+		type: "user-message",
+		conversationId: "c1",
+		turnId: "t1",
+		text,
+	});
+
+	it("a watcher renders the prompt: appends a provisional user chunk + marks generating", () => {
+		let s = initialState();
+		s = foldEvent(s, userMessage("what is 2+2?"));
+		const chunks = selectChunks(s);
+		expect(chunks).toHaveLength(1);
+		expect(chunks[0]?.role).toBe("user");
+		expect(chunks[0]?.chunk).toEqual({ type: "text", text: "what is 2+2?" });
+		expect(chunks[0]?.provisional).toBe(true);
+		expect(s.generating).toBe(true);
+	});
+
+	it("dedups the SENDER's optimistic echo (no duplicate user bubble)", () => {
+		let s = initialState();
+		s = appendUserMessage(s, "hi"); // optimistic echo from the sender's send()
+		s = foldEvent(s, userMessage("hi")); // server echo for the same turn
+		const users = selectChunks(s).filter((c) => c.role === "user");
+		expect(users).toHaveLength(1);
+	});
+
+	it("appends when the trailing provisional differs (no false dedup)", () => {
+		let s = initialState();
+		s = appendUserMessage(s, "first");
+		s = foldEvent(s, userMessage("second"));
+		const users = selectChunks(s).filter((c) => c.role === "user");
+		expect(users).toHaveLength(2);
+	});
+
+	it("ignores an empty user-message", () => {
+		let s = initialState();
+		s = foldEvent(s, userMessage(""));
+		expect(selectChunks(s)).toHaveLength(0);
+		expect(s.generating).toBe(false);
+	});
+
+	it("flushes an accumulating chunk before appending the prompt", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "partial"));
+		s = foldEvent(s, userMessage("new prompt"));
+		// the partial assistant text was flushed to provisional, then the user prompt appended
+		expect(s.accumulating).toBeNull();
+		const roles = selectChunks(s).map((c) => c.role);
+		expect(roles).toEqual(["assistant", "user"]);
 	});
 });
 

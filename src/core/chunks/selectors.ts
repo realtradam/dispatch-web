@@ -24,6 +24,15 @@ export function selectChunks(state: TranscriptState): readonly RenderedChunk[] {
 }
 
 /**
+ * Whether a turn is currently generating (for a "generating…" indicator). True
+ * for ANY client watching the conversation — the sender, a second device, or a
+ * reconnected client whose in-flight turn was replayed.
+ */
+export function selectGenerating(state: TranscriptState): boolean {
+	return state.generating;
+}
+
+/**
  * Group consecutive same-role rendered chunks into ChatMessages.
  */
 export function selectMessages(state: TranscriptState): readonly ChatMessage[] {

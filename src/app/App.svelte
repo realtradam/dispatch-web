@@ -219,7 +219,11 @@
 		<Composer
 			onSend={handleSend}
 			contextSize={store.activeChat.currentContextSize}
-			status={store.activeChat.error ? "error" : "idle"}
+			status={store.activeChat.error
+				? "error"
+				: store.activeChat.generating
+					? "running"
+					: "idle"}
 		/>
 	</div>
 

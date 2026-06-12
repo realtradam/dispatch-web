@@ -8,9 +8,11 @@ import type { RenderedChunk, TranscriptState } from "../../core/chunks";
 import {
 	appendUserMessage,
 	applyHistory,
+	clearGenerating,
 	foldEvent,
 	initialState,
 	selectChunks,
+	selectGenerating,
 	selectMessages,
 } from "../../core/chunks";
 import type { MetricsState, TurnMetricsEntry } from "../../core/metrics";
@@ -43,6 +45,13 @@ export interface ChatStore {
 	 * known yet. Never `0` for the unknown case.
 	 */
 	readonly currentContextSize: number | undefined;
+	/**
+	 * Whether a turn is currently generating server-side — derived from the event
+	 * stream (`turn-start`…no-`done`/`turn-sealed`-yet). True for ANY watching
+	 * client: the sender, a second device, or a reconnected client whose in-flight
+	 * turn was replayed. Drives the composer's "generating…" indicator.
+	 */
+	readonly generating: boolean;
 	readonly pendingSync: boolean;
 	readonly error: string | null;
 	readonly model: string | undefined;
@@ -50,6 +59,14 @@ export interface ChatStore {
 	send(text: string): void;
 	setModel(model: string): void;
 	load(): Promise<void>;
+	/**
+	 * Re-sync after a WS (re)connect. Clears any stale `generating` (a turn may
+	 * have sealed while disconnected — the live `turn-sealed` was missed), then
+	 * pulls newly-sealed turns from history (+ metrics). If the turn is still
+	 * running, the server's post-subscribe replay re-asserts `generating`. The
+	 * app store pairs this with a `chat.subscribe` for the conversation.
+	 */
+	resync(): void;
 	dispose(): void;
 }
 
@@ -100,6 +117,9 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		},
 		get currentContextSize(): number | undefined {
 			return selectCurrentContextSize(metrics);
+		},
+		get generating(): boolean {
+			return selectGenerating(transcript);
 		},
 		get pendingSync(): boolean {
 			return _pendingSync;
@@ -152,6 +172,16 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 			}
 			await syncTail();
 			await syncMetrics();
+		},
+
+		resync(): void {
+			if (disposed) return;
+			// A turn may have sealed while we were disconnected (missed `turn-sealed`):
+			// clear the now-stale spinner BEFORE re-subscribing, so a finished turn
+			// doesn't spin forever. A still-running turn's replay re-asserts it.
+			transcript = clearGenerating(transcript);
+			void syncTail();
+			void syncMetrics();
 		},
 
 		dispose(): void {

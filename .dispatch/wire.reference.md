@@ -4,8 +4,16 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.5.0` (the metrics types below shipped + version-bumped).
-> Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.6.0` (the metrics types below + the `user-message` turn event
+> shipped + version-bumped). Regenerate whenever `@dispatch/wire` changes.
+>
+> **2026-06-12 delta (CR-3 user-message handoff — package bumped `0.5.0` → `0.6.0`, ADDITIVE):** adds a
+> new `AgentEvent` union member `TurnInputEvent` (`{ type: "user-message"; conversationId; turnId; text }`)
+> that surfaces the turn's USER prompt INTO the outward event stream. Emitted ONCE as the FIRST event of
+> every turn (before `turn-start`), so it is buffered + replayed to every subscriber — live AND late-join
+> — and rides `chat.delta`/NDJSON like any other event. Fixes CR-3 (a pure watcher couldn't see the prompt
+> until seal). The sender still echoes its own prompt optimistically, so consumers DE-DUP against that
+> (by text); a pure watcher renders it directly. Persistence/metrics unchanged. See `TurnInputEvent` below.
 >
 > **2026-06-12 delta (context-size handoff — package bumped `0.4.0` → `0.5.0`):** adds an OPTIONAL
 > `contextSize?: number` to BOTH `TurnDoneEvent` (live `done`) and `TurnMetrics` (persisted) — the
@@ -249,6 +257,7 @@ export interface TurnMetrics {
 export type AgentEvent =
 	| StatusEvent
 	| TurnStartEvent
+	| TurnInputEvent
 	| TurnTextDeltaEvent
 	| TurnReasoningDeltaEvent
 	| TurnToolCallEvent
@@ -272,6 +281,23 @@ export interface TurnStartEvent {
 	readonly type: "turn-start";
 	readonly conversationId: string;
 	readonly turnId: string;
+}
+
+/**
+ * The user prompt that opened this turn, surfaced INTO the turn's outward event
+ * stream so a WATCHER (subscribed but not the sender) can render the prompt
+ * mid-turn — the user message is otherwise persisted only at seal. Emitted ONCE
+ * as the FIRST event of the turn (before `turn-start`); buffered + replayed to
+ * every subscriber (live + late-join). The sender echoes its own prompt
+ * optimistically, so DE-DUP against that (by text); a pure watcher renders it
+ * directly. Carries the raw `text` passed to the provider. (Turn-scoped: it
+ * carries `turnId`, so a multi-turn transcript attributes each prompt to its turn.)
+ */
+export interface TurnInputEvent {
+	readonly type: "user-message";
+	readonly conversationId: string;
+	readonly turnId: string;
+	readonly text: string;
 }
 
 /** Incremental text content from the model during a turn. */

@@ -27,6 +27,7 @@ describe("classifies every AgentEvent type", () => {
 	const samples: AgentEvent[] = [
 		{ type: "status", conversationId: "c1", status: "idle" },
 		{ type: "turn-start", conversationId: "c1", turnId: "t1" },
+		{ type: "user-message", conversationId: "c1", turnId: "t1", text: "hi" },
 		{ type: "text-delta", conversationId: "c1", turnId: "t1", delta: "hi" },
 		{ type: "reasoning-delta", conversationId: "c1", turnId: "t1", delta: "thinking" },
 		{
@@ -81,6 +82,7 @@ describe("classifies every AgentEvent type", () => {
 		expect(labels).toEqual([
 			"status",
 			"turn-start",
+			"user-message",
 			"text-delta",
 			"reasoning-delta",
 			"tool-call",
@@ -94,8 +96,8 @@ describe("classifies every AgentEvent type", () => {
 		]);
 	});
 
-	it("covers all 12 AgentEvent variants", () => {
-		expect(samples).toHaveLength(12);
+	it("covers all 13 AgentEvent variants", () => {
+		expect(samples).toHaveLength(13);
 	});
 });
 
@@ -148,9 +150,18 @@ describe("classifies every WsClientMessage type", () => {
 			{ type: "unsubscribe" as const, surfaceId: "s" },
 			{ type: "invoke" as const, surfaceId: "s", actionId: "a" },
 			{ type: "chat.send" as const, message: "hi" },
+			{ type: "chat.subscribe" as const, conversationId: "c1" },
+			{ type: "chat.unsubscribe" as const, conversationId: "c1" },
 		];
 		const labels = msgs.map(assertWsClientMessageExhaustive);
-		expect(labels).toEqual(["subscribe", "unsubscribe", "invoke", "chat.send"]);
+		expect(labels).toEqual([
+			"subscribe",
+			"unsubscribe",
+			"invoke",
+			"chat.send",
+			"chat.subscribe",
+			"chat.unsubscribe",
+		]);
 	});
 });
 

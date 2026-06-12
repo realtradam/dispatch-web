@@ -802,4 +802,114 @@ describe("createChatStore", () => {
 
 		store.dispose();
 	});
+
+	it("generating reflects the turn lifecycle (idle → running → idle)", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		expect(store.generating).toBe(false);
+
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		expect(store.generating).toBe(true);
+
+		store.handleDelta(
+			deltaEvent({ type: "text-delta", conversationId: CONV_ID, turnId: "t1", delta: "hi" }),
+		);
+		expect(store.generating).toBe(true);
+
+		store.handleDelta(
+			deltaEvent({ type: "done", conversationId: CONV_ID, turnId: "t1", reason: "end-turn" }),
+		);
+		expect(store.generating).toBe(false);
+
+		store.dispose();
+	});
+
+	it("generating lights up for a watcher whose turn was replayed (no send first)", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		// A late-joiner receives the in-flight turn replayed from turn-start.
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(
+			deltaEvent({ type: "text-delta", conversationId: CONV_ID, turnId: "t1", delta: "partial" }),
+		);
+		expect(store.generating).toBe(true);
+		expect(transport.sent).toHaveLength(0); // it never sent — it's just watching
+
+		store.dispose();
+	});
+
+	it("resync clears a stale generating flag and re-syncs history + metrics", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		// Disconnected mid-turn: turn-start seen, but the live done/turn-sealed was
+		// missed, so generating is stuck true.
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		expect(store.generating).toBe(true);
+
+		// The turn actually sealed while we were gone — history now has the chunks.
+		historySync.returnChunks = [makeStoredChunk(1), makeStoredChunk(2)];
+
+		store.resync();
+
+		// Generating is cleared synchronously (a finished turn must not spin forever).
+		expect(store.generating).toBe(false);
+
+		await vi.waitFor(() => {
+			expect(historySync.calls).toHaveLength(1);
+			expect(metricsSync.calls).toHaveLength(1);
+		});
+
+		store.dispose();
+	});
+
+	it("resync is a no-op after dispose", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+		});
+
+		store.dispose();
+		store.resync();
+
+		await new Promise((r) => setTimeout(r, 10));
+		expect(historySync.calls).toHaveLength(0);
+		expect(metricsSync.calls).toHaveLength(0);
+	});
 });

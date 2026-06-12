@@ -20,6 +20,14 @@ export interface TranscriptState {
 	readonly currentTurnId: string | null;
 	readonly latestUsage: Usage | null;
 	readonly sealedTurnId: string | null;
+	/**
+	 * True while a turn is generating on the server — derived STRUCTURALLY from the
+	 * event stream: a `turn-start` (or any turn delta) with no matching `done` /
+	 * `turn-sealed` / `error` yet. A late-joiner that subscribes mid-turn gets the
+	 * in-flight turn replayed from its `turn-start`, so this lights up for any
+	 * watching client. NOT inferred from the free-form `status` event string.
+	 */
+	readonly generating: boolean;
 }
 
 /** A chunk ready for rendering: either committed (with seq) or provisional. */

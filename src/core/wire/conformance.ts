@@ -12,6 +12,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
 			return "status";
 		case "turn-start":
 			return "turn-start";
+		case "user-message":
+			return "user-message";
 		case "text-delta":
 			return "text-delta";
 		case "reasoning-delta":
@@ -96,6 +98,10 @@ export function assertWsClientMessageExhaustive(msg: WsClientMessage): string {
 			return "invoke";
 		case "chat.send":
 			return "chat.send";
+		case "chat.subscribe":
+			return "chat.subscribe";
+		case "chat.unsubscribe":
+			return "chat.unsubscribe";
 		default:
 			return msg satisfies never;
 	}

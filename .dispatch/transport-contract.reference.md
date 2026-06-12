@@ -5,9 +5,31 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.6.0` (the metrics endpoint shipped +
-> version-bumped + LIVE-VERIFIED). Depends on `@dispatch/wire@0.5.0` (see `wire.reference.md`) +
-> `@dispatch/ui-contract@0.1.0` (see `ui-contract.reference.md`).
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.8.0` (CR-3 user-message shipped). Depends on
+> `@dispatch/wire@0.6.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.1.0` (see
+> `ui-contract.reference.md`).
+>
+> **2026-06-12 delta (CR-3 user-message handoff — package bumped `0.7.0` → `0.8.0`):** NO transport
+> shape change — it re-exports `AgentEvent` (which `chat.delta` / `/chat` NDJSON carry), and that union
+> gained the additive `TurnInputEvent` (`{ type: "user-message"; conversationId; turnId; text }`), the
+> turn's user prompt, emitted as the FIRST event of every turn (before `turn-start`) and replayed to
+> watchers/late-joiners. See the `wire.reference.md` CR-3 delta + `TurnInputEvent` for the definition.
+>
+> **2026-06-12 delta (turn-continuity handoff — package bumped `0.6.0` → `0.7.0`, ADDITIVE):** a turn
+> is no longer bound to the WS connection — it runs to completion server-side regardless of any
+> client, and any number of connections can watch the same conversation (incl. a late-joiner that
+> connects mid-turn). Two new client→server WS messages: `ChatSubscribeMessage`
+> (`{ type: "chat.subscribe"; conversationId }`) and `ChatUnsubscribeMessage`
+> (`{ type: "chat.unsubscribe"; conversationId }`); `WsClientMessage` now unions both. Server→client
+> is UNCHANGED (turn events still arrive as `chat.delta`, replayed AND live). Semantics: `chat.subscribe`
+> registers the connection + immediately REPLAYS the in-flight turn's events so far (from its
+> `turn-start`) then streams live (nothing replayed if idle); `chat.send` AUTO-subscribes the sending
+> connection (a 2nd send while generating ⇒ `chat.error` + you stay subscribed to watch the running
+> turn); `chat.unsubscribe`/socket-close drops the subscription but NEVER stops the turn; subscriptions
+> persist across turns. FE consumes via the `chat` feature + app store (re-subscribe every open
+> conversation on (re)connect + page load; derive a "running" state structurally from
+> `turn-start`…no-`done`/`turn-sealed`-yet). OUT of scope: per-step crash-resume, concurrent-send
+> arbitration, explicit stop.
 >
 > **2026-06-12 delta (context-size handoff — package bumped `0.5.0` → `0.6.0`, depends on
 > `wire@0.5.0`):** no NEW transport shape — the optional `contextSize?: number` rides the
@@ -293,8 +315,37 @@ export interface ChatErrorMessage {
 	readonly message: string;
 }
 
+/**
+ * Client → server: start WATCHING a conversation's live turn events WITHOUT sending.
+ * On subscribe the server REPLAYS the current in-flight turn so far (from its
+ * `turn-start`) as `chat.delta`, then streams live; nothing replayed if idle (rely
+ * on `GET /conversations/:id` history). Infer "generating" from a replayed
+ * `turn-start` with no matching `done`/`turn-sealed` yet. `chat.send` already
+ * auto-subscribes the sender, so this is for conversations you VIEW but didn't send to
+ * (a 2nd device, or a reloaded/reconnected client). Idempotent per (connection, id).
+ */
+export interface ChatSubscribeMessage {
+	readonly type: "chat.subscribe";
+	readonly conversationId: string;
+}
+
+/**
+ * Client → server: stop watching a conversation's turn events on this connection.
+ * Does NOT stop/affect the turn (it runs to completion regardless of subscribers).
+ * Socket close drops all of a connection's subscriptions the same way — again
+ * WITHOUT aborting any in-flight turn.
+ */
+export interface ChatUnsubscribeMessage {
+	readonly type: "chat.unsubscribe";
+	readonly conversationId: string;
+}
+
 /** Every client → server WS message: surface ops + chat ops. Discriminate on `type`. */
-export type WsClientMessage = SurfaceClientMessage | ChatSendMessage;
+export type WsClientMessage =
+	| SurfaceClientMessage
+	| ChatSendMessage
+	| ChatSubscribeMessage
+	| ChatUnsubscribeMessage;
 
 /** Every server → client WS message: surface ops + chat ops. Discriminate on `type`. */
 export type WsServerMessage = SurfaceServerMessage | ChatDeltaMessage | ChatErrorMessage;
