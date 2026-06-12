@@ -6,7 +6,10 @@ import type {
 	CwdResponse,
 	LspStatusResponse,
 	ModelsResponse,
+	ReasoningEffort,
+	ReasoningEffortResponse,
 	SetCwdRequest,
+	SetReasoningEffortRequest,
 	WarmRequest,
 	WarmResponse,
 } from "@dispatch/transport-contract";
@@ -52,6 +55,11 @@ export type LspResult =
 	| { readonly ok: true; readonly response: LspStatusResponse }
 	| { readonly ok: false; readonly error: string };
 
+/** Outcome of `PUT /conversations/:id/reasoning-effort`. */
+export type ReasoningEffortResult =
+	| { readonly ok: true; readonly reasoningEffort: ReasoningEffort }
+	| { readonly ok: false; readonly error: string };
+
 export interface AppStore {
 	readonly tabs: readonly Tab[];
 	readonly activeConversationId: string | null;
@@ -84,6 +92,18 @@ export interface AppStore {
 	 * Works for a draft too (its id survives promotion), so the first turn runs in it.
 	 */
 	setCwd(cwd: string): Promise<CwdResult | null>;
+	/**
+	 * The workspace conversation's persisted reasoning effort, or null when never
+	 * set (the server then resolves turns at the default, `"high"`).
+	 */
+	readonly reasoningEffort: ReasoningEffort | null;
+	/**
+	 * Persist the workspace conversation's reasoning effort
+	 * (`PUT /conversations/:id/reasoning-effort`). Works for a draft too (its id
+	 * survives promotion), so the first turn already runs at the chosen level.
+	 * Takes effect from the NEXT turn; resolution stays server-owned.
+	 */
+	setReasoningEffort(level: ReasoningEffort): Promise<ReasoningEffortResult | null>;
 	/**
 	 * Fetch the workspace conversation's language-server status (`GET /conversations/:id/lsp`).
 	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
@@ -231,6 +251,29 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			if (workspaceConversationId() === id) cwd = data.cwd ?? null;
 		} catch {
 			// Non-fatal: a cwd fetch failure just leaves the prior value.
+		}
+	}
+
+	// The workspace conversation's persisted reasoning effort. Seeded from the
+	// backend on focus change; null = never set (the server default applies).
+	let reasoningEffort = $state<ReasoningEffort | null>(null);
+
+	/** Refetch the workspace conversation's reasoning effort (works for a draft too). */
+	async function refreshReasoningEffort(): Promise<void> {
+		const id = workspaceConversationId();
+		// Clear immediately so a switch never shows the PREVIOUS conversation's level
+		// while the fetch is in flight (null renders as the server default).
+		reasoningEffort = null;
+		try {
+			const res = await fetchImpl(
+				`${httpBase}/conversations/${encodeURIComponent(id)}/reasoning-effort`,
+			);
+			if (!res.ok) return;
+			const data = (await res.json()) as ReasoningEffortResponse;
+			// Guard a slow response losing a race with a conversation switch.
+			if (workspaceConversationId() === id) reasoningEffort = data.reasoningEffort ?? null;
+		} catch {
+			// Non-fatal: an effort fetch failure just leaves the default rendering.
 		}
 	}
 
@@ -434,6 +477,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	refreshActiveChat();
 	void refreshCwd();
+	void refreshReasoningEffort();
 
 	return {
 		get tabs(): readonly Tab[] {
@@ -468,6 +512,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get cwd(): string | null {
 			return cwd;
 		},
+		get reasoningEffort(): ReasoningEffort | null {
+			return reasoningEffort;
+		},
 		get currentConversationId(): string {
 			return workspaceConversationId();
 		},
@@ -499,6 +546,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				// surfaces (e.g. cache-warming) to its id.
 				syncSubscriptions();
 				void refreshCwd();
+				void refreshReasoningEffort();
 				// Now send on the promoted store
 				chatStores.get(conversationId)?.send(text);
 			} else {
@@ -525,6 +573,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshReasoningEffort();
 		},
 
 		selectTab(conversationId: string): void {
@@ -536,6 +585,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshReasoningEffort();
 		},
 
 		closeTab(conversationId: string): void {
@@ -554,6 +604,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshReasoningEffort();
 		},
 
 		invoke(surfaceId: string, actionId: string, payload?: unknown): void {
@@ -609,6 +660,37 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				return { ok: true, cwd: next };
 			} catch (err) {
 				return { ok: false, error: err instanceof Error ? err.message : "Set cwd request failed" };
+			}
+		},
+
+		async setReasoningEffort(level: ReasoningEffort): Promise<ReasoningEffortResult | null> {
+			const id = workspaceConversationId();
+			const body: SetReasoningEffortRequest = { reasoningEffort: level };
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/conversations/${encodeURIComponent(id)}/reasoning-effort`,
+					{
+						method: "PUT",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(body),
+					},
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Set reasoning effort failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as ReasoningEffortResponse;
+				const next = data.reasoningEffort ?? level;
+				if (workspaceConversationId() === id) reasoningEffort = next;
+				return { ok: true, reasoningEffort: next };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Set reasoning effort request failed",
+				};
 			}
 		},
 

@@ -140,7 +140,9 @@ context size, cache-warming (+ retention/timer), markdown, smart auto-scroll, mu
 live view (subscribe/reconnect + the user prompt on the event stream), and the chat limit
 (bulk quarter-unload past `dispatch.chatLimit`, 75% fresh-load window, show-earlier page-in;
 `core/chunks/trim.ts`; CR-5 `?limit=`/`?beforeSeq=` CONSUMED — server-windowed cold loads +
-show-earlier server backfill; `hasOlder` from the 1-based gap-free seq contract). Plan in
+show-earlier server backfill; `hasOlder` from the 1-based gap-free seq contract), and the
+reasoning-effort selector (Model view, under the provider/model dropdowns; sticky per-conversation
+`GET`/`PUT /reasoning-effort`, `null` ⇒ "high (default)"). Plan in
 `../arch-rewrite/notes/frontend-design.md` §10.
 
 ## Reports

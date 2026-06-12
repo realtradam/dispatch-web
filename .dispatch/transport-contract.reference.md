@@ -5,9 +5,26 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.10.0` (CR-5 history windowing shipped).
-> Depends on `@dispatch/wire@0.6.1` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.11.0` (reasoning effort shipped).
+> Depends on `@dispatch/wire@0.7.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
 > `ui-contract.reference.md`).
+>
+> **2026-06-12 delta (reasoning-effort handoff — package bumped `0.10.0` → `0.11.0`, ADDITIVE):**
+> the thinking-depth knob (`ReasoningEffort`, re-exported from `wire@0.7.0`) lands in TWO scopes,
+> resolved server-side per turn (per-turn override → persisted conversation value → default
+> `"high"`; do NOT re-implement the chain client-side):
+> 1. **Per-turn override** — optional `reasoningEffort?: ReasoningEffort` on `ChatRequest` (and
+>    therefore on WS `chat.send`, which extends it). Applies to THAT turn only; never persists.
+>    OMIT the key for "no override" (never send `null`/`""`).
+> 2. **Persisted per-conversation setting** — `GET /conversations/:id/reasoning-effort` →
+>    `ReasoningEffortResponse { conversationId, reasoningEffort: ReasoningEffort | null }`
+>    (`null` = never set ⇒ the default `"high"` applies, NOT "off") and
+>    `PUT /conversations/:id/reasoning-effort` body `SetReasoningEffortRequest
+>    { reasoningEffort }`. Takes effect from the NEXT turn.
+> Validation: an unrecognized level → HTTP 400 `{ error }` listing the valid levels (same for the
+> WS path via the standard `chat.send` error reply). Cache note: CHANGING the level changes the
+> provider request shape and can bust the prompt cache for the next turn (one-time re-prefill);
+> a stable setting stays cache-safe (warming uses the same resolved effort).
 >
 > **2026-06-12 delta (CR-5 history windowing — package bumped `0.9.0` → `0.10.0`):** NO type-shape
 > change — `GET /conversations/:id` gains two OPTIONAL query params alongside `sinceSeq`:
@@ -126,6 +143,11 @@
 - `GET /conversations/:id/lsp` — `LspStatusResponse`. LAZILY spawns+initializes the configured servers
   on the first call per cwd (can take a moment; cached after); returns once each settles to
   `connected`/`error`. `servers` is `[]` when `cwd` is null.
+- `GET /conversations/:id/reasoning-effort` — `ReasoningEffortResponse` (`reasoningEffort` is `null`
+  when never set ⇒ default `"high"` applies). Works for an unseen/draft id.
+- `PUT /conversations/:id/reasoning-effort` — body `SetReasoningEffortRequest` →
+  `200 ReasoningEffortResponse`; `400 { error }` on an unrecognized level (the message lists the
+  valid levels). Persists the conversation's sticky level; effective from the NEXT turn.
 - WebSocket on :24205 — ONE path-agnostic socket multiplexes surface ops
   (`@dispatch/ui-contract`) + chat ops (below). Open once, send `WsClientMessage`, receive
   `WsServerMessage`. Live `AgentEvent` deltas carry `conversationId`+`turnId` but **no `seq`**
@@ -150,9 +172,15 @@
  */
 
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
-import type { AgentEvent, StoredChunk, TurnMetrics } from "@dispatch/wire";
+import type { AgentEvent, ReasoningEffort, StoredChunk, TurnMetrics } from "@dispatch/wire";
 
-export type { AgentEvent, StepMetrics, StoredChunk, TurnMetrics } from "@dispatch/wire";
+export type {
+	AgentEvent,
+	ReasoningEffort,
+	StepMetrics,
+	StoredChunk,
+	TurnMetrics,
+} from "@dispatch/wire";
 
 /**
  * Request body for `POST /chat` (sent as JSON).
@@ -184,6 +212,14 @@ export interface ChatRequest {
 	 * prompt (so it does not affect prompt caching).
 	 */
 	readonly cwd?: string;
+
+	/**
+	 * Reasoning-effort override for THIS turn only (does not persist). When
+	 * omitted, the server resolves the conversation's persisted value, falling
+	 * back to `"high"`. Must be one of the `ReasoningEffort` levels; an
+	 * unrecognized value → HTTP 400 `{ error }`.
+	 */
+	readonly reasoningEffort?: ReasoningEffort;
 }
 
 /**
@@ -313,6 +349,28 @@ export interface CwdResponse {
 /** Body of `PUT /conversations/:id/cwd`. */
 export interface SetCwdRequest {
 	readonly cwd: string;
+}
+
+// ─── Per-conversation reasoning effort ────────────────────────────────────────
+
+/**
+ * Response of `GET /conversations/:id/reasoning-effort`. `reasoningEffort` is
+ * null when never set (the server then resolves turns at the default,
+ * `"high"`).
+ */
+export interface ReasoningEffortResponse {
+	readonly conversationId: string;
+	readonly reasoningEffort: ReasoningEffort | null;
+}
+
+/**
+ * Body of `PUT /conversations/:id/reasoning-effort` — persists the
+ * conversation's sticky reasoning-effort level (used for every later turn that
+ * does not carry a per-turn `ChatRequest.reasoningEffort` override). An
+ * unrecognized level → HTTP 400 `{ error }`.
+ */
+export interface SetReasoningEffortRequest {
+	readonly reasoningEffort: ReasoningEffort;
 }
 
 // ─── Conversation close (explicit tab close) ──────────────────────────────────
