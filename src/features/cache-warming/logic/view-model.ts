@@ -232,11 +232,23 @@ export function observeWarm(
 }
 
 /**
+ * Grace before a PAST `nextWarmAt` is treated as "not scheduled" (→ the
+ * "waiting…" state instead of a perpetual "0s"). The backend pushes the FUTURE
+ * `nextWarmAt` after every warm (CR-4b) and `null` while generating/disabled, so
+ * this is a belt-and-braces guard that should never trigger — it only matters
+ * against a stale/buggy emitter, and the small window lets an on-time warm show
+ * "0s" for the second it takes to complete.
+ */
+const STALE_NEXT_WARM_MS = 3000;
+
+/**
  * Seconds until the next automatic warm, AUTHORITATIVE: derived straight from the
  * backend's `nextWarmAt` epoch-ms (never FE-anchored/guessed). `null` when nothing
- * is scheduled (disabled, or a turn is generating so the timer is cancelled).
+ * is scheduled (disabled, or a turn is generating so the timer is cancelled) — or
+ * when `nextWarmAt` is stale (further than the grace into the past).
  */
 export function secondsUntilNext(nextWarmAt: number | null, now: number): number | null {
 	if (nextWarmAt === null) return null;
+	if (now - nextWarmAt > STALE_NEXT_WARM_MS) return null;
 	return Math.max(0, Math.ceil((nextWarmAt - now) / 1000));
 }

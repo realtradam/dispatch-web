@@ -215,6 +215,14 @@ describe("secondsUntilNext (authoritative, from nextWarmAt)", () => {
 		expect(secondsUntilNext(10_000, 10_000)).toBe(0);
 		expect(secondsUntilNext(250_000, 10_000)).toBe(240);
 		expect(secondsUntilNext(70_000, 10_000)).toBe(60);
-		expect(secondsUntilNext(5_000, 999_999)).toBe(0); // already past
+	});
+
+	it("treats a nextWarmAt past the stale grace as not scheduled (belt-and-braces)", () => {
+		// Within the 3s grace an on-time warm may briefly read "0s"…
+		expect(secondsUntilNext(10_000, 11_000)).toBe(0);
+		expect(secondsUntilNext(10_000, 13_000)).toBe(0);
+		// …but beyond it the value is stale → null (the "waiting…" state).
+		expect(secondsUntilNext(10_000, 13_001)).toBeNull();
+		expect(secondsUntilNext(5_000, 999_999)).toBeNull();
 	});
 });

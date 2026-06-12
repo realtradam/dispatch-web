@@ -674,6 +674,78 @@ describe("createAppStore", () => {
 		store.dispose();
 	});
 
+	it("closing a tab POSTs /conversations/:id/close (abort turn + stop warming)", async () => {
+		const calls: { url: string; method: string }[] = [];
+		const base = fakeFetchImpl();
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			calls.push({ url, method: init?.method ?? "GET" });
+			if (url.endsWith("/close")) {
+				return new Response(
+					JSON.stringify({ conversationId: url.split("/").at(-2), abortedTurn: false }),
+					{ status: 200 },
+				);
+			}
+			return base(input, init);
+		};
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl,
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		store.send("first");
+		const convId = activeConversationId(store);
+		store.closeTab(convId);
+		await Promise.resolve(); // flush the fire-and-forget fetch
+
+		const close = calls.find((c) => c.url.endsWith(`/conversations/${convId}/close`));
+		expect(close).toBeDefined();
+		expect(close?.method).toBe("POST");
+
+		store.dispose();
+	});
+
+	it("does NOT re-scope a scope:'global' surface on conversation switch (no churn)", () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		ws.feedSurfaceMessage({
+			type: "catalog",
+			catalog: [
+				{ id: "s-global", region: "side", title: "Global", scope: "global" },
+				{ id: "s-conv", region: "side", title: "Scoped", scope: "conversation" },
+			],
+		});
+
+		ws.sent.length = 0;
+		store.send("promote the draft"); // draft → real conversation: surfaces re-scope
+		const convId = activeConversationId(store);
+
+		const surfaceMsgs = parseSent(ws).filter(
+			(p): p is { type: string; surfaceId: string; conversationId?: string } =>
+				(p as { type: string }).type === "subscribe" ||
+				(p as { type: string }).type === "unsubscribe",
+		);
+		// The conversation-scoped surface re-scopes: unsubscribe old + subscribe new id.
+		expect(
+			surfaceMsgs.some(
+				(m) => m.type === "subscribe" && m.surfaceId === "s-conv" && m.conversationId === convId,
+			),
+		).toBe(true);
+		// The global surface is untouched — no redundant unsubscribe+subscribe round trip.
+		expect(surfaceMsgs.some((m) => m.surfaceId === "s-global")).toBe(false);
+
+		store.dispose();
+	});
+
 	it("tabs persist to the injected storage and restore on a new store", () => {
 		const ws = fakeSocket();
 		const storage = createFakeStorage();
