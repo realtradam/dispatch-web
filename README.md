@@ -100,4 +100,4 @@ bun run check        # biome (.ts/.js; .svelte correctness is svelte-check's job
 ## Documentation
 
 - **Design + plan:** `../arch-rewrite/notes/frontend-design.md`
-- **Build rules:** `AGENTS.md` · **Orchestration:** `ORCHESTRATOR.md` · **Vocabulary:** `GLOSSARY.md`
+- **Build rules + workflow:** `AGENTS.md` · **Vocabulary:** `GLOSSARY.md`
