@@ -85,7 +85,12 @@ Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-con
 
 **None open.** Resolved history below.
 
-### CR-5 — history windowing for the FE chat limit → **RESOLVED ✅** (courier `backend-handoff-chat-limit.md`; reply `frontend-history-windowing-handoff.md`; consumed)
+### CR-5 — history windowing for the FE chat limit → **RESOLVED ✅** (courier `backend-handoff-chat-limit.md`; reply `frontend-history-windowing-handoff.md`; consumed + live-probed 23/23)
+
+_Live-probed against `bin/up` after consumption: seq origin `1`; `?limit=2` → newest 2 ascending
+with `latestSeq` = window tail; `?limit=200` on a 3-chunk log → whole log (short-chat exactness);
+`?beforeSeq=2&limit=50` → `[1]`; `limit=0` and `beforeSeq=-1` both 400. 23/23 incl. all
+pre-existing checks._
 
 Backend shipped everything asked (`transport-contract@0.10.0`, `wire@0.6.1` doc-only):
 `?limit=<k>` (newest-k of the selection, ascending; ≤ k ⇒ whole selection, exact) +
