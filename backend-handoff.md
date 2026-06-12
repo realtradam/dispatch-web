@@ -5,16 +5,36 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-12 (CR-5 consumed). **FE is current on `ui-contract@0.2.0` /
-`transport-contract@0.10.0` / `wire@0.6.1`.** All handoffs to date are consumed: surfaces + WS,
-conversation transcript/metrics, tabs + model selector, cache-warming (incl. authoritative timer
-+ retention + cache-rate fix + the CR-4 lifecycle below), **per-conversation cwd + LSP status**,
-**context size**, **turn continuity + multi-client live view**, and the **chat limit + CR-5
-history windowing** (below).
+_Last updated: 2026-06-12 (reasoning-effort handoff consumed). **FE is current on
+`ui-contract@0.2.0` / `transport-contract@0.11.0` / `wire@0.7.0`.** All handoffs to date are
+consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming
+(incl. authoritative timer + retention + cache-rate fix + the CR-4 lifecycle below),
+**per-conversation cwd + LSP status**, **context size**, **turn continuity + multi-client live
+view**, the **chat limit + CR-5 history windowing**, and the **reasoning effort
+(thinking-depth knob)** (below).
 **Open asks: NONE.** CR-1/CR-2/CR-4/CR-5 all RESOLVED ✅ (see §2); §3 lists likely next asks.
 **CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
 `user-message` turn event; FE re-pinned + consumption live.
 The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
+
+**Reasoning-effort handoff (`frontend-reasoning-effort-handoff.md`) → CONSUMED ✅
+(curl-probed live: GET null on unseen id · PUT `xhigh` → echo + sticky GET · bad level → 400
+listing the ladder · CORS preflight allows PUT).** Re-pinned `wire@0.6.1→0.7.0` +
+`transport-contract@0.10.0→0.11.0`; re-mirrored both `.dispatch/*.reference.md`; added
+"reasoning effort" to FE `GLOSSARY.md`. FE work: a **per-conversation effort selector** in the
+sidebar's **Model view**, under the provider + model dropdowns
+(`features/chat/ui/ReasoningEffortSelector.svelte`, pure helpers in
+`features/chat/reasoning-effort.ts`): renders `null` as "high (default)" per the server-owned
+resolution chain, PUTs on change (effective next turn), shows the save error + reverts on 400,
+disables while in flight; re-mounted per conversation (incl. drafts — the draft id survives
+promotion, so an effort set on a draft applies from turn 1, same pattern as cwd). The app store
+seeds it on every focus change via `GET /conversations/:id/reasoning-effort` (cleared first so a
+switch never flashes the previous conversation's level) and exposes
+`reasoningEffort`/`setReasoningEffort`. The optional per-turn `chat.send` override is NOT built
+(no composer affordance yet — `chat.send` still omits the key, which the contract specifies as
+"no override"). The "expect more thinking" note needs no change: the transcript already renders
+arbitrary runs of reasoning deltas, and `generating` is structural (not timer-based). 616 tests
+green. NO new backend ask._
 
 **CR-4 cache-warming lifecycle (`frontend-cache-warming-lifecycle-handoff.md`) → CONSUMED ✅
 (live-probed 17/17 against `bin/up`).** Re-pinned `ui-contract@0.1.0→0.2.0` +
@@ -61,25 +81,26 @@ backend ask — but the max-limit denominator is now a live FE need; see §3.
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.6.1`; `transport-contract@0.10.0`**.
+Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.7.0`; `transport-contract@0.11.0`**.
 
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`** |
-| `@dispatch/transport-contract` | `ChatRequest`/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`**, **`ReasoningEffort`** |
+| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` ·
 `GET /conversations/:id?sinceSeq=<n>&beforeSeq=<s>&limit=<k>` (CR-5 windowing) ·
 `GET /conversations/:id/metrics` · `GET`/`PUT /conversations/:id/cwd` ·
+`GET`/`PUT /conversations/:id/reasoning-effort` (sticky thinking-depth; `null` ⇒ default `high`) ·
 `GET /conversations/:id/lsp` · `POST /chat/warm` · `POST /conversations/:id/close` (explicit
 tab-close: abort turn + stop/disable warming) · WS `chat.send`→`chat.delta` ·
 WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
-`transport-contract@0.10.0` / `wire@0.6.1`).
+`transport-contract@0.11.0` / `wire@0.7.0`).
 
 ## 2. Open asks FOR THE BACKEND
 

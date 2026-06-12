@@ -1,4 +1,5 @@
 <script lang="ts">
+	import type { ReasoningEffort } from "@dispatch/transport-contract";
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import { tick } from "svelte";
 	import Table from "../components/Table.svelte";
@@ -12,6 +13,8 @@
 		Composer,
 		manifest as chatManifest,
 		ModelSelector,
+		ReasoningEffortSelector,
+		type ReasoningEffortSaveResult,
 	} from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
@@ -151,6 +154,17 @@
 					cachePct: result.response.cachePct,
 					expectedCacheRate: result.response.expectedCacheRate,
 				}
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's reasoning-effort result to the chat feature's port.
+	async function saveReasoningEffort(
+		level: ReasoningEffort,
+	): Promise<ReasoningEffortSaveResult | null> {
+		const result = await store.setReasoningEffort(level);
+		if (result === null) return null;
+		return result.ok
+			? { ok: true, reasoningEffort: result.reasoningEffort }
 			: { ok: false, error: result.error };
 	}
 
@@ -295,10 +309,11 @@
 	{#if kind === "model"}
 		<div class="flex flex-col gap-3">
 			<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
-			<!-- Keyed on the workspace conversation (active tab OR draft) so the input
-			     re-mounts per conversation — incl. switching between drafts — and can't
-			     bleed across tabs. Editable for a draft too (cwd applies from turn 1). -->
+			<!-- Keyed on the workspace conversation (active tab OR draft) so the inputs
+			     re-mount per conversation — incl. switching between drafts — and can't
+			     bleed across tabs. Editable for a draft too (cwd + effort apply from turn 1). -->
 			{#key store.currentConversationId}
+				<ReasoningEffortSelector persisted={store.reasoningEffort} save={saveReasoningEffort} />
 				<CwdField cwd={store.cwd} canEdit={true} save={saveCwd} />
 			{/key}
 		</div>

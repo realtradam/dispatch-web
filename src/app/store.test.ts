@@ -708,6 +708,103 @@ describe("createAppStore", () => {
 		store.dispose();
 	});
 
+	it("seeds reasoningEffort from GET /conversations/:id/reasoning-effort (null = never set)", async () => {
+		const base = fakeFetchImpl();
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			if (url.endsWith("/reasoning-effort")) {
+				return new Response(JSON.stringify({ conversationId: "x", reasoningEffort: "xhigh" }), {
+					status: 200,
+				});
+			}
+			return base(input, init);
+		};
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl,
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		await vi.waitFor(() => {
+			expect(store.reasoningEffort).toBe("xhigh");
+		});
+
+		store.dispose();
+	});
+
+	it("setReasoningEffort PUTs the level and updates local state from the echo", async () => {
+		const calls: { url: string; method: string; body: string | undefined }[] = [];
+		const base = fakeFetchImpl();
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
+			if (url.endsWith("/reasoning-effort") && init?.method === "PUT") {
+				const sent = JSON.parse(init.body as string) as { reasoningEffort: string };
+				return new Response(
+					JSON.stringify({ conversationId: "x", reasoningEffort: sent.reasoningEffort }),
+					{ status: 200 },
+				);
+			}
+			if (url.endsWith("/reasoning-effort")) {
+				return new Response(JSON.stringify({ conversationId: "x", reasoningEffort: null }), {
+					status: 200,
+				});
+			}
+			return base(input, init);
+		};
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl,
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		const result = await store.setReasoningEffort("max");
+		expect(result).toEqual({ ok: true, reasoningEffort: "max" });
+		expect(store.reasoningEffort).toBe("max");
+
+		const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/reasoning-effort"));
+		expect(put).toBeDefined();
+		// The PUT targets the workspace conversation (draft id works too) and
+		// carries exactly the SetReasoningEffortRequest body.
+		expect(put?.url).toContain(`/conversations/${store.currentConversationId}/`);
+		expect(JSON.parse(put?.body ?? "{}")).toEqual({ reasoningEffort: "max" });
+
+		store.dispose();
+	});
+
+	it("setReasoningEffort surfaces a 400 error and leaves state unchanged", async () => {
+		const base = fakeFetchImpl();
+		const fetchImpl: typeof fetch = async (input, init) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			if (url.endsWith("/reasoning-effort") && init?.method === "PUT") {
+				return new Response(JSON.stringify({ error: "bad level" }), { status: 400 });
+			}
+			if (url.endsWith("/reasoning-effort")) {
+				return new Response(JSON.stringify({ conversationId: "x", reasoningEffort: null }), {
+					status: 200,
+				});
+			}
+			return base(input, init);
+		};
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl,
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		const result = await store.setReasoningEffort("max");
+		expect(result).toEqual({ ok: false, error: "bad level" });
+		expect(store.reasoningEffort).toBeNull();
+
+		store.dispose();
+	});
+
 	it("does NOT re-scope a scope:'global' surface on conversation switch (no churn)", () => {
 		const ws = fakeSocket();
 		const store = createAppStore({

@@ -7,6 +7,7 @@ import type { TurnMetricsEntry } from "../../core/metrics";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
 import ModelSelector from "./ui/ModelSelector.svelte";
+import ReasoningEffortSelector from "./ui/ReasoningEffortSelector.svelte";
 
 describe("ChatView", () => {
 	it("renders a message's text chunk", () => {
@@ -693,5 +694,78 @@ describe("ModelSelector", () => {
 
 		expect(onSelect).toHaveBeenCalledTimes(1);
 		expect(onSelect).toHaveBeenCalledWith("openai/gpt-4o");
+	});
+});
+
+describe("ReasoningEffortSelector", () => {
+	it("renders null (never set) as the default level, marked '(default)'", () => {
+		render(ReasoningEffortSelector, { props: { persisted: null, save: vi.fn() } });
+
+		const select = screen.getByRole("combobox", { name: "Reasoning effort" });
+		expect(select).toHaveValue("high");
+		expect(within(select).getByRole("option", { name: "high (default)" })).toBeInTheDocument();
+		// All five ladder levels are offered.
+		expect(within(select).getAllByRole("option")).toHaveLength(5);
+	});
+
+	it("renders a persisted level as selected", () => {
+		render(ReasoningEffortSelector, { props: { persisted: "xhigh", save: vi.fn() } });
+
+		expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("xhigh");
+	});
+
+	it("selecting a level saves it via the injected port and confirms", async () => {
+		const save = vi.fn(async (level: "low" | "medium" | "high" | "xhigh" | "max") => ({
+			ok: true as const,
+			reasoningEffort: level,
+		}));
+		const user = userEvent.setup();
+
+		render(ReasoningEffortSelector, { props: { persisted: null, save } });
+
+		await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "max");
+
+		expect(save).toHaveBeenCalledTimes(1);
+		expect(save).toHaveBeenCalledWith("max");
+		await vi.waitFor(() => {
+			expect(screen.getByText(/applies from the next turn/i)).toBeInTheDocument();
+		});
+		expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("max");
+	});
+
+	it("a failed save shows the error and reverts to the persisted value", async () => {
+		const save = vi.fn(async () => ({ ok: false as const, error: "nope" }));
+		const user = userEvent.setup();
+
+		render(ReasoningEffortSelector, { props: { persisted: "low", save } });
+
+		await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "max");
+
+		await vi.waitFor(() => {
+			expect(screen.getByText("nope")).toBeInTheDocument();
+		});
+		expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("low");
+	});
+
+	it("disables the select while a save is in flight (no double-fire)", async () => {
+		let resolveSave: ((r: { ok: true; reasoningEffort: "max" }) => void) | undefined;
+		const save = vi.fn(
+			() =>
+				new Promise<{ ok: true; reasoningEffort: "max" }>((resolve) => {
+					resolveSave = resolve;
+				}),
+		);
+		const user = userEvent.setup();
+
+		render(ReasoningEffortSelector, { props: { persisted: null, save } });
+
+		await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "max");
+
+		expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeDisabled();
+
+		resolveSave?.({ ok: true, reasoningEffort: "max" });
+		await vi.waitFor(() => {
+			expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeEnabled();
+		});
 	});
 });

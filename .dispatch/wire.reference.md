@@ -4,8 +4,18 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.6.1` (doc-only bump: the 1-based gap-free seq guarantee
-> codified on `StoredChunk`). Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.7.0` (reasoning effort — the thinking-depth knob).
+> Regenerate whenever `@dispatch/wire` changes.
+>
+> **2026-06-12 delta (reasoning-effort handoff — package bumped `0.6.1` → `0.7.0`, ADDITIVE):**
+> adds the **`ReasoningEffort`** type — the per-request thinking-depth ladder
+> `"low" | "medium" | "high" | "xhigh" | "max"`. Provider-agnostic; the Anthropic provider maps
+> levels to extended-thinking token budgets (low 4096 · medium 10240 · high 16384 · xhigh 32768 ·
+> max 65536); providers without a thinking knob ignore it. Resolution is SERVER-owned (do not
+> re-implement): per-turn `ChatRequest.reasoningEffort` override → persisted per-conversation value
+> (`GET`/`PUT /conversations/:id/reasoning-effort`, see `transport-contract@0.11.0`) → default
+> `"high"`. Higher levels mean longer runs of `reasoning-delta` events before the first text delta.
+> See the `ReasoningEffort` definition below.
 >
 > **2026-06-12 delta (CR-5 history windowing — package bumped `0.6.0` → `0.6.1`, DOC-ONLY):** the
 > per-conversation `seq` numbering is now a WRITTEN CONTRACTUAL GUARANTEE on `StoredChunk`:
@@ -195,6 +205,20 @@ export interface StoredChunk {
 	readonly role: Role;
 	readonly chunk: Chunk;
 }
+
+// ─── Reasoning effort ───────────────────────────────────────────────────────
+
+/**
+ * The per-request thinking-depth knob: how much extended thinking / reasoning
+ * the model should spend before answering. Provider-agnostic ladder; each
+ * provider maps a level to its native knob in its own code (e.g. an Anthropic
+ * provider maps it to a `thinking.budget_tokens` value) and MAY ignore levels
+ * (or the field entirely) that its backend cannot express.
+ *
+ * Resolution (owned by the session-orchestrator): per-turn request value →
+ * persisted per-conversation value → default `"high"`.
+ */
+export type ReasoningEffort = "low" | "medium" | "high" | "xhigh" | "max";
 
 // ─── Usage ──────────────────────────────────────────────────────────────────
 
