@@ -10,7 +10,20 @@ export function initialState(): TranscriptState {
 		currentTurnId: null,
 		latestUsage: null,
 		sealedTurnId: null,
+		generating: false,
 	};
+}
+
+/**
+ * Clear the `generating` flag without touching anything else. Used on a WS
+ * (re)connect: a turn may have sealed while we were disconnected, so the live
+ * `turn-sealed`/`done` that would have cleared `generating` was missed. The
+ * caller resets here, then re-subscribes — if the turn is still running the
+ * server's replay re-asserts `generating` via the replayed `turn-start`.
+ */
+export function clearGenerating(state: TranscriptState): TranscriptState {
+	if (!state.generating) return state;
+	return { ...state, generating: false };
 }
 
 function flushAccumulating(
@@ -55,6 +68,8 @@ export function applyHistory(
  * Fold one live AgentEvent into the provisional state.
  *
  * - `turn-start` records the turnId.
+ * - `user-message` appends the turn's user prompt (de-duped vs the sender's
+ *   optimistic echo) so a watcher renders it mid-turn.
  * - `text-delta` extends the current accumulating TextChunk (or starts one).
  * - `reasoning-delta` extends the current accumulating ThinkingChunk (or starts one).
  * - `tool-call` / `tool-result` / `error` finalize any accumulating chunk and
@@ -63,6 +78,11 @@ export function applyHistory(
  * - `done` finalizes any accumulating chunk (turn still provisional).
  * - `turn-sealed` finalizes any accumulating chunk and sets sealedTurnId.
  * - `status` and `tool-output` are ignored (best-effort no-ops).
+ *
+ * `generating` is folded structurally: a `turn-start` or any content delta sets
+ * it true; `done` / `turn-sealed` / `error` clear it. This is what a watching
+ * (or reconnected) client renders as "generating…", with no dependence on the
+ * free-form `status` event string.
  */
 export function foldEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
 	switch (event.type) {
@@ -71,31 +91,66 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 			return state;
 
 		case "turn-start":
-			return { ...state, currentTurnId: event.turnId };
+			return { ...state, currentTurnId: event.turnId, generating: true };
+
+		case "user-message": {
+			// The turn's USER prompt, surfaced on the event stream (backend CR-3) so a
+			// WATCHER/late-joiner renders it mid-turn instead of waiting for seal. The
+			// SENDER already echoed its own prompt optimistically (`appendUserMessage`),
+			// so DE-DUP: skip if the trailing provisional chunk is already an identical
+			// user text chunk. A pure watcher has no such echo → it appends and renders.
+			if (event.text.length === 0) return state;
+			const last = state.provisional[state.provisional.length - 1];
+			if (
+				last !== undefined &&
+				last.role === "user" &&
+				last.chunk.type === "text" &&
+				last.chunk.text === event.text
+			) {
+				return { ...state, generating: true };
+			}
+			const provisional = flushAccumulating(state.provisional, state.accumulating);
+			return {
+				...state,
+				provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
+				accumulating: null,
+				generating: true,
+			};
+		}
 
 		case "text-delta": {
 			const acc = state.accumulating;
 			if (acc !== null && acc.kind === "text") {
-				return { ...state, accumulating: { kind: "text", text: acc.text + event.delta } };
+				return {
+					...state,
+					accumulating: { kind: "text", text: acc.text + event.delta },
+					generating: true,
+				};
 			}
 			const provisional = flushAccumulating(state.provisional, acc);
 			return {
 				...state,
 				provisional,
 				accumulating: { kind: "text", text: event.delta },
+				generating: true,
 			};
 		}
 
 		case "reasoning-delta": {
 			const acc = state.accumulating;
 			if (acc !== null && acc.kind === "thinking") {
-				return { ...state, accumulating: { kind: "thinking", text: acc.text + event.delta } };
+				return {
+					...state,
+					accumulating: { kind: "thinking", text: acc.text + event.delta },
+					generating: true,
+				};
 			}
 			const provisional = flushAccumulating(state.provisional, acc);
 			return {
 				...state,
 				provisional,
 				accumulating: { kind: "thinking", text: event.delta },
+				generating: true,
 			};
 		}
 
@@ -112,6 +167,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				...state,
 				provisional: [...provisional, { role: "assistant", chunk }],
 				accumulating: null,
+				generating: true,
 			};
 		}
 
@@ -129,6 +185,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				...state,
 				provisional: [...provisional, { role: "tool", chunk }],
 				accumulating: null,
+				generating: true,
 			};
 		}
 
@@ -142,6 +199,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				...state,
 				provisional: [...provisional, { role: "assistant", chunk }],
 				accumulating: null,
+				generating: false,
 			};
 		}
 
@@ -158,6 +216,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				...state,
 				provisional,
 				accumulating: null,
+				generating: false,
 			};
 		}
 
@@ -168,6 +227,7 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				provisional,
 				accumulating: null,
 				sealedTurnId: event.turnId,
+				generating: false,
 			};
 		}
 	}

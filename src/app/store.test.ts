@@ -1,6 +1,6 @@
 import type { ConversationHistoryResponse, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
 import { createAppStore } from "./store.svelte";
 
@@ -51,6 +51,55 @@ function fakeSocket(): FakeSocket {
 	return ws;
 }
 
+/**
+ * A fake socket that supports the close→reconnect cycle (the base `fakeSocket`
+ * swallows `onclose`). The factory returns the SAME instance on every connect, so
+ * `sent` accumulates and `open()` can be driven again after `closeRemote()`.
+ */
+interface ReconnectableSocket extends WebSocketLike {
+	sent: string[];
+	open(): void;
+	closeRemote(): void;
+}
+
+function reconnectableSocket(): ReconnectableSocket {
+	let onopen: (() => void) | null = null;
+	let onmessage: ((ev: { data: string }) => void) | null = null;
+	let onclose: ((ev: { code: number; reason: string }) => void) | null = null;
+	const sent: string[] = [];
+	return {
+		send(data: string) {
+			sent.push(data);
+		},
+		close() {},
+		get onopen() {
+			return onopen;
+		},
+		set onopen(fn) {
+			onopen = fn;
+		},
+		get onmessage() {
+			return onmessage;
+		},
+		set onmessage(fn) {
+			onmessage = fn;
+		},
+		get onclose() {
+			return onclose;
+		},
+		set onclose(fn) {
+			onclose = fn;
+		},
+		sent,
+		open() {
+			onopen?.();
+		},
+		closeRemote() {
+			onclose?.({ code: 1006, reason: "" });
+		},
+	};
+}
+
 interface FakeFetchOptions {
 	models?: readonly string[];
 	history?: Record<string, ConversationHistoryResponse>;
@@ -70,7 +119,7 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
 	};
 }
 
-function parseSent(ws: FakeSocket): unknown[] {
+function parseSent(ws: { sent: string[] }): unknown[] {
 	return ws.sent.map((s) => JSON.parse(s));
 }
 
@@ -749,6 +798,106 @@ describe("createAppStore", () => {
 
 		store.selectTab(convId2);
 		expect(store.activeConversationId).toBe(convId2);
+
+		store.dispose();
+	});
+
+	it("subscribes to chat for each restored tab on page load", () => {
+		const storage = createFakeStorage();
+		// First session: create a tab, then dispose.
+		const ws1 = fakeSocket();
+		const store1 = createAppStore({
+			socketFactory: () => ws1,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: storage,
+		});
+		ws1.resolveOpen();
+		store1.send("persist me");
+		const convId = store1.tabs[0]?.conversationId as string;
+		expect(convId).toBeDefined();
+		store1.dispose();
+
+		// Second session: the restored tab must be re-subscribed for live turns.
+		const ws2 = fakeSocket();
+		const store2 = createAppStore({
+			socketFactory: () => ws2,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: storage,
+		});
+		ws2.resolveOpen(); // flush the queued chat.subscribe
+
+		const subscribed = parseSent(ws2)
+			.filter((p) => (p as { type: string }).type === "chat.subscribe")
+			.map((p) => (p as { conversationId: string }).conversationId);
+		expect(subscribed).toContain(convId);
+
+		store2.dispose();
+	});
+
+	it("unsubscribes from chat when a tab is closed", () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		store.send("first");
+		const convId = activeConversationId(store);
+
+		ws.sent.length = 0;
+		store.closeTab(convId);
+
+		const unsubscribed = parseSent(ws)
+			.filter((p) => (p as { type: string }).type === "chat.unsubscribe")
+			.map((p) => (p as { conversationId: string }).conversationId);
+		expect(unsubscribed).toContain(convId);
+
+		store.dispose();
+	});
+
+	it("re-subscribes chat (and resyncs) for every open conversation on reconnect", async () => {
+		const fetchedUrls: string[] = [];
+		const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			fetchedUrls.push(url);
+			if (url.endsWith("/models")) {
+				return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+					status: 200,
+				});
+			}
+			return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+		};
+
+		const ws = reconnectableSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl,
+			httpUrl: "http://localhost:24203",
+			localStorage: createFakeStorage(),
+		});
+		ws.open();
+
+		store.send("hi");
+		const convId = activeConversationId(store);
+
+		// Drop the connection, wait past the reconnect backoff, then re-open.
+		ws.sent.length = 0;
+		fetchedUrls.length = 0;
+		ws.closeRemote();
+		await new Promise((r) => setTimeout(r, 800));
+		ws.open(); // reconnect → onReopen
+
+		const subscribed = parseSent(ws)
+			.filter((p) => (p as { type: string }).type === "chat.subscribe")
+			.map((p) => (p as { conversationId: string }).conversationId);
+		expect(subscribed).toContain(convId);
+
+		// resync() pulled the tail from history for the reconnected conversation.
+		await vi.waitFor(() => {
+			expect(fetchedUrls.some((u) => u.includes(`/conversations/${convId}?sinceSeq=`))).toBe(true);
+		});
 
 		store.dispose();
 	});

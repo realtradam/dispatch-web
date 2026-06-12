@@ -239,6 +239,23 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		}
 	}
 
+	/**
+	 * Start watching a conversation's live turn events (`chat.subscribe`). Sent for
+	 * EVERY open conversation — not just the active one — so a backgrounded tab keeps
+	 * streaming a running turn, and a reloaded/second client re-attaches to an
+	 * in-flight turn (the server replays it from `turn-start`). Idempotent server-side;
+	 * the socket queues it until the connection is open. NOT needed right after
+	 * `chat.send` (that auto-subscribes the sending connection).
+	 */
+	function subscribeChat(conversationId: string): void {
+		socket?.send({ type: "chat.subscribe", conversationId });
+	}
+
+	/** Stop watching a conversation's turn events (`chat.unsubscribe`). Never stops the turn. */
+	function unsubscribeChat(conversationId: string): void {
+		socket?.send({ type: "chat.unsubscribe", conversationId });
+	}
+
 	/** The conversation the surfaces should scope to (undefined for a draft). */
 	function focusedConversationId(): string | undefined {
 		return tabsStore.activeConversationId ?? undefined;
@@ -307,6 +324,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 						: { type: "subscribe", surfaceId, conversationId: sub.conversationId };
 				socket?.send(msg);
 			}
+			// Re-attach to every open conversation's turn stream. A turn that kept
+			// running while we were disconnected resumes streaming (server replays it
+			// from `turn-start`); one that sealed while we were gone is committed from
+			// history by `resync()` (which also clears a now-stale "generating").
+			for (const tab of tabsStore.tabs) {
+				subscribeChat(tab.conversationId);
+				chatStores.get(tab.conversationId)?.resync();
+			}
 		},
 	};
 	if (opts?.socketFactory !== undefined) {
@@ -341,6 +366,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			const store = createChatFor(tab.conversationId, tab.model);
 			chatStores.set(tab.conversationId, store);
 			void store.load();
+			// Watch each restored conversation's live turns: after a reload mid-turn the
+			// server replays the in-flight turn so we keep rendering it. Queued until the
+			// socket opens.
+			subscribeChat(tab.conversationId);
 		}
 		if (persistedState.activeConversationId !== null) {
 			const activeTab = persistedState.tabs.find(
@@ -460,6 +489,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 		closeTab(conversationId: string): void {
 			tabsStore.closeTab(conversationId);
+			// Stop watching the closed conversation's turns (does NOT stop the turn).
+			unsubscribeChat(conversationId);
 			const store = chatStores.get(conversationId);
 			if (store !== undefined) {
 				store.dispose();
