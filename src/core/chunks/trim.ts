@@ -110,40 +110,52 @@ export function windowTranscript(state: TranscriptState, maxCommitted: number): 
 }
 
 /**
- * Page earlier (unloaded) history back in — the "Show earlier messages" action.
+ * The oldest LOADED seq — the start of the transcript's loaded window. Usually
+ * `committed[0].seq`; falls back to the watermark when a trim emptied the
+ * committed list (all-provisional overflow). 0 = window start unknown/origin.
+ */
+function oldestLoadedSeq(state: TranscriptState): number {
+	return state.committed[0]?.seq ?? state.hiddenBeforeSeq;
+}
+
+/**
+ * Page earlier history back in — the "Show earlier messages" action.
  *
- * `earlier` must be ALL locally-known chunks below the watermark (typically the
- * full cached conversation; chunks at/above the watermark are ignored). The
- * newest `count` of them are merged back in front of `committed` and the
- * watermark lowers to the new oldest loaded seq — or clears to 0 when this
- * restore exhausts the known earlier history (nothing left to offer).
+ * `earlier` is every locally-known chunk older than the loaded window
+ * (typically the full cached conversation, possibly extended by a CR-5
+ * `?beforeSeq=` backfill; chunks at/inside the window are ignored). The newest
+ * `count` of them are merged back in front of `committed`, and the watermark
+ * follows the new window start so history merges still can't resurrect what
+ * remains unloaded. Identity when the window already starts at seq 1 (the
+ * contractual origin) or nothing older is known locally.
  */
 export function restoreEarlier(
 	state: TranscriptState,
 	earlier: readonly StoredChunk[],
 	count: number,
 ): TranscriptState {
-	if (state.hiddenBeforeSeq <= 0) return state;
-	const below = earlier.filter((c) => c.seq < state.hiddenBeforeSeq).sort((a, b) => a.seq - b.seq);
-	if (below.length === 0) {
-		// Nothing is actually hidden below the watermark: clear it so the
-		// "Show earlier" affordance disappears.
-		return { ...state, hiddenBeforeSeq: 0, hiddenThinkingCount: 0 };
-	}
+	const oldest = oldestLoadedSeq(state);
+	if (oldest <= 1) return state;
+	const below = earlier.filter((c) => c.seq < oldest).sort((a, b) => a.seq - b.seq);
+	if (below.length === 0) return state;
 	const keep = below.slice(-Math.max(1, count));
-	const exhausted = keep.length === below.length;
 	const firstKept = keep[0];
 	return {
 		...state,
 		committed: [...keep, ...state.committed],
-		hiddenBeforeSeq: exhausted || firstKept === undefined ? 0 : firstKept.seq,
-		hiddenThinkingCount: exhausted
-			? 0
-			: Math.max(0, state.hiddenThinkingCount - countThinking(keep)),
+		hiddenBeforeSeq: firstKept?.seq ?? state.hiddenBeforeSeq,
+		hiddenThinkingCount: Math.max(0, state.hiddenThinkingCount - countThinking(keep)),
 	};
 }
 
-/** Whether unloaded earlier history exists to offer ("Show earlier messages"). */
+/**
+ * Whether earlier history exists below the loaded window — drives the
+ * "Show earlier messages" affordance. Derived from the wire@0.6.1 CONTRACT
+ * that per-conversation seqs are 1-based and gap-free: a loaded window that
+ * starts above seq 1 means older chunks exist (locally cached or server-side),
+ * whether the window came from a local trim or a server-windowed (`?limit=`)
+ * fresh load.
+ */
 export function selectHasEarlier(state: TranscriptState): boolean {
-	return state.hiddenBeforeSeq > 0;
+	return oldestLoadedSeq(state) > 1;
 }

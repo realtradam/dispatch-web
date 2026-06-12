@@ -75,11 +75,25 @@ function fail(msg: string): never {
 	process.exit(1);
 }
 
-async function historySync(id: string, sinceSeq: number): Promise<ConversationHistoryResponse> {
-	const url = `${HTTP_BASE}/conversations/${encodeURIComponent(id)}?sinceSeq=${sinceSeq}`;
+async function historySync(
+	id: string,
+	sinceSeq: number,
+	window?: { limit?: number; beforeSeq?: number },
+): Promise<ConversationHistoryResponse> {
+	let url = `${HTTP_BASE}/conversations/${encodeURIComponent(id)}?sinceSeq=${sinceSeq}`;
+	if (window?.limit !== undefined) url += `&limit=${window.limit}`;
+	if (window?.beforeSeq !== undefined) url += `&beforeSeq=${window.beforeSeq}`;
 	const res = await fetch(url, { headers: { Origin: "http://localhost:24204" } });
 	if (!res.ok) fail(`history fetch ${res.status} for ${url}`);
 	return (await res.json()) as ConversationHistoryResponse;
+}
+
+/** Raw history GET that returns the status (for the CR-5 validation checks). */
+async function historyStatus(id: string, query: string): Promise<number> {
+	const url = `${HTTP_BASE}/conversations/${encodeURIComponent(id)}?${query}`;
+	const res = await fetch(url, { headers: { Origin: "http://localhost:24204" } });
+	await res.arrayBuffer(); // drain
+	return res.status;
 }
 
 /** Durable metrics fetch — returns the response, or the HTTP status when not OK
@@ -202,6 +216,45 @@ async function main() {
 		.map((c) => (c as { text: string }).text)
 		.join("");
 	record("turn 1 committed transcript has assistant text", committedText.length > 0);
+
+	// ─── CR-5: history windowing (?limit= / ?beforeSeq=, transport@0.10.0) ───────
+	const logLen = hist.chunks.length;
+	record(
+		"CR-5 seq origin: first chunk is seq 1 (1-based gap-free contract)",
+		hist.chunks[0]?.seq === 1,
+		`first seq=${hist.chunks[0]?.seq}`,
+	);
+	const win = await historySync(textConv, 0, { limit: 2 });
+	record(
+		"CR-5 ?limit=2 returns the NEWEST 2, ascending, latestSeq = window tail",
+		win.chunks.length === Math.min(2, logLen) &&
+			win.chunks[0]?.seq === Math.max(1, logLen - 1) &&
+			win.chunks[win.chunks.length - 1]?.seq === logLen &&
+			win.latestSeq === logLen,
+		`seqs=[${win.chunks.map((c) => c.seq).join(",")}] latestSeq=${win.latestSeq}`,
+	);
+	const whole = await historySync(textConv, 0, { limit: 200 });
+	record(
+		"CR-5 ?limit= larger than the log returns everything (short-chat flow exact)",
+		whole.chunks.length === logLen,
+		`${whole.chunks.length}/${logLen} chunks`,
+	);
+	const oldestLoaded = win.chunks[0]?.seq ?? 0;
+	if (oldestLoaded > 1) {
+		const back = await historySync(textConv, 0, { beforeSeq: oldestLoaded, limit: 50 });
+		record(
+			"CR-5 ?beforeSeq= pages the older run (seq < bound, ascending from 1)",
+			back.chunks.length === oldestLoaded - 1 &&
+				back.chunks[0]?.seq === 1 &&
+				back.chunks.every((c) => c.seq < oldestLoaded),
+			`seqs=[${back.chunks.map((c) => c.seq).join(",")}]`,
+		);
+	}
+	record("CR-5 limit=0 rejected with 400", (await historyStatus(textConv, "limit=0")) === 400);
+	record(
+		"CR-5 beforeSeq=-1 rejected with 400",
+		(await historyStatus(textConv, "beforeSeq=-1")) === 400,
+	);
 
 	// ─── Metrics: LIVE token + timing (wire@0.3.0 usage/step-complete/done) ──────
 	// (TurnMetricsEntry is `{ turnId, steps, total }` — the turn aggregate lives on

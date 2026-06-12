@@ -5,9 +5,22 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.9.0` (CR-4 cache-warming lifecycle shipped).
-> Depends on `@dispatch/wire@0.6.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.10.0` (CR-5 history windowing shipped).
+> Depends on `@dispatch/wire@0.6.1` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
 > `ui-contract.reference.md`).
+>
+> **2026-06-12 delta (CR-5 history windowing — package bumped `0.9.0` → `0.10.0`):** NO type-shape
+> change — `GET /conversations/:id` gains two OPTIONAL query params alongside `sinceSeq`:
+> **`limit=<k>`** (the NEWEST `k` chunks of the selection, still ASCENDING; a selection with ≤ `k`
+> chunks is returned whole; omitted = full selection, byte-identical to the old behavior) and
+> **`beforeSeq=<s>`** (exclusive upper bound `seq < s`; combined: `sinceSeq < seq < beforeSeq`).
+> `limit`/`beforeSeq` must be POSITIVE integers (`sinceSeq` may still be 0); malformed/zero/negative
+> → HTTP 400 `{ error }` naming the param. Seq numbering is now a WRITTEN CONTRACT: 1-based,
+> monotonic, gap-free (see `wire@0.6.1` `StoredChunk`), so `hasOlder = oldestLoaded.seq > 1` — there
+> is deliberately NO `earliestSeq`/`hasOlder` field. CAVEAT: on a windowed read, `latestSeq`
+> describes the returned WINDOW; never regress a tail cursor from a `beforeSeq` backfill page.
+> Intended flows: fresh load `?sinceSeq=0&limit=<k>` · tail sync `?sinceSeq=<cursor>` (no limit) ·
+> page older in `?beforeSeq=<oldestLoadedSeq>&limit=<k>`.
 >
 > **2026-06-12 delta (CR-4 cache-warming lifecycle — package bumped `0.8.0` → `0.9.0`):** adds
 > `POST /conversations/:id/close` (`CloseConversationResponse`) — the EXPLICIT "user closed this
@@ -92,9 +105,11 @@
 - `POST /chat` — body `ChatRequest` (JSON); response NDJSON stream, one `AgentEvent` per line;
   resolved id also in `X-Conversation-Id` header.
 - `GET /models` — `ModelsResponse`.
-- `GET /conversations/:id?sinceSeq=<n>` — `ConversationHistoryResponse`: RAW, append-order,
-  seq-ordered slice with `seq > n` (NOT reconciled — dangling tool-calls returned as-is).
-  `latestSeq` = last chunk's `seq`, or the requested `sinceSeq` when caught up (empty `chunks`).
+- `GET /conversations/:id?sinceSeq=<n>&beforeSeq=<s>&limit=<k>` — `ConversationHistoryResponse`:
+  RAW, append-order, seq-ordered slice with `n < seq < s`, windowed to the NEWEST `k` (all params
+  optional; NOT reconciled — dangling tool-calls returned as-is). `latestSeq` = last chunk's `seq`,
+  or the requested `sinceSeq` when caught up (empty `chunks`) — a TAIL cursor only; do not regress
+  a cursor from a windowed/backfill read. `limit`/`beforeSeq` must be positive ints → else 400.
 - `GET /conversations/:id/metrics` — `ConversationMetricsResponse`: every SEALED turn's `TurnMetrics`
   in turn order (per-turn token + timing; NOT seq-filtered). IMPLEMENTED + LIVE-VERIFIED (probe 17/17).
 - `POST /chat/warm` — body `WarmRequest` (JSON) → `200 WarmResponse` (cache-warm usage incl.
@@ -182,23 +197,49 @@ export interface ModelsResponse {
 }
 
 /**
- * Response body for `GET /conversations/:id?sinceSeq=<n>` — the incremental
- * read-side history endpoint a long-lived client uses to (re)hydrate a
- * conversation cheaply.
+ * Response body for
+ * `GET /conversations/:id?sinceSeq=<n>&beforeSeq=<s>&limit=<k>` — the
+ * incremental read-side history endpoint a long-lived client uses to
+ * (re)hydrate a conversation cheaply. All three query params are OPTIONAL and
+ * combine as one SELECTION + one WINDOW:
+ *
+ * - **Selection** — `sinceSeq` (exclusive lower bound, `seq > n`; omitted/0 =
+ *   from the start) and `beforeSeq` (exclusive upper bound, `seq < s`; omitted
+ *   = to the end). Together: `n < seq < s`.
+ * - **Window** — `limit=<k>` returns only the NEWEST `k` chunks of the
+ *   selection (the response stays ASCENDING by seq). A selection with ≤ `k`
+ *   chunks is returned whole. `limit` omitted = the full selection — exactly
+ *   the pre-windowing behavior, so existing clients are unchanged.
+ * - `limit` and `beforeSeq` must be POSITIVE integers (`sinceSeq` may be 0);
+ *   malformed, zero, or negative values → HTTP 400 `{ error }`.
+ *
+ * Intended client flows: fresh load = `?sinceSeq=0&limit=<k>` (newest window);
+ * tail sync = `?sinceSeq=<cursor>` (no limit); page older history in =
+ * `?beforeSeq=<oldestLoadedSeq>&limit=<k>`.
+ *
+ * Seq numbering is **1-based and gap-free** (a CONTRACTUAL GUARANTEE — see
+ * `StoredChunk` in `@dispatch/wire`): a client can derive "older chunks exist"
+ * purely from `oldestLoaded.seq > 1`; there is deliberately no
+ * `earliestSeq`/`hasOlder` response field.
  *
  * `chunks` is the RAW, append-order, seq-ordered slice of the conversation log
- * with `seq > sinceSeq` (or the whole log when `sinceSeq` is omitted/0). It is
- * NOT reconciled: a dangling tool-call is returned as-is (rendered as an
- * interrupted call). Reconciliation is a turn-path concern — the server repairs
- * history only when it feeds a provider, never on this read path — which is what
- * preserves the per-chunk `seq` cursor invariant (a synthesized repair chunk
- * would have no seq).
+ * selected + windowed as above. It is NOT reconciled: a dangling tool-call is
+ * returned as-is (rendered as an interrupted call). Reconciliation is a
+ * turn-path concern — the server repairs history only when it feeds a provider,
+ * never on this read path — which is what preserves the per-chunk `seq` cursor
+ * invariant (a synthesized repair chunk would have no seq).
  *
  * `latestSeq` is the `seq` of the LAST chunk in this response, or — when the
  * slice is empty (the client is already caught up) — the requested `sinceSeq`
  * (0 for a full read of an empty conversation). So after applying the response a
  * client's new cursor is always `latestSeq`, and an empty `chunks` means
- * "nothing new past your cursor".
+ * "nothing new past your cursor". CAVEAT (windowed reads): `latestSeq` is a
+ * TAIL-sync cursor — on a `beforeSeq` backfill page (or any `limit`ed read that
+ * did not reach the log's true tail) it describes the returned window, NOT the
+ * conversation's high-water mark, so a client must not regress its sync cursor
+ * from a backfill response. (A true server-side high-water mark independent of
+ * the filter is deferred until a consumer needs it — it would require widening
+ * the store contract.)
  */
 export interface ConversationHistoryResponse {
 	readonly chunks: readonly StoredChunk[];

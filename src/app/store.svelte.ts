@@ -25,7 +25,7 @@ import {
 	subscribe as protocolSubscribe,
 	unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
-import type { ChatStore, MetricsSync } from "../features/chat";
+import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore } from "../features/chat";
 import type { ConversationCache } from "../features/conversation-cache";
 import { createConversationCache } from "../features/conversation-cache";
@@ -111,12 +111,13 @@ export interface CreateAppStoreOptions {
 	localStorage?: Storage;
 }
 
-function createHistorySync(
-	httpBase: string,
-	fetchImpl: typeof fetch,
-): (conversationId: string, sinceSeq: number) => Promise<ConversationHistoryResponse> {
-	return async (conversationId: string, sinceSeq: number) => {
-		const url = `${httpBase}/conversations/${encodeURIComponent(conversationId)}?sinceSeq=${sinceSeq}`;
+function createHistorySync(httpBase: string, fetchImpl: typeof fetch): HistorySync {
+	return async (conversationId, sinceSeq, window) => {
+		let url = `${httpBase}/conversations/${encodeURIComponent(conversationId)}?sinceSeq=${sinceSeq}`;
+		// CR-5 windowing (transport-contract@0.10.0): both must be positive
+		// integers when present (the server 400s otherwise; callers guarantee it).
+		if (window?.limit !== undefined) url += `&limit=${window.limit}`;
+		if (window?.beforeSeq !== undefined) url += `&beforeSeq=${window.beforeSeq}`;
 		const res = await fetchImpl(url);
 		if (!res.ok) {
 			throw new Error(`History sync failed: ${res.status}`);
