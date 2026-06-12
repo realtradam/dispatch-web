@@ -19,10 +19,36 @@
 	let {
 		chunks,
 		turnMetrics = [],
+		hasEarlier = false,
+		onShowEarlier,
+		thinkingKeyBase = 0,
 	}: {
 		chunks: readonly RenderedChunk[];
 		turnMetrics?: readonly TurnMetricsEntry[];
+		/** Earlier history is unloaded (chat limit) and can be paged back in. */
+		hasEarlier?: boolean;
+		/** Page earlier history back in; the caller owns scroll-position preservation. */
+		onShowEarlier?: () => Promise<void>;
+		/**
+		 * Ordinal base for thinking-collapse keys: the count of thinking chunks
+		 * unloaded by the chat limit, so the remaining ordinals don't shift (and
+		 * swap collapse state) when a trim removes older thinking blocks.
+		 */
+		thinkingKeyBase?: number;
 	} = $props();
+
+	// True while a show-earlier page-in is awaited (disables the button).
+	let loadingEarlier = $state(false);
+
+	async function showEarlier() {
+		if (!onShowEarlier || loadingEarlier) return;
+		loadingEarlier = true;
+		try {
+			await onShowEarlier();
+		} finally {
+			loadingEarlier = false;
+		}
+	}
 
 	const groups = $derived(groupRenderedChunks(chunks));
 
@@ -30,10 +56,11 @@
 
 	// Stable per-row keys. Thinking blocks get an ordinal key (`think<n>`) that
 	// survives the provisional→committed (seq null → seq N) transition, so the
-	// collapse's open/close state is NOT lost when a turn seals. (App isolates
-	// these keys per conversation via {#key}.)
+	// collapse's open/close state is NOT lost when a turn seals. The ordinal
+	// starts at `thinkingKeyBase` so keys also survive a chat-limit trim removing
+	// older thinking blocks. (App isolates these keys per conversation via {#key}.)
 	const keyedRows = $derived.by(() => {
-		let thinking = 0;
+		let thinking = thinkingKeyBase;
 		return rows.map((row, i) => {
 			if (row.kind === "step-metrics") {
 				return { row, key: `s${row.step.stepId}` };
@@ -132,6 +159,19 @@
 {/snippet}
 
 <div class="flex flex-col gap-2 p-4 pl-6" role="log" aria-live="polite">
+	{#if hasEarlier && onShowEarlier}
+		<!-- Chat limit: older chunks are unloaded; offer to page them back in. -->
+		<div class="flex justify-center">
+			<button class="btn btn-ghost btn-xs" disabled={loadingEarlier} onclick={showEarlier}>
+				{#if loadingEarlier}
+					<span class="loading loading-spinner loading-xs" aria-hidden="true"></span>
+					Loading earlier messages…
+				{:else}
+					Show earlier messages
+				{/if}
+			</button>
+		</div>
+	{/if}
 	{#each keyedRows as { row, key } (key)}
 		{#if row.kind === "step-metrics"}
 			{@const sv = viewStepMetrics(row.step, row.index)}

@@ -136,8 +136,10 @@ browser effects, run a LIVE probe:
 ## Status
 Slices 1–3 DONE + committed (surface system + WS; conversation transcript cache + delta
 streaming; tabs + model selector + DaisyUI/dracula), plus per-conversation cwd + LSP view,
-context size, cache-warming (+ retention/timer), markdown, smart auto-scroll, and
-multi-client live view (subscribe/reconnect + the user prompt on the event stream). Plan in
+context size, cache-warming (+ retention/timer), markdown, smart auto-scroll, multi-client
+live view (subscribe/reconnect + the user prompt on the event stream), and the chat limit
+(bulk quarter-unload past `dispatch.chatLimit`, 75% fresh-load window, show-earlier page-in;
+`core/chunks/trim.ts`; backend CR-5 open for `?limit=`/`?beforeSeq=`). Plan in
 `../arch-rewrite/notes/frontend-design.md` §10.
 
 ## Reports

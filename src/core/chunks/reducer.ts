@@ -10,6 +10,8 @@ export function initialState(): TranscriptState {
 		currentTurnId: null,
 		latestUsage: null,
 		sealedTurnId: null,
+		hiddenBeforeSeq: 0,
+		hiddenThinkingCount: 0,
 		generating: false,
 	};
 }
@@ -41,6 +43,10 @@ function flushAccumulating(
  * Dedupes by seq (new wins), keeps seq-monotonic order, idempotent.
  * When sealedTurnId is set, drops all provisional chunks (now superseded)
  * and clears sealedTurnId.
+ *
+ * Chunks below the chat-limit unload watermark (`hiddenBeforeSeq`) are
+ * REJECTED: a full-cache or tail merge must not resurrect what the trim
+ * unloaded. Restoring earlier history goes through `restoreEarlier` instead.
  */
 export function applyHistory(
 	state: TranscriptState,
@@ -48,7 +54,10 @@ export function applyHistory(
 ): TranscriptState {
 	const seqMap = new Map<number, StoredChunk>();
 	for (const c of state.committed) seqMap.set(c.seq, c);
-	for (const c of chunks) seqMap.set(c.seq, c);
+	for (const c of chunks) {
+		if (c.seq < state.hiddenBeforeSeq) continue;
+		seqMap.set(c.seq, c);
+	}
 	const committed = Array.from(seqMap.values()).sort((a, b) => a.seq - b.seq);
 
 	if (state.sealedTurnId !== null) {

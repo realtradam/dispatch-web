@@ -11,9 +11,16 @@ import {
 	clearGenerating,
 	foldEvent,
 	initialState,
+	initialWindowSize,
+	normalizeChatLimit,
+	restoreEarlier,
 	selectChunks,
 	selectGenerating,
+	selectHasEarlier,
 	selectMessages,
+	trimTranscript,
+	unloadCount,
+	windowTranscript,
 } from "../../core/chunks";
 import type { MetricsState, TurnMetricsEntry } from "../../core/metrics";
 import {
@@ -33,6 +40,19 @@ export interface ChatStoreDependencies {
 	readonly historySync: HistorySync;
 	readonly metricsSync: MetricsSync;
 	readonly cache: ConversationCache;
+	/**
+	 * The chat limit: max loaded chunks before the oldest quarter is unloaded
+	 * (see `core/chunks/trim.ts`). Normalized via `normalizeChatLimit`; absent →
+	 * `DEFAULT_CHAT_LIMIT`.
+	 */
+	readonly chatLimit?: number;
+	/**
+	 * Whether unloading may run RIGHT NOW. The composition root wires this to the
+	 * smart-scroll "stuck to bottom" state: while the reader is scrolled up, a
+	 * trim would yank the content under them, so it is DEFERRED until they return
+	 * to the bottom (the next fold retries). Absent → always allowed.
+	 */
+	readonly canUnload?: () => boolean;
 }
 
 export interface ChatStore {
@@ -55,10 +75,29 @@ export interface ChatStore {
 	readonly pendingSync: boolean;
 	readonly error: string | null;
 	readonly model: string | undefined;
+	/**
+	 * Whether earlier history was unloaded by the chat limit (or never loaded by
+	 * the fresh-load window) and can be paged back in — drives the
+	 * "Show earlier messages" affordance.
+	 */
+	readonly hasEarlier: boolean;
+	/**
+	 * Render-key base for thinking collapses: how many thinking chunks are
+	 * unloaded below the watermark, so the UI's ordinal keys stay stable across
+	 * a trim (see `TranscriptState.hiddenThinkingCount`).
+	 */
+	readonly thinkingKeyBase: number;
 	handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
 	send(text: string): void;
 	setModel(model: string): void;
 	load(): Promise<void>;
+	/**
+	 * Page one unload-unit (`ceil(limit/4)`) of earlier history back in from the
+	 * local cache — the "Show earlier messages" action. (When the backend ships
+	 * CR-5 `?beforeSeq=`, this can fall through to the server once the cache is
+	 * exhausted.)
+	 */
+	showEarlier(): Promise<void>;
 	/**
 	 * Re-sync after a WS (re)connect. Clears any stale `generating` (a turn may
 	 * have sealed while disconnected — the live `turn-sealed` was missed), then
@@ -78,6 +117,18 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 	let _model = $state<string | undefined>(deps.model);
 	let disposed = false;
 
+	const chatLimit = normalizeChatLimit(deps.chatLimit);
+
+	/**
+	 * Enforce the chat limit after a transcript mutation — unless the injected
+	 * gate says the reader is scrolled up (then defer; the next mutation retries
+	 * and `trimTranscript` unloads whole quarters to catch up).
+	 */
+	function maybeTrim(): void {
+		if (deps.canUnload !== undefined && !deps.canUnload()) return;
+		transcript = trimTranscript(transcript, chatLimit);
+	}
+
 	async function syncTail(): Promise<void> {
 		if (disposed || _pendingSync) return;
 		_pendingSync = true;
@@ -86,6 +137,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 			const res = await deps.historySync(deps.conversationId, since);
 			const merged = await deps.cache.commit(deps.conversationId, res.chunks);
 			transcript = applyHistory(transcript, merged);
+			maybeTrim();
 			_error = null;
 		} catch (err) {
 			_error = err instanceof Error ? err.message : String(err);
@@ -130,6 +182,12 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		get model(): string | undefined {
 			return _model;
 		},
+		get hasEarlier(): boolean {
+			return selectHasEarlier(transcript);
+		},
+		get thinkingKeyBase(): number {
+			return transcript.hiddenThinkingCount;
+		},
 
 		handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void {
 			if (msg.type === "chat.error") {
@@ -144,6 +202,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 			}
 			transcript = foldEvent(transcript, msg.event);
 			metrics = foldMetricsEvent(metrics, msg.event);
+			maybeTrim();
 			if (transcript.sealedTurnId !== null) {
 				void syncTail();
 				void syncMetrics();
@@ -152,6 +211,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
 		send(text: string): void {
 			transcript = appendUserMessage(transcript, text);
+			maybeTrim();
 			const msg: ChatSendMessage = {
 				type: "chat.send",
 				conversationId: deps.conversationId,
@@ -166,12 +226,25 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		},
 
 		async load(): Promise<void> {
+			// Fresh load shows only the newest 75% of the limit — headroom before the
+			// first trim. Window the cached slice SYNCHRONOUSLY with its apply (no
+			// render in between), and again after the tail sync (a cold cache means
+			// syncTail pulled the whole history in one response).
+			const windowSize = initialWindowSize(chatLimit);
 			const cached = await deps.cache.load(deps.conversationId);
 			if (cached.length > 0) {
-				transcript = applyHistory(transcript, cached);
+				transcript = windowTranscript(applyHistory(transcript, cached), windowSize);
 			}
 			await syncTail();
+			transcript = windowTranscript(transcript, windowSize);
 			await syncMetrics();
+		},
+
+		async showEarlier(): Promise<void> {
+			if (disposed) return;
+			if (!selectHasEarlier(transcript)) return;
+			const cached = await deps.cache.load(deps.conversationId);
+			transcript = restoreEarlier(transcript, cached, unloadCount(chatLimit));
 		},
 
 		resync(): void {

@@ -41,6 +41,45 @@ describe("ChatView", () => {
 		expect(screen.getByText("Hello!")).toBeInTheDocument();
 	});
 
+	it("shows the show-earlier button only when earlier history is unloaded, and pages it in", async () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 26, role: "user", chunk: { type: "text", text: "later" }, provisional: false },
+		];
+
+		let resolveEarlier: (() => void) | undefined;
+		const onShowEarlier = vi.fn(
+			() =>
+				new Promise<void>((resolve) => {
+					resolveEarlier = resolve;
+				}),
+		);
+
+		render(ChatView, { props: { chunks, hasEarlier: true, onShowEarlier } });
+
+		const button = screen.getByRole("button", { name: /show earlier messages/i });
+		const user = userEvent.setup();
+		await user.click(button);
+
+		expect(onShowEarlier).toHaveBeenCalledTimes(1);
+		// While the page-in is awaited the button is disabled (no double-fire).
+		expect(screen.getByRole("button", { name: /loading earlier messages/i })).toBeDisabled();
+
+		resolveEarlier?.();
+		await vi.waitFor(() => {
+			expect(screen.getByRole("button", { name: /show earlier messages/i })).toBeEnabled();
+		});
+	});
+
+	it("hides the show-earlier button when nothing is unloaded", () => {
+		const chunks: RenderedChunk[] = [
+			{ seq: 1, role: "user", chunk: { type: "text", text: "all here" }, provisional: false },
+		];
+
+		render(ChatView, { props: { chunks, hasEarlier: false, onShowEarlier: vi.fn() } });
+
+		expect(screen.queryByRole("button", { name: /show earlier/i })).not.toBeInTheDocument();
+	});
+
 	it("renders tool-call chunks", () => {
 		const chunks: RenderedChunk[] = [
 			{

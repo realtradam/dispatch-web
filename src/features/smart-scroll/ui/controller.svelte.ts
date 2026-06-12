@@ -22,6 +22,12 @@ export interface SmartScrollController {
 	/** Reactive: show the "scroll to bottom" affordance (the user has scrolled up). */
 	readonly showButton: boolean;
 	/**
+	 * Non-reactive point-in-time query: is the view stuck to the bottom right now?
+	 * For imperative callers (e.g. the chat-limit unload gate) that poll at event
+	 * time rather than subscribing — reads the reducer state, not a rune.
+	 */
+	isAtBottom(): boolean;
+	/**
 	 * Attach to the scroll container; returns a teardown to call on unmount.
 	 * Pass the inner CONTENT element to also follow height changes that aren't a
 	 * transcript update (async markdown/highlight, image loads, a collapse toggling,
@@ -82,6 +88,10 @@ export function createSmartScrollController(): SmartScrollController {
 	return {
 		get showButton(): boolean {
 			return showButton;
+		},
+
+		isAtBottom(): boolean {
+			return state.stuck;
 		},
 
 		attach(node: HTMLElement, content?: HTMLElement): () => void {
