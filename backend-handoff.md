@@ -3,7 +3,7 @@
 > **Purpose:** the single rolling document the FE orchestrator keeps current so the user can hand off
 > the whole FE↔backend seam at any time — on completion OR at a roadblock. Updated continuously.
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
-> `lsp` does NOT span the repos (ORCHESTRATOR §5) — every cross-repo ask flows through here.
+> `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
 _Last updated: 2026-06-12. **FE is current on `transport-contract@0.8.0` / `wire@0.6.0`.** All handoffs
 to date are consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector,
