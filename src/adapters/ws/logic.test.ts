@@ -64,6 +64,29 @@ describe("parseServerMessage", () => {
 		});
 	});
 
+	it("preserves the conversationId echo on a scoped surface message", () => {
+		const data = JSON.stringify({
+			type: "surface",
+			spec: { id: "s1", region: "r", title: "S1", fields: [] },
+			conversationId: "c1",
+		});
+		const result = parseServerMessage(data);
+		expect(result).toEqual({
+			type: "surface",
+			spec: { id: "s1", region: "r", title: "S1", fields: [] },
+			conversationId: "c1",
+		});
+	});
+
+	it("rejects a surface message with a non-string conversationId", () => {
+		const data = JSON.stringify({
+			type: "surface",
+			spec: { id: "s1", region: "r", title: "S1", fields: [] },
+			conversationId: 42,
+		});
+		expect(parseServerMessage(data)).toBeNull();
+	});
+
 	it("parses an update message", () => {
 		const data = JSON.stringify({
 			type: "update",

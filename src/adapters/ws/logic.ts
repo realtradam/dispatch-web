@@ -59,7 +59,15 @@ export function parseServerMessage(data: string): WsServerMessage | null {
 			if (typeof spec.region !== "string") return null;
 			if (typeof spec.title !== "string") return null;
 			if (!Array.isArray(spec.fields)) return null;
-			return { type: "surface", spec: spec as unknown as SurfaceMessage["spec"] };
+			// Preserve the conversationId echo (a conversation-scoped surface's initial
+			// reply carries it) — dropping it would defeat the protocol reducer's
+			// stale-scope filtering on a fast conversation switch.
+			const conversationId = parsed.conversationId;
+			if (conversationId !== undefined && typeof conversationId !== "string") return null;
+			const surfaceSpec = spec as unknown as SurfaceMessage["spec"];
+			return conversationId !== undefined
+				? { type: "surface", spec: surfaceSpec, conversationId }
+				: { type: "surface", spec: surfaceSpec };
 		}
 		case "update": {
 			const update = parsed.update;

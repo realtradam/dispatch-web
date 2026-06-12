@@ -5,9 +5,24 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.8.0` (CR-3 user-message shipped). Depends on
-> `@dispatch/wire@0.6.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.1.0` (see
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.9.0` (CR-4 cache-warming lifecycle shipped).
+> Depends on `@dispatch/wire@0.6.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
 > `ui-contract.reference.md`).
+>
+> **2026-06-12 delta (CR-4 cache-warming lifecycle — package bumped `0.8.0` → `0.9.0`):** adds
+> `POST /conversations/:id/close` (`CloseConversationResponse`) — the EXPLICIT "user closed this
+> conversation's tab" affordance, distinct from a socket disconnect / `chat.unsubscribe` (which
+> still NEVER touch the turn or the warming schedule). Closing (1) aborts any in-flight turn — the
+> kernel stops at the next event boundary, partial messages are PERSISTED, and the turn SEALS
+> normally with `finishReason: "aborted"` (watchers receive `done` then `turn-sealed`, so a
+> stream-derived "generating" flag clears with no special-casing) — and (2) stops + DISABLES
+> cache-warming for the conversation (persisted OFF; reopening does not resume warming). Idempotent:
+> closing an idle/unknown conversation is `200` with `abortedTurn: false`. Backend behavior fixes
+> riding EXISTING shapes (no other contract change): warming now defaults OFF for a new conversation
+> (240s interval default kept; re-enable restores the persisted interval); post-warm surface updates
+> now carry the FUTURE `nextWarmAt` (notify-before-reschedule fixed); `nextWarmAt: null` is pushed on
+> `turn-start` (nothing scheduled while generating) and when warming is/became disabled. Caveat: the
+> warming opt-in is NOT yet re-hydrated across a backend restart (reads disabled until toggled again).
 >
 > **2026-06-12 delta (CR-3 user-message handoff — package bumped `0.7.0` → `0.8.0`):** NO transport
 > shape change — it re-exports `AgentEvent` (which `chat.delta` / `/chat` NDJSON carry), and that union
@@ -29,7 +44,7 @@
 > persist across turns. FE consumes via the `chat` feature + app store (re-subscribe every open
 > conversation on (re)connect + page load; derive a "running" state structurally from
 > `turn-start`…no-`done`/`turn-sealed`-yet). OUT of scope: per-step crash-resume, concurrent-send
-> arbitration, explicit stop.
+> arbitration.
 >
 > **2026-06-12 delta (context-size handoff — package bumped `0.5.0` → `0.6.0`, depends on
 > `wire@0.5.0`):** no NEW transport shape — the optional `contextSize?: number` rides the
@@ -85,6 +100,9 @@
 - `POST /chat/warm` — body `WarmRequest` (JSON) → `200 WarmResponse` (cache-warm usage incl.
   `cachePct`); `409 { error }` when the conversation is currently generating; `400 { error }` on a
   missing/invalid `conversationId`. The warm is NEVER persisted/streamed/folded into real usage.
+- `POST /conversations/:id/close` — no body → `200 CloseConversationResponse`. The EXPLICIT tab-close
+  affordance: aborts any in-flight turn (persists the partial; seals with `finishReason: "aborted"`)
+  AND stops + disables cache-warming (persisted OFF). Idempotent (`abortedTurn: false` when idle/unknown).
 - `GET /metrics/throughput?period=day|week|month&date=<...>` — `ThroughputResponse` (token-weighted
   tokens/sec per model over the window). Not part of cache-warming; listed for completeness.
 - `GET /conversations/:id/cwd` — `CwdResponse` (`cwd` is `null` until set).
@@ -97,18 +115,23 @@
   (`@dispatch/ui-contract`) + chat ops (below). Open once, send `WsClientMessage`, receive
   `WsServerMessage`. Live `AgentEvent` deltas carry `conversationId`+`turnId` but **no `seq`**
   (seq lives only on `StoredChunk`, obtained via the `sinceSeq` sync after `turn-sealed`).
-- DEFERRED (not built; do not depend on): `GET /conversations` (list), `POST /conversations/:id/cancel`.
+- DEFERRED (not built; do not depend on): `GET /conversations` (list). (The former deferred
+  `POST /conversations/:id/cancel` is superseded by `POST /conversations/:id/close`.)
 
 ```ts
 /**
  * Transport contract — the typed description of Dispatch's client–server API
- * (HTTP + WebSocket). Types-only (zero runtime). Each side owns its own
- * (de)serialization — the contract is the SHAPES, not the codec.
+ * (HTTP + WebSocket).
  *
- * The WebSocket carries BOTH chat ops (here) and surface ops (in
+ * This package is types-only (zero runtime). It is the single shared surface
+ * every client imports to know how to talk to the backend. Each side owns its
+ * OWN (de)serialization: the contract is the SHAPES, not the codec. The
+ * streaming response payload is the kernel's `AgentEvent` union, re-exported
+ * here so a client has one import for the whole wire.
+ *
+ * The WebSocket carries BOTH chat ops (defined here) and surface ops (defined in
  * `@dispatch/ui-contract`) over one connection; the unified `WsClientMessage` /
- * `WsServerMessage` unions below compose them. Chat ops are new, non-colliding
- * `type` variants (`chat.*`) — the shipped surface protocol is unchanged.
+ * `WsServerMessage` unions below compose them.
  */
 
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -124,19 +147,35 @@ export type { AgentEvent, StepMetrics, StoredChunk, TurnMetrics } from "@dispatc
  * response header (useful when `conversationId` was omitted).
  */
 export interface ChatRequest {
-	/** The conversation to continue. Omit to start fresh — server mints an id (X-Conversation-Id). */
+	/**
+	 * The conversation to continue. Omit to start a fresh conversation — the
+	 * server mints an id and returns it via the `X-Conversation-Id` header.
+	 */
 	readonly conversationId?: string;
+
 	/** The user's message text for this turn. */
 	readonly message: string;
-	/** Model name in `<credentialName>/<model>` form (one of `GET /models`). Omit = server default. */
+
+	/**
+	 * The model to use, as a model name in `<credentialName>/<model>` form — one
+	 * of the exact strings returned by `GET /models`. Omit to use the server's
+	 * default credential + model.
+	 */
 	readonly model?: string;
-	/** Working directory for this turn's tool execution. Defaults server-side. Not part of the prompt. */
+
+	/**
+	 * Working directory for this turn's tool execution. Defaults server-side when
+	 * omitted. Forwarded to tools for path resolution; never part of the model
+	 * prompt (so it does not affect prompt caching).
+	 */
 	readonly cwd?: string;
 }
 
 /**
- * Response body for `GET /models` — the model catalog. Each entry is a model
- * name in `<credentialName>/<model>` form (exactly `ChatRequest.model`).
+ * Response body for `GET /models` — the model catalog.
+ *
+ * Each entry is a model name in `<credentialName>/<model>` form: exactly the
+ * string a client passes back as `ChatRequest.model`.
  */
 export interface ModelsResponse {
 	readonly models: readonly string[];
@@ -144,14 +183,22 @@ export interface ModelsResponse {
 
 /**
  * Response body for `GET /conversations/:id?sinceSeq=<n>` — the incremental
- * read-side history endpoint a long-lived client uses to (re)hydrate cheaply.
+ * read-side history endpoint a long-lived client uses to (re)hydrate a
+ * conversation cheaply.
  *
- * `chunks` is the RAW, append-order, seq-ordered slice with `seq > sinceSeq`
- * (or the whole log when `sinceSeq` is omitted/0). NOT reconciled: a dangling
- * tool-call is returned as-is. `latestSeq` is the `seq` of the LAST chunk, or —
- * when the slice is empty (caught up) — the requested `sinceSeq` (0 for a full
- * read of an empty conversation). After applying, the client's new cursor is
- * always `latestSeq`; empty `chunks` means "nothing new past your cursor".
+ * `chunks` is the RAW, append-order, seq-ordered slice of the conversation log
+ * with `seq > sinceSeq` (or the whole log when `sinceSeq` is omitted/0). It is
+ * NOT reconciled: a dangling tool-call is returned as-is (rendered as an
+ * interrupted call). Reconciliation is a turn-path concern — the server repairs
+ * history only when it feeds a provider, never on this read path — which is what
+ * preserves the per-chunk `seq` cursor invariant (a synthesized repair chunk
+ * would have no seq).
+ *
+ * `latestSeq` is the `seq` of the LAST chunk in this response, or — when the
+ * slice is empty (the client is already caught up) — the requested `sinceSeq`
+ * (0 for a full read of an empty conversation). So after applying the response a
+ * client's new cursor is always `latestSeq`, and an empty `chunks` means
+ * "nothing new past your cursor".
  */
 export interface ConversationHistoryResponse {
 	readonly chunks: readonly StoredChunk[];
@@ -162,12 +209,6 @@ export interface ConversationHistoryResponse {
  * Response body for `GET /conversations/:id/metrics` — the persisted per-turn
  * (and per-step) token + timing metrics for a conversation, for a client
  * reopening a past conversation to render historical usage/latency.
- *
- * This is a SEPARATE axis from the two other read concerns and is deliberately
- * its own endpoint: the live `usage`/`step-complete`/`done` events are transient
- * (not persisted), and `ConversationHistoryResponse` carries seq-cursor chunk
- * CONTENT. Metrics are keyed per TURN (not per chunk) and so are not seq-filtered
- * — hence a sibling route rather than a field on the history response.
  *
  * `turns` is every SEALED turn's `TurnMetrics` in turn order. A turn appears only
  * after its metrics were persisted (post-seal); an in-flight or unsealed turn is
@@ -180,61 +221,44 @@ export interface ConversationMetricsResponse {
 /** The aggregation window for `GET /metrics/throughput`. */
 export type ThroughputPeriod = "day" | "week" | "month";
 
-/** One model's token-weighted throughput over a period. */
+/**
+ * One model's throughput over a period. `tokensPerSecond` is the TOKEN-WEIGHTED
+ * average — `Σ(output tokens) / Σ(generation seconds)` across the period's
+ * turns — so larger turns count proportionally more than smaller ones.
+ * Generation time is the model's pure decode time (it excludes tool-execution
+ * waits).
+ */
 export interface ThroughputModelStat {
+	/** The model name in `<credentialName>/<model>` form (as selected). */
 	readonly model: string;
+	/** Token-weighted average tokens/second over the period. */
 	readonly tokensPerSecond: number;
+	/** Total output tokens generated across the period's turns. */
 	readonly totalOutputTokens: number;
+	/** Total pure generation time across the period's turns, in milliseconds. */
 	readonly totalGenMs: number;
+	/** Number of turns that contributed. */
 	readonly turns: number;
 }
 
-/** Response body for `GET /metrics/throughput?period=...&date=...`. */
+/**
+ * Response body for
+ * `GET /metrics/throughput?period=day|week|month&date=<...>`.
+ *
+ * `date` is `YYYY-MM-DD` for day/week (week = the ISO Mon–Sun week containing
+ * that date) and `YYYY-MM` for month. Boundaries are computed in the server's
+ * local timezone; `start`/`end` are the resolved half-open `[start, end)` range
+ * in epoch-ms. `models` lists every model active in the window, sorted by
+ * `tokensPerSecond` descending.
+ */
 export interface ThroughputResponse {
 	readonly period: ThroughputPeriod;
 	readonly date: string;
-	readonly start: number; // inclusive window start, epoch-ms
-	readonly end: number; // exclusive window end, epoch-ms
+	/** Inclusive start of the window, epoch-ms. */
+	readonly start: number;
+	/** Exclusive end of the window, epoch-ms. */
+	readonly end: number;
 	readonly models: readonly ThroughputModelStat[];
-}
-
-/**
- * Request body for `POST /chat/warm` — manually trigger a prompt-cache WARMING
- * request for a conversation (e.g. a "warm now" button). The warm replays the
- * conversation's existing prefix to refresh the provider cache; it is NEVER
- * persisted and NEVER streamed. Pass the SAME `model`/`cwd` the conversation
- * chats with so the prefix is byte-identical to a real turn (that's the cache hit).
- */
-export interface WarmRequest {
-	readonly conversationId: string;
-	readonly model?: string; // `<credentialName>/<model>`; omit = server default
-	readonly cwd?: string;
-}
-
-/**
- * Response body for `POST /chat/warm` (HTTP 200). The warm's usage — never folded
- * into the conversation's real usage. A client surfaces `cachePct` as the "last
- * warming" cache-hit indicator. A 409 (currently generating) returns `{ error }` instead.
- */
-export interface WarmResponse {
-	readonly inputTokens: number;
-	readonly outputTokens: number;
-	readonly cacheReadTokens: number;
-	readonly cacheWriteTokens: number;
-	/**
-	 * **Cache rate** — what fraction of THIS request's prompt was served from cache:
-	 * `round(cacheReadTokens / inputTokens * 100)` (0 when `inputTokens <= 0`).
-	 * (`inputTokens` is the TOTAL prompt incl. cached, so this is in [0,100].)
-	 */
-	readonly cachePct: number;
-	/**
-	 * **Expected cache (retention)** — of the cacheable prefix this warm touched, how
-	 * much was still warm and read back vs. had to be (re)written:
-	 * `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)` (0 when the
-	 * sum is 0). For a healthy warm this is ~**100%**; it drops toward 0 as the cache
-	 * expires/busts. This is the warming HEALTH signal — headline it for "Warm now".
-	 */
-	readonly expectedCacheRate: number;
 }
 
 // ─── Per-conversation working directory (cwd) ─────────────────────────────────
@@ -248,6 +272,28 @@ export interface CwdResponse {
 /** Body of `PUT /conversations/:id/cwd`. */
 export interface SetCwdRequest {
 	readonly cwd: string;
+}
+
+// ─── Conversation close (explicit tab close) ──────────────────────────────────
+
+/**
+ * Response of `POST /conversations/:id/close` (no request body).
+ *
+ * The EXPLICIT "the user closed this conversation's tab" affordance — distinct
+ * from a socket disconnect or `chat.unsubscribe`, which deliberately never touch
+ * the turn or the warming schedule. Closing:
+ *  1. aborts any in-flight turn (the kernel stops at the next event boundary,
+ *     partial messages are persisted, and the turn SEALS normally with
+ *     `finishReason: "aborted"` — watchers see `done` + `turn-sealed`), and
+ *  2. stops + disables cache-warming for the conversation (persisted OFF, so a
+ *     reopened conversation stays opt-in).
+ * Idempotent: closing an idle or unknown conversation succeeds with
+ * `abortedTurn: false`.
+ */
+export interface CloseConversationResponse {
+	readonly conversationId: string;
+	/** True when an in-flight turn existed and was aborted by this close. */
+	readonly abortedTurn: boolean;
 }
 
 // ─── Per-conversation LSP status ──────────────────────────────────────────────
@@ -280,15 +326,71 @@ export interface LspStatusResponse {
 	readonly servers: readonly LspServerInfo[];
 }
 
-// ─── WebSocket chat ops ───────────────────────────────────────────────────────
-// The persistent WS connection multiplexes chat ops (below) with surface ops
-// (`@dispatch/ui-contract`). Chat `type`s are namespaced (`chat.*`) so they
-// never collide with surface ones.
+/**
+ * Request body for `POST /chat/warm` — manually trigger a prompt-cache WARMING
+ * request for a conversation (e.g. a frontend "warm now" button, or fast tests
+ * that don't want to wait for the automatic warming timer).
+ *
+ * The warm replays the conversation's existing prefix to the provider to refresh
+ * its prompt cache; it is NEVER persisted and NEVER streamed (no `AgentEvent`s).
+ * Pass the same `model`/`cwd` the conversation chats with so the warm request's
+ * prefix is byte-identical to a real turn (which is what makes the cache hit).
+ */
+export interface WarmRequest {
+	/** The conversation whose prompt cache to warm. */
+	readonly conversationId: string;
+
+	/**
+	 * The model name in `<credentialName>/<model>` form the conversation uses, so
+	 * the warm resolves the same provider + prefix. Omit to use the server default.
+	 */
+	readonly model?: string;
+
+	/** Working directory matching the conversation's turns (for cwd-aware tool assembly). */
+	readonly cwd?: string;
+}
 
 /**
- * Client → server: start or continue a turn over the WS connection. Same fields
- * as the HTTP `ChatRequest`; omit `conversationId` to start fresh — the resolved
- * id arrives on the streamed `AgentEvent`s (each carries `conversationId`).
+ * Response body for `POST /chat/warm` (HTTP 200). The warm request's usage —
+ * never folded into the conversation's real usage. A client surfaces `cachePct`
+ * as the "last warming" cache-hit indicator.
+ *
+ * When warming cannot run because the conversation is currently generating, the
+ * server responds `409` with `{ error }` instead of this body.
+ */
+export interface WarmResponse {
+	readonly inputTokens: number;
+	readonly outputTokens: number;
+	readonly cacheReadTokens: number;
+	readonly cacheWriteTokens: number;
+	/**
+	 * **Cache rate** — what fraction of THIS request's prompt was served from cache:
+	 * `round(cacheReadTokens / inputTokens * 100)` (0 when `inputTokens <= 0`).
+	 * (`inputTokens` is the TOTAL prompt incl. cached, so this is in [0,100].)
+	 */
+	readonly cachePct: number;
+	/**
+	 * **Expected cache (retention)** — of the cacheable prefix this warm touched, how
+	 * much was still warm and read back vs. had to be (re)written:
+	 * `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)` (0 when the
+	 * sum is 0). For a healthy warm this is ~**100%** (the whole prefix was still
+	 * cached); it drops toward 0 as the cache expires/busts and the warm has to rewrite
+	 * it. This is the warming HEALTH signal — distinct from `cachePct` (which a warm's
+	 * tiny fresh probe makes ~equal, but which on a real turn reflects new content).
+	 */
+	readonly expectedCacheRate: number;
+}
+
+// ─── WebSocket chat ops ───────────────────────────────────────────────────────
+// The persistent WS connection multiplexes chat ops (below) with surface ops
+// (`@dispatch/ui-contract`). The unified unions at the bottom compose both. Chat
+// `type`s are namespaced (`chat.*`) so they never collide with surface ones.
+
+/**
+ * Client → server: start or continue a turn over the WS connection. Carries the
+ * same fields as the HTTP `ChatRequest` (so one shape drives both transports);
+ * omit `conversationId` to start fresh — the resolved id arrives on the streamed
+ * `AgentEvent`s (each carries `conversationId`).
  */
 export interface ChatSendMessage extends ChatRequest {
 	readonly type: "chat.send";
@@ -296,8 +398,9 @@ export interface ChatSendMessage extends ChatRequest {
 
 /**
  * Server → client: one `AgentEvent` from an in-flight turn (text-delta,
- * tool-call, usage, done, turn-sealed, …). Fold these into the transcript
- * exactly as the HTTP NDJSON stream — same events, different carrier.
+ * tool-call, usage, done, turn-sealed, …). The client folds these into its
+ * transcript exactly as it folds the HTTP NDJSON stream — same events, different
+ * carrier.
  */
 export interface ChatDeltaMessage {
 	readonly type: "chat.delta";
@@ -316,13 +419,20 @@ export interface ChatErrorMessage {
 }
 
 /**
- * Client → server: start WATCHING a conversation's live turn events WITHOUT sending.
- * On subscribe the server REPLAYS the current in-flight turn so far (from its
- * `turn-start`) as `chat.delta`, then streams live; nothing replayed if idle (rely
- * on `GET /conversations/:id` history). Infer "generating" from a replayed
- * `turn-start` with no matching `done`/`turn-sealed` yet. `chat.send` already
- * auto-subscribes the sender, so this is for conversations you VIEW but didn't send to
- * (a 2nd device, or a reloaded/reconnected client). Idempotent per (connection, id).
+ * Client → server: start WATCHING a conversation's live turn events WITHOUT
+ * sending a message. This is what makes a turn viewable independently of who
+ * started it — a second device (multi-client handoff) or a client that reloaded
+ * mid-turn subscribes to receive the in-flight turn.
+ *
+ * On subscribe the server replays the CURRENT in-flight turn's events so far as
+ * `chat.delta` messages (so a late-joiner sees the whole running turn from its
+ * `turn-start`), then streams subsequent live events. If no turn is in-flight,
+ * nothing is replayed (the client relies on `GET /conversations/:id` history).
+ * A client infers "generating" from a replayed `turn-start` with no matching
+ * `done`/`turn-sealed` yet. Idempotent per `(connection, conversationId)`.
+ *
+ * NOTE: `chat.send` auto-subscribes the sending connection, so a client only needs
+ * `chat.subscribe` for conversations it is viewing but did not send to.
  */
 export interface ChatSubscribeMessage {
 	readonly type: "chat.subscribe";
@@ -331,22 +441,28 @@ export interface ChatSubscribeMessage {
 
 /**
  * Client → server: stop watching a conversation's turn events on this connection.
- * Does NOT stop/affect the turn (it runs to completion regardless of subscribers).
- * Socket close drops all of a connection's subscriptions the same way — again
- * WITHOUT aborting any in-flight turn.
+ * Does NOT stop or affect the turn itself (the turn runs to completion regardless
+ * of subscribers). The server also drops all of a connection's subscriptions when
+ * the socket closes — again WITHOUT aborting any in-flight turn.
  */
 export interface ChatUnsubscribeMessage {
 	readonly type: "chat.unsubscribe";
 	readonly conversationId: string;
 }
 
-/** Every client → server WS message: surface ops + chat ops. Discriminate on `type`. */
+/**
+ * Every client → server WS message: surface ops (`@dispatch/ui-contract`) + chat
+ * ops. A server discriminates on `type`.
+ */
 export type WsClientMessage =
 	| SurfaceClientMessage
 	| ChatSendMessage
 	| ChatSubscribeMessage
 	| ChatUnsubscribeMessage;
 
-/** Every server → client WS message: surface ops + chat ops. Discriminate on `type`. */
+/**
+ * Every server → client WS message: surface ops (`@dispatch/ui-contract`) + chat
+ * ops. A client discriminates on `type`.
+ */
 export type WsServerMessage = SurfaceServerMessage | ChatDeltaMessage | ChatErrorMessage;
 ```

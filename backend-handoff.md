@@ -5,18 +5,35 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-12. **FE is current on `transport-contract@0.8.0` / `wire@0.6.0`.** All handoffs
-to date are consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector,
-cache-warming (incl. authoritative timer + retention + cache-rate fix), **per-conversation cwd + LSP
-status**, **context size** (the `contextSize` field — `done` live + `TurnMetrics` persisted —
-rendered as a current-usage readout above the composer), and **turn continuity + multi-client live
-view** (`chat.subscribe`/`chat.unsubscribe`; re-attach to a running turn on reconnect/reload/second
-device; stream-derived "generating…" state).
-**Open asks:** CR-1 (Loaded Extensions as a real table) + CR-2 (optional catalog `scope` flag) below.
+_Last updated: 2026-06-12 (CR-4 consumed). **FE is current on `ui-contract@0.2.0` /
+`transport-contract@0.9.0` / `wire@0.6.0`.** All handoffs to date are consumed: surfaces + WS,
+conversation transcript/metrics, tabs + model selector, cache-warming (incl. authoritative timer +
+retention + cache-rate fix + the CR-4 lifecycle below), **per-conversation cwd + LSP status**,
+**context size**, and **turn continuity + multi-client live view**.
+**Open asks: NONE.** CR-1/CR-2/CR-4 all RESOLVED ✅ (see §2); §3 lists likely next asks.
 **CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
-`user-message` turn event (`wire@0.6.0` / `transport-contract@0.8.0`); FE re-pinned + consumption live.
-The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed** by the
-backend (answers in their `frontend-lsp-cwd-handoff.md`) — see §2._
+`user-message` turn event; FE re-pinned + consumption live.
+The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
+
+**CR-4 cache-warming lifecycle (`frontend-cache-warming-lifecycle-handoff.md`) → CONSUMED ✅
+(live-probed 17/17 against `bin/up`).** Re-pinned `ui-contract@0.1.0→0.2.0` +
+`transport-contract@0.8.0→0.9.0` (`wire` unchanged); re-mirrored both `.dispatch/*.reference.md`. FE
+work: `store.closeTab()` now POSTs `POST /conversations/:id/close` (fire-and-forget, idempotent) —
+the explicit "done with this chat" affordance that aborts an in-flight turn + stops/disables that
+conversation's warming, while disconnect/`chat.unsubscribe` still leave both running;
+`syncSubscriptions` honors the new catalog `scope` flag (a `scope:"global"` surface is no longer
+re-subscribed on every conversation switch; absent = conversation-scoped, conservative);
+`secondsUntilNext` gained a 3s belt-and-braces stale guard (a past `nextWarmAt` renders "waiting…",
+should never trigger now). **CR-4d correction: the missing `conversationId` echo on the initial
+`surface` message was OURS** — the backend was right, HEAD echoes it; our WS parser
+(`adapters/ws/logic.ts` `case "surface"`) rebuilt the message and DROPPED the field. Fixed + unit
+tests; the protocol reducer's stale-scope filtering now actually bites on the initial reply too.
+Probe verified live: default OFF + nothing scheduled on a fresh conversation; toggle-on/interval
+updates carry FUTURE `nextWarmAt`; repeated automatic warms each push a FUTURE `nextWarmAt`;
+`nextWarmAt: null` pushed on `turn-start`; close mid-turn → 200 `abortedTurn:true`, watcher gets
+`done` `reason:"aborted"` + `turn-sealed`, surface flips `enabled:false`/`nextWarmAt:null`; second
+close idempotent (`abortedTurn:false`). CR-1 table payload also verified arriving (FE renderer
+pre-existing). 568 tests green._
 
 **Turn-continuity handoff (`frontend-turn-continuity-handoff.md`) → CONSUMED ✅.** Re-pinned
 `transport-contract@0.6.0→0.7.0` (additive; `wire` unchanged at `0.5.0`); re-mirrored
@@ -43,7 +60,7 @@ backend ask — but the max-limit denominator is now a live FE need; see §3.
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.1.0`; `wire@0.6.0`; `transport-contract@0.8.0`**.
+Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.6.0`; `transport-contract@0.9.0`**.
 
 | Package | Used for |
 |---|---|
@@ -54,62 +71,58 @@ Pinned as `file:` deps: **`ui-contract@0.1.0`; `wire@0.6.0`; `transport-contract
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` · `GET /conversations/:id?sinceSeq=<n>` ·
 `GET /conversations/:id/metrics` · `GET`/`PUT /conversations/:id/cwd` ·
-`GET /conversations/:id/lsp` · `POST /chat/warm` · WS `chat.send`→`chat.delta` ·
+`GET /conversations/:id/lsp` · `POST /chat/warm` · `POST /conversations/:id/close` (explicit
+tab-close: abort turn + stop/disable warming) · WS `chat.send`→`chat.delta` ·
 WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
-(regenerate on any contract bump; all current as of `transport-contract@0.6.0` / `wire@0.5.0`).
+(regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
+`transport-contract@0.9.0` / `wire@0.6.0`).
 
 ## 2. Open asks FOR THE BACKEND
 
-### CR-1 — emit the **Loaded Extensions** surface as a true table
+**None open.** Resolved history below.
 
-The user wants the Loaded Extensions surface rendered as a nice multi-column
-table (e.g. `Name | Version | Trust | Scope`), listing **all** loaded extensions.
+### CR-1 — Loaded Extensions as a true table → **RESOLVED ✅** (shipped + consumed)
 
-**Already covered — do NOT redo these (no contract change needed):**
-- The `custom` field kind + `rendererId` + graceful-skip already exist in
-  `ui-contract@0.1.0`. CR-1 uses that escape hatch — no `@dispatch/ui-contract` bump.
-- The FE renderer is **done and shipped**: `SurfaceView` → `SurfaceTable` →
-  shared `Table`, dispatched on `rendererId === "table"`. It renders the moment
-  the surface emits the field below.
-- The FE already groups consecutive `stat` fields into an aligned 2-column
-  (label → value) table, so the current surface (one `stat` per extension:
-  name → version) is **already readable as a table today**. CR-1 is the upgrade
-  to real columns, not a fix for something broken.
-- The "frontend modules" half of the Extensions view is **100% FE-owned**
-  (aggregated from each FE feature's `manifest`) — backend has nothing to provide there.
+Backend now emits the "Loaded" count stat plus ONE
+`{ kind: "custom", rendererId: "table", payload: { columns, rows } }` field
+(`columns: ["Name", "Version", "Trust", "Activation"]`, one row per loaded extension, all trust
+tiers). Verified arriving live; the FE's pre-existing `SurfaceTable` renderer (dispatch on
+`rendererId === "table"`) shows it with no FE change. A typed `TablePayload` (+ `TABLE_RENDERER_ID`)
+is exported from `@dispatch/surface-loaded-extensions` if we ever want to narrow instead of
+duck-typing — not consumed (would add a dep for no behavior change). Data-quality note stands:
+`Version` cells all read `0.0.0` (manifests genuinely unversioned; optional backend cleanup).
 
-**What I NEED from the backend to finish it:** replace the N per-extension
-`stat` fields with a SINGLE `custom` field:
-```ts
-{
-  kind: "custom",
-  rendererId: "table",
-  payload: {
-    columns: string[],                      // header labels
-    rows: (string | number | boolean)[][],  // each row aligns cell-for-cell to columns
-  },
-}
-```
-- Cells are coerced to strings; a malformed payload renders nothing (safe skip).
-- `rows` should enumerate **every** loaded extension (all trust tiers / kinds),
-  so "show all" is satisfied from this one surface.
+### CR-2 — catalog `scope` flag → **RESOLVED ✅** (`ui-contract@0.2.0`, consumed)
 
-**Optional (data quality, not a blocker):** extension manifest `version`s all
-read `0.0.0` (unversioned). If real versions should appear in the table column,
-bump each extension's manifest `version` — otherwise the column is all `0.0.0`.
+`SurfaceCatalogEntry.scope?: "global" | "conversation"` shipped (emitted: `loaded-extensions` →
+global, `cache-warming` → conversation). FE consumed: `syncSubscriptions` subscribes a
+`scope:"global"` surface WITHOUT a conversationId, so a conversation switch no longer churns a
+redundant unsubscribe+subscribe per global surface. ABSENT scope = assume conversation-scoped
+(conservative, per contract).
 
-### CR-2 (optional, low priority) — a `scope` flag on the surface catalog entry
+### CR-4 — cache-warming lifecycle → **RESOLVED ✅** (courier `backend-handoff-cache-warming.md`; reply `frontend-cache-warming-lifecycle-handoff.md`; live-probed 17/17)
 
-The catalog (`SurfaceCatalogEntry`) carries no hint of whether a surface is GLOBAL or
-CONVERSATION-SCOPED, so the FE follows the handoff's "always send the focused `conversationId`"
-policy. That works (global surfaces ignore it; the FE's routing accepts the no-echo global reply),
-but it means the FE **re-subscribes every surface — including global ones like `loaded-extensions` —
-on every conversation switch**, which is needless churn (one redundant unsubscribe+subscribe round
-trip per global surface per switch; no user-visible bug, the old spec is retained so there's no
-flicker). An optional `scope?: "global" | "conversation"` on `SurfaceCatalogEntry` would let the FE
-skip re-subscribing globals on switch. **Not blocking** — only raise if cheap.
+All four asks shipped + consumed (`transport-contract@0.9.0`):
+- **(a) default OFF** for a new conversation (interval default still 240s; re-enable restores the
+  persisted interval). Verified live.
+- **(b) FUTURE `nextWarmAt`** pushed after every automatic warm + after `turn-sealed`;
+  `nextWarmAt: null` pushed on `turn-start` (FE renders "waiting…" while generating) and when
+  disabled. Verified live (2 automatic warms @10s, both future).
+- **(c) `POST /conversations/:id/close`** (`CloseConversationResponse { conversationId,
+  abortedTurn }`): aborts an in-flight turn (partial persisted, seals with `reason: "aborted"` →
+  watchers' `generating` clears structurally) + stops/disables warming (persisted OFF), idempotent;
+  disconnect/`chat.unsubscribe` still never touch either. FE wires it in `store.closeTab()`
+  (fire-and-forget). Verified live incl. mid-turn abort + idempotent re-close.
+- **(d) `conversationId` echo on the initial `surface` message — was an FE BUG, not backend.**
+  The backend's frame carries it (raw-frame verified); our WS parser
+  (`adapters/ws/logic.ts` `case "surface"`) rebuilt the message and dropped the field. Fixed FE-side
+  + unit-tested; stale-scope filtering now applies to the initial reply too. Backend owes nothing.
+
+**Known caveat (accepted, fail-safe):** the warming opt-in is NOT re-hydrated across a backend
+RESTART — a conversation reads disabled until toggled again. Flag to the backend if persistence
+across restarts becomes a product need (they offered boot hydration).
 
 ### cwd + LSP draft path → **VERIFIED ✅ (all 6 asks confirmed; courier `backend-handoff-cwd-lsp.md`)**
 
@@ -184,7 +197,11 @@ errored turn would leave a persisted prompt with no reply).
   source the model's advertised window.
 - `GET /conversations` — conversation list / sidebar (history explorer / switcher); could also expose a
   per-conversation "last model" so a reopened tab seeds its model from the server instead of localStorage.
-- `POST /conversations/:id/cancel` — "stop generating".
+- ~~`POST /conversations/:id/cancel`~~ — **superseded by `POST /conversations/:id/close`
+  (CR-4c, shipped)**. A standalone "stop generating WITHOUT closing/disabling warming" button would
+  still need a separate affordance if the product ever wants it.
+- **Warming opt-in persistence across backend restarts** — currently fail-safe-off after a restart;
+  backend offered boot hydration if it becomes a need (see CR-4 caveat in §2).
 - **LSP status over WS** (push) — today the FE HTTP-polls `GET /conversations/:id/lsp` on panel mount /
   cwd change + a manual refresh; a live surface/WS push would remove the manual refresh and reflect a
   server flipping to `error`/`connected` without a reload. (Backend flagged this as a future option.)

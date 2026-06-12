@@ -256,6 +256,23 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		socket?.send({ type: "chat.unsubscribe", conversationId });
 	}
 
+	/**
+	 * Tell the backend the user EXPLICITLY closed this conversation's tab
+	 * (`POST /conversations/:id/close`): aborts any in-flight turn (it seals with
+	 * `reason: "aborted"`) and stops + DISABLES its cache-warming (persisted OFF).
+	 * Distinct from a disconnect / `chat.unsubscribe`, which deliberately leave
+	 * both running. Fire-and-forget: a failure is non-fatal (worst case the
+	 * warming keeps running until a later close/toggle), and the endpoint is
+	 * idempotent server-side.
+	 */
+	function closeConversation(conversationId: string): void {
+		void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/close`, {
+			method: "POST",
+		}).catch(() => {
+			// Non-fatal — see doc comment.
+		});
+	}
+
 	/** The conversation the surfaces should scope to (undefined for a draft). */
 	function focusedConversationId(): string | undefined {
 		return tabsStore.activeConversationId ?? undefined;
@@ -289,7 +306,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	function syncSubscriptions(): void {
 		const cid = focusedConversationId();
 		for (const entry of protocol.catalog) {
-			const result = protocolSubscribe(protocol, entry.id, cid);
+			// A GLOBAL surface ignores conversation scope — subscribe it WITHOUT an id
+			// so a conversation switch doesn't churn a redundant unsubscribe+subscribe
+			// round trip (ui-contract@0.2.0 catalog `scope`; ABSENT = assume
+			// conversation-scoped, the conservative pre-0.2.0 policy).
+			const scoped = entry.scope === "global" ? undefined : cid;
+			const result = protocolSubscribe(protocol, entry.id, scoped);
 			protocol = result.state;
 			for (const msg of result.outgoing) {
 				socket?.send(msg);
@@ -489,7 +511,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 		closeTab(conversationId: string): void {
 			tabsStore.closeTab(conversationId);
-			// Stop watching the closed conversation's turns (does NOT stop the turn).
+			// The user is DONE with this chat for now: abort any in-flight turn and
+			// stop + disable its cache-warming, server-side.
+			closeConversation(conversationId);
+			// Stop watching the closed conversation's turns.
 			unsubscribeChat(conversationId);
 			const store = chatStores.get(conversationId);
 			if (store !== undefined) {
