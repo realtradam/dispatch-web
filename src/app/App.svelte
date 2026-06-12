@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { InvokeMessage } from "@dispatch/ui-contract";
+	import { tick } from "svelte";
 	import Table from "../components/Table.svelte";
 	import {
 		CacheWarmingView,
@@ -75,6 +76,31 @@
 	const smartScroll = createSmartScrollController();
 	let transcriptEl = $state<HTMLElement | undefined>();
 	let transcriptContentEl = $state<HTMLElement | undefined>();
+
+	// Chat-limit unload gate: old chunks may be unloaded only while the reader is
+	// stuck to the bottom. While stuck, a trim removes content far ABOVE the
+	// viewport and the controller re-pins to the bottom — no visible jump; while
+	// reading history, trimming is deferred instead of yanking the page (the old
+	// Dispatch bug). In an $effect so a swapped store prop would be re-wired.
+	$effect(() => {
+		store.attachUnloadGate(() => smartScroll.isAtBottom());
+	});
+
+	// "Show earlier messages": page older history back in, preserving the reader's
+	// viewport position — prepended content grows scrollHeight, so shift scrollTop
+	// by the growth (the manual analogue of CSS scroll anchoring, which not every
+	// engine applies here).
+	async function handleShowEarlier(): Promise<void> {
+		const el = transcriptEl;
+		const prevHeight = el?.scrollHeight ?? 0;
+		const prevTop = el?.scrollTop ?? 0;
+		await store.activeChat.showEarlier();
+		await tick();
+		if (el) {
+			const delta = el.scrollHeight - prevHeight;
+			if (delta > 0) el.scrollTop = prevTop + delta;
+		}
+	}
 
 	// Attach/detach the controller to the live scroll element + content (disposed on
 	// unmount). The content element is observed (ResizeObserver) so the view follows
@@ -201,7 +227,13 @@
 			<div bind:this={transcriptEl} class="h-full overflow-y-auto">
 				<div bind:this={transcriptContentEl}>
 					{#key store.activeConversationId}
-						<ChatView chunks={store.activeChat.chunks} turnMetrics={store.activeChat.turnMetrics} />
+						<ChatView
+							chunks={store.activeChat.chunks}
+							turnMetrics={store.activeChat.turnMetrics}
+							hasEarlier={store.activeChat.hasEarlier}
+							onShowEarlier={handleShowEarlier}
+							thinkingKeyBase={store.activeChat.thinkingKeyBase}
+						/>
 					{/key}
 				</div>
 			</div>

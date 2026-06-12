@@ -21,6 +21,23 @@ export interface TranscriptState {
 	readonly latestUsage: Usage | null;
 	readonly sealedTurnId: string | null;
 	/**
+	 * The chat-limit UNLOAD watermark: committed chunks with `seq <` this are
+	 * unloaded (not in `committed`, not rendered) to keep long transcripts cheap.
+	 * `0` = nothing unloaded. `applyHistory` refuses chunks below it (a cache/tail
+	 * merge must not resurrect what the trim dropped); "Show earlier messages"
+	 * lowers it via `restoreEarlier`. See `trim.ts`.
+	 */
+	readonly hiddenBeforeSeq: number;
+	/**
+	 * How many thinking-type chunks are currently unloaded below the watermark.
+	 * Pure render-key bookkeeping: the UI keys thinking collapses by ORDINAL (so
+	 * the key survives the provisional→committed seal transition), and this base
+	 * keeps those ordinals stable when a trim removes older thinking chunks —
+	 * otherwise every remaining collapse would shift keys and swap/lose its
+	 * open state mid-stream.
+	 */
+	readonly hiddenThinkingCount: number;
+	/**
 	 * True while a turn is generating on the server — derived STRUCTURALLY from the
 	 * event stream: a `turn-start` (or any turn delta) with no matching `done` /
 	 * `turn-sealed` / `error` yet. A late-joiner that subscribes mid-turn gets the

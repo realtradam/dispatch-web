@@ -5,12 +5,15 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-12 (CR-4 consumed). **FE is current on `ui-contract@0.2.0` /
-`transport-contract@0.9.0` / `wire@0.6.0`.** All handoffs to date are consumed: surfaces + WS,
-conversation transcript/metrics, tabs + model selector, cache-warming (incl. authoritative timer +
-retention + cache-rate fix + the CR-4 lifecycle below), **per-conversation cwd + LSP status**,
-**context size**, and **turn continuity + multi-client live view**.
-**Open asks: NONE.** CR-1/CR-2/CR-4 all RESOLVED ✅ (see §2); §3 lists likely next asks.
+_Last updated: 2026-06-12 (CR-5 opened: chat-limit history windowing). **FE is current on
+`ui-contract@0.2.0` / `transport-contract@0.9.0` / `wire@0.6.0`.** All handoffs to date are
+consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming
+(incl. authoritative timer + retention + cache-rate fix + the CR-4 lifecycle below),
+**per-conversation cwd + LSP status**, **context size**, and **turn continuity + multi-client
+live view**.
+**Open asks: ONE — CR-5** (`?limit=`/`?beforeSeq=` on `GET /conversations/:id`; NOT a blocker,
+courier doc `backend-handoff-chat-limit.md`). CR-1/CR-2/CR-4 all RESOLVED ✅ (see §2); §3 lists
+likely next asks.
 **CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
 `user-message` turn event; FE re-pinned + consumption live.
 The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
@@ -81,7 +84,24 @@ Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-con
 
 ## 2. Open asks FOR THE BACKEND
 
-**None open.** Resolved history below.
+**One open: CR-5.** Resolved history below it.
+
+### CR-5 — history windowing for the FE chat limit → **OPEN (not a blocker)** (courier `backend-handoff-chat-limit.md`)
+
+The FE is shipping a **chat limit** (default 256 chunks, localStorage-configurable): past the
+limit it bulk-unloads the oldest `ceil(L/4)` chunks (scroll-jump-free, unlike old Dispatch's
+one-per-delta eviction), and a fresh page load shows only the newest `floor(0.75×L)`. Works
+today by fetching the full history and windowing in memory — the ask makes the FRESH-BROWSER
+load cheap (today `?sinceSeq=0` returns the whole conversation; a 10k-chunk chat downloads
+megabytes to show 192 chunks). Additive `transport-contract` asks:
+- **`?limit=<n>`** on `GET /conversations/:id` — newest `n` of the selection, still ascending;
+  **≤ `n` chunks exist ⇒ return everything** (the FE always sends it; short chats must stay
+  exact). Absent ⇒ today's behavior.
+- **`?beforeSeq=<s>`** — selection `seq < s` (with `limit`: newest `n` below `s`) — the
+  "Show earlier messages" page-in path once the FE's local cache is exhausted.
+- **`earliestSeq?`/`hasOlder?` response field** — OR simply confirm in writing that seqs start
+  at 1 gap-free, and the FE derives `hasOlder` from `chunks[0].seq > 1` (cheapest, preferred).
+Full consumption plan + sequencing in the courier doc.
 
 ### CR-1 — Loaded Extensions as a true table → **RESOLVED ✅** (shipped + consumed)
 

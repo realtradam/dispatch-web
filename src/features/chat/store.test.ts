@@ -892,6 +892,295 @@ describe("createChatStore", () => {
 		store.dispose();
 	});
 
+	it("chat limit: crossing the limit unloads the oldest quarter in one bulk pass", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		// Commit exactly 100 chunks via a sealed turn (at the limit — no trim).
+		const hundred = Array.from({ length: 100 }, (_, i) => makeStoredChunk(i + 1));
+		historySync.returnChunks = hundred;
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+		await vi.waitFor(() => {
+			expect(store.chunks).toHaveLength(100);
+		});
+		expect(store.hasEarlier).toBe(false);
+
+		// The 101st chunk (a live tool-call) crosses the limit → 25 unload → 76 remain.
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t2" }));
+		store.handleDelta(
+			deltaEvent({
+				type: "tool-call",
+				conversationId: CONV_ID,
+				turnId: "t2",
+				toolCallId: "tc1",
+				toolName: "probe",
+				input: {},
+				stepId: "t2#0" as StepId,
+			}),
+		);
+
+		expect(store.chunks).toHaveLength(76);
+		expect(store.chunks[0]?.seq).toBe(26);
+		expect(store.hasEarlier).toBe(true);
+
+		store.dispose();
+	});
+
+	it("chat limit: unloading is deferred while the gate is closed, then catches up", () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		let atBottom = false; // reader scrolled up
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 10,
+			canUnload: () => atBottom,
+		});
+
+		// 15 live tool-calls: over the limit, but the gate defers every trim.
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		for (let i = 0; i < 15; i++) {
+			store.handleDelta(
+				deltaEvent({
+					type: "tool-call",
+					conversationId: CONV_ID,
+					turnId: "t1",
+					toolCallId: `tc${i}`,
+					toolName: "probe",
+					input: {},
+					stepId: `t1#${i}` as StepId,
+				}),
+			);
+		}
+		expect(store.chunks).toHaveLength(15);
+
+		// Reader returns to the bottom — but provisional chunks are never unloaded,
+		// so the deferred trim still can't shrink an all-provisional transcript.
+		atBottom = true;
+		store.handleDelta(
+			deltaEvent({
+				type: "tool-call",
+				conversationId: CONV_ID,
+				turnId: "t1",
+				toolCallId: "tc15",
+				toolName: "probe",
+				input: {},
+				stepId: "t1#15" as StepId,
+			}),
+		);
+		expect(store.chunks).toHaveLength(16);
+
+		store.dispose();
+	});
+
+	it("chat limit: a deferred trim catches up across committed history once the gate opens", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		let atBottom = false;
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+			canUnload: () => atBottom,
+		});
+
+		// Seal a turn committing 130 chunks while the reader is scrolled up: no trim.
+		historySync.returnChunks = Array.from({ length: 130 }, (_, i) => makeStoredChunk(i + 1));
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+		await vi.waitFor(() => {
+			expect(store.chunks).toHaveLength(130);
+		});
+
+		// Back at the bottom: the next fold trims whole quarters down to ≤ 100.
+		atBottom = true;
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t2" }));
+		// 130 → 2 quarters of 25 → 80 committed (turn-start adds no chunk).
+		expect(store.chunks).toHaveLength(80);
+		expect(store.chunks[0]?.seq).toBe(51);
+
+		store.dispose();
+	});
+
+	it("chat limit: load windows a long cached conversation to 75% of the limit", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		await cache.impl.commit(
+			CONV_ID,
+			Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1)),
+		);
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load();
+
+		// floor(100 × 0.75) = 75 newest chunks: seqs 426..500.
+		expect(store.chunks).toHaveLength(75);
+		expect(store.chunks[0]?.seq).toBe(426);
+		expect(store.hasEarlier).toBe(true);
+		// The tail sync still used the cache's real cursor (not the window's edge).
+		expect(historySync.calls[0]?.sinceSeq).toBe(500);
+
+		store.dispose();
+	});
+
+	it("chat limit: a cold cache (fresh browser) windows the full server history to 75%", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		// Backend has no limit param yet (CR-5): sinceSeq=0 returns EVERYTHING.
+		historySync.returnChunks = Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1));
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load();
+
+		expect(store.chunks).toHaveLength(75);
+		expect(store.chunks[0]?.seq).toBe(426);
+		expect(store.hasEarlier).toBe(true);
+		// The full history is still CACHED locally (show-earlier pages from it).
+		const cached = await cache.impl.load(CONV_ID);
+		expect(cached).toHaveLength(500);
+
+		store.dispose();
+	});
+
+	it("chat limit: showEarlier pages a quarter back in from the cache", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		await cache.impl.commit(
+			CONV_ID,
+			Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1)),
+		);
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load();
+		expect(store.chunks[0]?.seq).toBe(426);
+
+		await store.showEarlier(); // +ceil(100/4) = 25 older chunks
+		expect(store.chunks).toHaveLength(100);
+		expect(store.chunks[0]?.seq).toBe(401);
+		expect(store.hasEarlier).toBe(true);
+
+		store.dispose();
+	});
+
+	it("chat limit: showEarlier clears hasEarlier when the cache is exhausted", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		await cache.impl.commit(
+			CONV_ID,
+			Array.from({ length: 80 }, (_, i) => makeStoredChunk(i + 1)),
+		);
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load(); // window 75: hidden 1..5
+		expect(store.chunks).toHaveLength(75);
+		expect(store.hasEarlier).toBe(true);
+
+		await store.showEarlier(); // restores all 5 → nothing left below
+		expect(store.chunks).toHaveLength(80);
+		expect(store.chunks[0]?.seq).toBe(1);
+		expect(store.hasEarlier).toBe(false);
+
+		store.dispose();
+	});
+
+	it("chat limit: a post-trim history sync does not resurrect unloaded chunks", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		await cache.impl.commit(
+			CONV_ID,
+			Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1)),
+		);
+
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		await store.load();
+		expect(store.chunks[0]?.seq).toBe(426);
+
+		// A sealed turn triggers syncTail, whose cache.commit returns the FULL
+		// merged cache (seqs 1..501) — the watermark must keep 1..425 out.
+		historySync.returnChunks = [makeStoredChunk(501)];
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t9" }));
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t9" }));
+
+		await vi.waitFor(() => {
+			expect(store.chunks[store.chunks.length - 1]?.seq).toBe(501);
+		});
+		expect(store.chunks[0]?.seq).toBe(426);
+		expect(store.chunks).toHaveLength(76);
+
+		store.dispose();
+	});
+
 	it("resync is a no-op after dispose", async () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();

@@ -8,6 +8,18 @@ export {
 	initialState,
 } from "./reducer";
 export { selectChunks, selectGenerating, selectMessages } from "./selectors";
+export {
+	DEFAULT_CHAT_LIMIT,
+	initialWindowSize,
+	MAX_CHAT_LIMIT,
+	MIN_CHAT_LIMIT,
+	normalizeChatLimit,
+	restoreEarlier,
+	selectHasEarlier,
+	trimTranscript,
+	unloadCount,
+	windowTranscript,
+} from "./trim";
 export type {
 	AccumulatingChunk,
 	ProvisionalChunk,

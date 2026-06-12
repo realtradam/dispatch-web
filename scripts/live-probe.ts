@@ -204,25 +204,28 @@ async function main() {
 	record("turn 1 committed transcript has assistant text", committedText.length > 0);
 
 	// ─── Metrics: LIVE token + timing (wire@0.3.0 usage/step-complete/done) ──────
+	// (TurnMetricsEntry is `{ turnId, steps, total }` — the turn aggregate lives on
+	// `total`, present once the live `done` folded.)
 	const liveTurns = selectOrderedTurnMetrics(t1.metrics);
 	const m1 = liveTurns[0];
+	const m1Total = m1?.total ?? null;
 	record(
 		"turn 1 LIVE metrics: a turn with output tokens",
-		m1 !== undefined && m1.usage.outputTokens > 0,
-		m1
-			? `in=${m1.usage.inputTokens} out=${m1.usage.outputTokens} steps=${m1.steps.length}`
-			: "no turn",
+		m1Total !== null && m1Total.usage.outputTokens > 0,
+		m1Total
+			? `in=${m1Total.usage.inputTokens} out=${m1Total.usage.outputTokens} steps=${m1?.steps.length}`
+			: "no finalized turn total",
 	);
 	if (m1 !== undefined) {
 		const anyGen = m1.steps.some((s) => s.genTotalMs !== undefined);
 		const anyTtft = m1.steps.some((s) => s.ttftMs !== undefined);
 		note(
-			`live timing: durationMs=${m1.durationMs ?? "—"}, ` +
+			`live timing: durationMs=${m1Total?.durationMs ?? "—"}, ` +
 				`genTotalMs present=${anyGen}, ttftMs present=${anyTtft}`,
 		);
 		record(
 			"turn 1 LIVE metrics carries timing (durationMs or step genTotalMs)",
-			m1.durationMs !== undefined || anyGen,
+			m1Total?.durationMs !== undefined || anyGen,
 			"requires the backend runtime to have a clock",
 		);
 	}
@@ -248,10 +251,11 @@ async function main() {
 			applyDurableMetrics(initialMetricsState(), dm.turns),
 		);
 		const d1 = durableMerged[0];
+		const d1Total = d1?.total ?? null;
 		record(
 			"durable /metrics turn has token usage",
-			d1 !== undefined && d1.usage.outputTokens > 0,
-			d1 ? `out=${d1.usage.outputTokens} steps=${d1.steps.length}` : "no turn",
+			d1Total !== null && d1Total.usage.outputTokens > 0,
+			d1Total ? `out=${d1Total.usage.outputTokens} steps=${d1?.steps.length}` : "no turn total",
 		);
 	}
 

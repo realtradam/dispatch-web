@@ -15,6 +15,7 @@ import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
 import type { WebSocketLike } from "../adapters/ws";
 import { createSurfaceSocket, type SurfaceSocketOptions } from "../adapters/ws";
+import { normalizeChatLimit } from "../core/chunks";
 import {
 	applyServerMessage,
 	getSurfaceSpec,
@@ -88,6 +89,15 @@ export interface AppStore {
 	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
 	 */
 	lspStatus(): Promise<LspResult | null>;
+	/**
+	 * Wire the chat-limit unload gate (composition-root injection, called once by
+	 * the shell after it owns the scroll region): unloading old chunks is allowed
+	 * only while the gate returns true — i.e. the reader is stuck to the bottom —
+	 * so a trim never yanks content out from under someone reading history.
+	 * Before attachment unloading is allowed (the initial view starts at the
+	 * bottom).
+	 */
+	attachUnloadGate(gate: () => boolean): void;
 	dispose(): void;
 }
 
@@ -157,6 +167,22 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	});
 	const tabsStore: TabsStore = createTabsStore(storageAdapter);
 
+	// The chat limit (max loaded chunks per conversation) — a persisted local
+	// setting with no UI yet: edit `localStorage["dispatch.chatLimit"]`. The
+	// default is written back on first run so the knob is discoverable.
+	const chatLimitStore = createLocalStore<number>("dispatch.chatLimit", {
+		storage: localStorageOpt,
+	});
+	const storedChatLimit = chatLimitStore.load();
+	const chatLimit = normalizeChatLimit(storedChatLimit);
+	if (storedChatLimit === null) {
+		chatLimitStore.save(chatLimit);
+	}
+
+	// Unload gate — attached by the shell once it owns the scroll region (see
+	// `AppStore.attachUnloadGate`). Until then, unloading is allowed.
+	let unloadGate: (() => boolean) | null = null;
+
 	const cache: ConversationCache = createConversationCache(
 		createIdbChunkStore({ indexedDB: indexedDBFactory }),
 	);
@@ -178,6 +204,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			historySync,
 			metricsSync,
 			cache,
+			chatLimit,
+			canUnload: () => (unloadGate === null ? true : unloadGate()),
 		});
 	}
 
@@ -607,6 +635,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				};
 			}
 		},
+		attachUnloadGate(gate: () => boolean): void {
+			unloadGate = gate;
+		},
+
 		dispose(): void {
 			for (const store of chatStores.values()) {
 				store.dispose();
