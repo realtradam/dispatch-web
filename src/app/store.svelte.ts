@@ -231,7 +231,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	}
 
 	const initialDraftId = randomId();
-	let draftStore: ChatStore = createChatFor(initialDraftId, activeModel);
+	let draftStore: ChatStore = createChatFor(initialDraftId, DEFAULT_MODEL);
 	let draftConversationId: string = initialDraftId;
 
 	let activeChat = $state<ChatStore>(draftStore as ChatStore);
@@ -446,6 +446,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				const first = data.models[0];
 				if (first !== undefined) {
 					activeModel = first;
+					draftStore.setModel(first);
 				}
 			}
 		})
