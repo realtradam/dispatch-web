@@ -144,6 +144,93 @@ describe("createChatStore", () => {
 		store.dispose();
 	});
 
+	describe("queueMessage (chat.queue — steering)", () => {
+		it("posts a chat.queue with conversationId + text", () => {
+			const transport = createFakeTransport();
+			const historySync = createFakeHistorySync();
+			const metricsSync = createFakeMetricsSync();
+			const cache = createFakeCache();
+			const store = createChatStore({
+				conversationId: CONV_ID,
+				transport: transport.impl,
+				historySync: historySync.impl,
+				metricsSync: metricsSync.impl,
+				cache: cache.impl,
+			});
+
+			store.queueMessage("steer left");
+
+			expect(transport.sent).toHaveLength(0); // chat.send stays empty
+			expect(transport.sentQueue).toHaveLength(1);
+			expect(transport.sentQueue[0]?.type).toBe("chat.queue");
+			expect(transport.sentQueue[0]?.conversationId).toBe(CONV_ID);
+			expect(transport.sentQueue[0]?.text).toBe("steer left");
+
+			store.dispose();
+		});
+
+		it("trims whitespace before sending", () => {
+			const transport = createFakeTransport();
+			const historySync = createFakeHistorySync();
+			const metricsSync = createFakeMetricsSync();
+			const cache = createFakeCache();
+			const store = createChatStore({
+				conversationId: CONV_ID,
+				transport: transport.impl,
+				historySync: historySync.impl,
+				metricsSync: metricsSync.impl,
+				cache: cache.impl,
+			});
+
+			store.queueMessage("  padded  ");
+
+			expect(transport.sentQueue[0]?.text).toBe("padded");
+
+			store.dispose();
+		});
+
+		it("does not send for empty/whitespace-only text", () => {
+			const transport = createFakeTransport();
+			const historySync = createFakeHistorySync();
+			const metricsSync = createFakeMetricsSync();
+			const cache = createFakeCache();
+			const store = createChatStore({
+				conversationId: CONV_ID,
+				transport: transport.impl,
+				historySync: historySync.impl,
+				metricsSync: metricsSync.impl,
+				cache: cache.impl,
+			});
+
+			store.queueMessage("   ");
+			store.queueMessage("");
+
+			expect(transport.sentQueue).toHaveLength(0);
+
+			store.dispose();
+		});
+
+		it("does NOT optimistically echo into the transcript (the surface carries the queue)", () => {
+			const transport = createFakeTransport();
+			const historySync = createFakeHistorySync();
+			const metricsSync = createFakeMetricsSync();
+			const cache = createFakeCache();
+			const store = createChatStore({
+				conversationId: CONV_ID,
+				transport: transport.impl,
+				historySync: historySync.impl,
+				metricsSync: metricsSync.impl,
+				cache: cache.impl,
+			});
+
+			store.queueMessage("queued steering message");
+
+			expect(store.chunks).toHaveLength(0); // no transcript echo
+
+			store.dispose();
+		});
+	});
+
 	it("chat.error sets error", () => {
 		const transport = createFakeTransport();
 		const historySync = createFakeHistorySync();
@@ -1244,6 +1331,195 @@ describe("createChatStore", () => {
 		});
 		expect(store.chunks[0]?.seq).toBe(426);
 		expect(store.chunks).toHaveLength(76);
+
+		store.dispose();
+	});
+
+	it("setChatLimit: lowering the limit trims older committed chunks live", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		// Load 80 committed chunks (under the limit — no trim yet).
+		historySync.returnChunks = Array.from({ length: 80 }, (_, i) => makeStoredChunk(i + 1));
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+		await vi.waitFor(() => {
+			expect(store.chunks).toHaveLength(80);
+		});
+
+		// Lower the limit to 10: 80 → unload ceil(10/4)=3 per quarter, needs
+		// ceil((80-10)/3)=24 quarters → drop min(72, 80)=72 → 8 remain.
+		await store.setChatLimit(10);
+		expect(store.chunks).toHaveLength(8);
+		expect(store.chunks[0]?.seq).toBe(73);
+		expect(store.hasEarlier).toBe(true);
+
+		store.dispose();
+	});
+
+	it("setChatLimit: raising the limit refills older history up to the fresh-load window", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		// Cache holds 200 chunks; load at limit 100 → window 75 → seqs 126..200.
+		await cache.impl.commit(
+			CONV_ID,
+			Array.from({ length: 200 }, (_, i) => makeStoredChunk(i + 1)),
+		);
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+		await store.load();
+		expect(store.chunks).toHaveLength(75);
+		expect(store.chunks[0]?.seq).toBe(126);
+		expect(store.hasEarlier).toBe(true);
+
+		// Raise to 200 → window floor(0.75×200)=150 → refill 75 older chunks
+		// (seqs 51..125) from the cache. No server backfill (cache is deep enough).
+		await store.setChatLimit(200);
+		expect(historySync.calls).toHaveLength(1); // the load-time tail sync only
+		expect(store.chunks).toHaveLength(150);
+		expect(store.chunks[0]?.seq).toBe(51);
+		expect(store.hasEarlier).toBe(true); // 51 > 1
+
+		store.dispose();
+	});
+
+	it("setChatLimit: raising backfills from the server when the cache is too shallow", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		// Server holds 200; cold-cache load at limit 100 → window 75 → seqs 126..200.
+		historySync.returnChunks = Array.from({ length: 200 }, (_, i) => makeStoredChunk(i + 1));
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+		await store.load();
+		expect(store.chunks[0]?.seq).toBe(126);
+
+		// Raise to 200 → want 75 older. Cache only holds 126..200 → backfill
+		// seqs 51..125 from the server (CR-5 ?beforeSeq=126&limit=75).
+		await store.setChatLimit(200);
+		const backfill = historySync.calls[1];
+		expect(backfill?.window).toEqual({ beforeSeq: 126, limit: 75 });
+		expect(store.chunks).toHaveLength(150);
+		expect(store.chunks[0]?.seq).toBe(51);
+
+		store.dispose();
+	});
+
+	it("setChatLimit: raising refills all available older history (down to the origin)", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		// 101 chunks → one trim pass drops 25 → 76 remain (seqs 26..101).
+		historySync.returnChunks = Array.from({ length: 101 }, (_, i) => makeStoredChunk(i + 1));
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+		await vi.waitFor(() => {
+			expect(store.chunks).toHaveLength(76);
+		});
+		expect(store.chunks[0]?.seq).toBe(26);
+		expect(store.hasEarlier).toBe(true);
+
+		// Raise to 500 → window 375 → want 299 older. The cache holds only
+		// seqs 1..25 below the window (no more server-side) → restore all 25 →
+		// 101 loaded, reaching the origin.
+		await store.setChatLimit(500);
+		expect(store.chunks).toHaveLength(101);
+		expect(store.chunks[0]?.seq).toBe(1);
+		expect(store.hasEarlier).toBe(false);
+
+		store.dispose();
+	});
+
+	it("setChatLimit: raising is a no-op when the window already starts at the origin", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		await cache.impl.commit(
+			CONV_ID,
+			Array.from({ length: 50 }, (_, i) => makeStoredChunk(i + 1)),
+		);
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+		await store.load(); // only 50 chunks → all loaded, window starts at seq 1
+		expect(store.chunks).toHaveLength(50);
+		expect(store.hasEarlier).toBe(false);
+		const callsAfterLoad = historySync.calls.length;
+
+		await store.setChatLimit(500); // raise → refill no-ops (oldest = 1)
+		expect(store.chunks).toHaveLength(50);
+		expect(store.chunks[0]?.seq).toBe(1);
+		expect(historySync.calls).toHaveLength(callsAfterLoad); // no backfill
+
+		store.dispose();
+	});
+
+	it("setChatLimit: a nonsensical value is normalized (no crash, no trim)", async () => {
+		const transport = createFakeTransport();
+		const historySync = createFakeHistorySync();
+		const metricsSync = createFakeMetricsSync();
+		const cache = createFakeCache();
+		const store = createChatStore({
+			conversationId: CONV_ID,
+			transport: transport.impl,
+			historySync: historySync.impl,
+			metricsSync: metricsSync.impl,
+			cache: cache.impl,
+			chatLimit: 100,
+		});
+
+		historySync.returnChunks = Array.from({ length: 50 }, (_, i) => makeStoredChunk(i + 1));
+		store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+		store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+		await vi.waitFor(() => {
+			expect(store.chunks).toHaveLength(50);
+		});
+
+		// NaN normalizes to the default (256). prev was 100 → raise → refill,
+		// but the loaded window already starts at seq 1 (origin) → no-op.
+		await store.setChatLimit(Number.NaN);
+		expect(store.chunks).toHaveLength(50);
 
 		store.dispose();
 	});

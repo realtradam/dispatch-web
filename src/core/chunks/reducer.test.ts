@@ -7,6 +7,7 @@ import type {
 	TurnReasoningDeltaEvent,
 	TurnSealedEvent,
 	TurnStartEvent,
+	TurnSteeringEvent,
 	TurnTextDeltaEvent,
 	TurnToolCallEvent,
 	TurnToolResultEvent,
@@ -431,6 +432,59 @@ describe("foldEvent — user-message (the turn's user prompt; backend CR-3)", ()
 		s = foldEvent(s, textDelta("t1", "partial"));
 		s = foldEvent(s, userMessage("new prompt"));
 		// the partial assistant text was flushed to provisional, then the user prompt appended
+		expect(s.accumulating).toBeNull();
+		const roles = selectChunks(s).map((c) => c.role);
+		expect(roles).toEqual(["assistant", "user"]);
+	});
+});
+
+describe("foldEvent — steering (mid-turn steering injection)", () => {
+	const steering = (text: string): TurnSteeringEvent => ({
+		type: "steering",
+		conversationId: "c1",
+		turnId: "t1",
+		text,
+	});
+
+	it("appends a provisional user bubble + keeps generating", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, toolResult("t1", "tc1", "read", "output"));
+		s = foldEvent(s, steering("actually, use a different file"));
+		const chunks = selectChunks(s);
+		const last = chunks[chunks.length - 1];
+		expect(last?.role).toBe("user");
+		expect(last?.chunk).toEqual({ type: "text", text: "actually, use a different file" });
+		expect(last?.provisional).toBe(true);
+		expect(s.generating).toBe(true);
+	});
+
+	it("does NOT dedup against the sender's queue (unlike user-message)", () => {
+		// The sender enqueued the message via `chat.queue` — the queue SURFACE
+		// showed it. The `steering` event places it in the transcript; the surface
+		// separately clears on drain. No de-dup here (the transcript never showed
+		// the queued message).
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, steering("steer once"));
+		s = foldEvent(s, steering("steer again"));
+		const users = selectChunks(s).filter((c) => c.role === "user");
+		expect(users).toHaveLength(2);
+	});
+
+	it("ignores an empty steering event", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, steering(""));
+		expect(selectChunks(s)).toHaveLength(0);
+		expect(s.generating).toBe(true); // turn-start already set it
+	});
+
+	it("flushes an accumulating chunk before appending the steering bubble", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "partial response"));
+		s = foldEvent(s, steering("mid-turn correction"));
 		expect(s.accumulating).toBeNull();
 		const roles = selectChunks(s).map((c) => c.role);
 		expect(roles).toEqual(["assistant", "user"]);

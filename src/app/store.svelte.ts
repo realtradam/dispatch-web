@@ -60,6 +60,11 @@ export type ReasoningEffortResult =
 	| { readonly ok: true; readonly reasoningEffort: ReasoningEffort }
 	| { readonly ok: false; readonly error: string };
 
+/** Outcome of persisting a chat-limit setting (localStorage; FE-local). */
+export type ChatLimitResult =
+	| { readonly ok: true; readonly chatLimit: number }
+	| { readonly ok: false; readonly error: string };
+
 export interface AppStore {
 	readonly tabs: readonly Tab[];
 	readonly activeConversationId: string | null;
@@ -73,6 +78,14 @@ export interface AppStore {
 	/** The current spec for one surface by id (discovery-by-id), or null if absent. */
 	surface(surfaceId: string): SurfaceSpec | null;
 	send(text: string): void;
+	/**
+	 * Enqueue a steering message onto the focused conversation's queue
+	 * (`chat.queue` WS op). While a turn is generating, the message is delivered
+	 * mid-turn at the next tool-result boundary; when idle, the server
+	 * auto-starts a turn (equivalent to `send`). Safe to offer whenever the user
+	 * wants to add input — the server owns the idle-vs-generating decision.
+	 */
+	queueMessage(text: string): void;
 	selectModel(model: string): void;
 	newDraft(): void;
 	selectTab(conversationId: string): void;
@@ -109,6 +122,16 @@ export interface AppStore {
 	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
 	 */
 	lspStatus(): Promise<LspResult | null>;
+	/** The persisted chat limit (max loaded chunks per conversation). */
+	readonly chatLimit: number;
+	/**
+	 * Persist + live-apply a new chat limit: writes `dispatch.chatLimit` to
+	 * localStorage and propagates to every live chat store (trim if lower,
+	 * deferred via the unload gate while a reader is scrolled up; no-op if
+	 * higher — page unloaded history back in via "Show earlier"). Stores created
+	 * afterwards pick the new limit up at creation. Always succeeds (FE-local).
+	 */
+	setChatLimit(limit: number): Promise<ChatLimitResult>;
 	/**
 	 * Wire the chat-limit unload gate (composition-root injection, called once by
 	 * the shell after it owns the scroll region): unloading old chunks is allowed
@@ -189,15 +212,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	const tabsStore: TabsStore = createTabsStore(storageAdapter);
 
 	// The chat limit (max loaded chunks per conversation) — a persisted local
-	// setting with no UI yet: edit `localStorage["dispatch.chatLimit"]`. The
-	// default is written back on first run so the knob is discoverable.
+	// setting surfaced in the sidebar's Settings view. Reactive so the field +
+	// any live-apply re-trim update together. The default is written back on
+	// first run so the knob is discoverable in localStorage too.
 	const chatLimitStore = createLocalStore<number>("dispatch.chatLimit", {
 		storage: localStorageOpt,
 	});
 	const storedChatLimit = chatLimitStore.load();
-	const chatLimit = normalizeChatLimit(storedChatLimit);
+	const normalizedChatLimit = normalizeChatLimit(storedChatLimit);
+	let chatLimit = $state(normalizedChatLimit);
 	if (storedChatLimit === null) {
-		chatLimitStore.save(chatLimit);
+		chatLimitStore.save(normalizedChatLimit);
 	}
 
 	// Unload gate — attached by the shell once it owns the scroll region (see
@@ -225,7 +250,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			historySync,
 			metricsSync,
 			cache,
-			chatLimit,
+			// Read from the persisted store (kept in sync with the reactive `chatLimit`
+			// by `setChatLimit` + boot) so this snapshot doesn't reference the `$state`
+			// — each store captures its limit at creation; live updates go through
+			// `setChatLimit`.
+			chatLimit: normalizeChatLimit(chatLimitStore.load()),
 			canUnload: () => (unloadGate === null ? true : unloadGate()),
 		});
 	}
@@ -516,6 +545,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get reasoningEffort(): ReasoningEffort | null {
 			return reasoningEffort;
 		},
+		get chatLimit(): number {
+			return chatLimit;
+		},
 		get currentConversationId(): string {
 			return workspaceConversationId();
 		},
@@ -553,6 +585,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			} else {
 				activeChat.send(text);
 			}
+		},
+
+		queueMessage(text: string): void {
+			// Only offered while generating (Composer switches to `chat.queue`
+			// when `status === "running"`), so a draft (never generating) never
+			// reaches here. `chat.queue` auto-starts a turn if idle, so even a race
+			// (turn sealed between the status read and the send) is safe — the
+			// server starts a fresh turn with the message as its opening prompt.
+			activeChat.queueMessage(text);
 		},
 
 		selectModel(model: string): void {
@@ -693,6 +734,24 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 					error: err instanceof Error ? err.message : "Set reasoning effort request failed",
 				};
 			}
+		},
+
+		async setChatLimit(limit: number): Promise<ChatLimitResult> {
+			const next = normalizeChatLimit(limit);
+			chatLimitStore.save(next);
+			chatLimit = next;
+			// Propagate to every live chat store. The ACTIVE one is awaited so its
+			// refill (on a raise) lands before the caller returns — letting the
+			// shell preserve scroll over the prepended older chunks. Background
+			// stores refill fire-and-forget. Future stores pick the new limit up at
+			// creation (via the persisted store).
+			const active = getActiveChat();
+			await active.setChatLimit(next);
+			for (const s of chatStores.values()) {
+				if (s !== active) void s.setChatLimit(next);
+			}
+			if (draftStore !== active) void draftStore.setChatLimit(next);
+			return { ok: true, chatLimit: next };
 		},
 
 		async lspStatus(): Promise<LspResult | null> {

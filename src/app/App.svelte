@@ -19,11 +19,17 @@
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
 	import {
+		ChatLimitField,
+		manifest as settingsManifest,
+		type ChatLimitSaveResult,
+	} from "../features/settings";
+	import {
 		createSmartScrollController,
 		manifest as smartScrollManifest,
 		ScrollToBottom,
 	} from "../features/smart-scroll";
 	import { manifest as surfaceHostManifest, SurfaceView } from "../features/surface-host";
+	import { parseMessageQueuePayload } from "../features/surface-host/logic/message-queue";
 	import { manifest as tabsManifest, TabBar } from "../features/tabs";
 	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
 	import {
@@ -42,6 +48,10 @@
 	// and keep it out of the generic Extensions surface list — SurfaceView itself
 	// stays fully generic (it never switches on a surface id).
 	const CACHE_WARMING_ID = "cache-warming";
+	// The message-queue extension's per-conversation surface (steering). Pulled
+	// out of the generic Extensions list and rendered as a compact panel above the
+	// composer — pending steering messages are tied to the chat, not the sidebar.
+	const MESSAGE_QUEUE_ID = "message-queue";
 
 	// The view kinds offered in the sidebar's dropdown. Generic data — the
 	// `viewContent` snippet below maps each kind id to its renderer.
@@ -50,10 +60,11 @@
 		{ id: "lsp", label: "Language Servers" },
 		{ id: "extensions", label: "Extensions" },
 		{ id: "cache-warming", label: "Cache Warming" },
+		{ id: "settings", label: "Settings" },
 	] as const;
 
-	// Default sidebar layout: Model panel on top, then Language Servers, Extensions, Cache Warming.
-	const initialViews = ["model", "lsp", "extensions", "cache-warming"] as const;
+	// Default sidebar layout: Model, Language Servers, Extensions, Cache Warming, Settings.
+	const initialViews = ["model", "lsp", "extensions", "cache-warming", "settings"] as const;
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -71,6 +82,7 @@
 		cacheWarmingManifest,
 		workspaceManifest,
 		smartScrollManifest,
+		settingsManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -120,6 +132,18 @@
 		smartScroll.contentChanged();
 	});
 
+	// The message-queue surface spec + whether it currently has pending messages
+	// (steering). Rendered as a compact panel above the composer only when non-empty.
+	const messageQueueSpec = $derived(store.surface(MESSAGE_QUEUE_ID));
+	const hasQueuedMessages = $derived.by(() => {
+		const spec = messageQueueSpec;
+		if (spec === null) return false;
+		const field = spec.fields.find((f) => f.kind === "custom" && f.rendererId === MESSAGE_QUEUE_ID);
+		if (field === undefined || field.kind !== "custom") return false;
+		const data = parseMessageQueuePayload(field.payload);
+		return data !== null && data.messages.length > 0;
+	});
+
 	// Conversation/tab switch → snap to the bottom of the new transcript.
 	$effect(() => {
 		void store.activeConversationId;
@@ -138,6 +162,10 @@
 
 	function handleSend(text: string) {
 		store.send(text);
+	}
+
+	function handleQueue(text: string) {
+		store.queueMessage(text);
 	}
 
 	function handleSelectModel(model: string) {
@@ -165,6 +193,25 @@
 		if (result === null) return null;
 		return result.ok
 			? { ok: true, reasoningEffort: result.reasoningEffort }
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's chat-limit result to the settings feature's port. On a
+	// raise the active chat refills (prepends older history); preserve the
+	// reader's viewport over the prepend (the manual analogue of CSS scroll
+	// anchoring), exactly like `handleShowEarlier`.
+	async function saveChatLimit(value: number): Promise<ChatLimitSaveResult> {
+		const el = transcriptEl;
+		const prevHeight = el?.scrollHeight ?? 0;
+		const prevTop = el?.scrollTop ?? 0;
+		const result = await store.setChatLimit(value);
+		await tick();
+		if (el) {
+			const delta = el.scrollHeight - prevHeight;
+			if (delta > 0) el.scrollTop = prevTop + delta;
+		}
+		return result.ok
+			? { ok: true, chatLimit: result.chatLimit }
 			: { ok: false, error: result.error };
 	}
 
@@ -262,8 +309,18 @@
 			<ScrollToBottom show={smartScroll.showButton} onResume={() => smartScroll.resume()} />
 		</div>
 
+		{#if hasQueuedMessages && messageQueueSpec !== null}
+			<!-- Pending steering messages (the message-queue surface). Rendered via
+			     the generic SurfaceView (dispatches on rendererId, never surface id);
+			     only shown when the queue is non-empty — an idle queue is hidden. -->
+			<div class="px-4 pt-2">
+				<SurfaceView spec={messageQueueSpec} onInvoke={handleInvoke} />
+			</div>
+		{/if}
+
 		<Composer
 			onSend={handleSend}
+			onQueue={handleQueue}
 			contextSize={store.activeChat.currentContextSize}
 			status={store.activeChat.error
 				? "error"
@@ -329,7 +386,7 @@
 		</section>
 		<section class="mt-4 flex flex-col gap-3">
 			<h3 class="text-xs font-semibold uppercase opacity-60">Surfaces</h3>
-			{#each store.surfaces.filter((s) => s.id !== CACHE_WARMING_ID) as spec (spec.id)}
+			{#each store.surfaces.filter((s) => s.id !== CACHE_WARMING_ID && s.id !== MESSAGE_QUEUE_ID) as spec (spec.id)}
 				<SurfaceView {spec} onInvoke={handleInvoke} />
 			{/each}
 		</section>
@@ -344,5 +401,11 @@
 				{warmNow}
 			/>
 		{/key}
+	{:else if kind === "settings"}
+		<!-- FE-local settings. Not conversation-scoped (no {#key}: the chat limit is
+		     global), so the field stays mounted across tab switches. -->
+		<div class="flex flex-col gap-3">
+			<ChatLimitField chatLimit={store.chatLimit} save={saveChatLimit} />
+		</div>
 	{/if}
 {/snippet}

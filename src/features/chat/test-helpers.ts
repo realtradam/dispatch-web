@@ -1,19 +1,29 @@
+import type { ChatQueueMessage, ChatSendMessage } from "@dispatch/transport-contract";
 import type { StoredChunk } from "@dispatch/wire";
 import type { ConversationCache } from "../conversation-cache";
 import type { ChatTransport, HistorySync, HistoryWindow, MetricsSync } from "./ports";
 
 export interface FakeTransport {
-	readonly sent: import("@dispatch/transport-contract").ChatSendMessage[];
+	/** All `chat.send` messages sent through the fake transport. */
+	readonly sent: ChatSendMessage[];
+	/** All `chat.queue` messages sent through the fake transport. */
+	readonly sentQueue: ChatQueueMessage[];
 	readonly impl: ChatTransport;
 }
 
 export function createFakeTransport(): FakeTransport {
-	const sent: import("@dispatch/transport-contract").ChatSendMessage[] = [];
+	const sent: ChatSendMessage[] = [];
+	const sentQueue: ChatQueueMessage[] = [];
 	return {
 		sent,
+		sentQueue,
 		impl: {
 			send(msg) {
-				sent.push(msg);
+				if (msg.type === "chat.queue") {
+					sentQueue.push(msg);
+				} else {
+					sent.push(msg);
+				}
 			},
 		},
 	};

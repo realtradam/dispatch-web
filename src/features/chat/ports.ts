@@ -1,12 +1,17 @@
 import type {
+	ChatQueueMessage,
 	ChatSendMessage,
 	ConversationHistoryResponse,
 	ConversationMetricsResponse,
 } from "@dispatch/transport-contract";
 
-/** Injected transport port — sends chat messages to the server. */
+/**
+ * Injected transport port — sends chat messages to the server. Accepts both
+ * `chat.send` (start a turn) and `chat.queue` (enqueue a steering message;
+ * auto-starts a turn if idle).
+ */
 export interface ChatTransport {
-	send(msg: ChatSendMessage): void;
+	send(msg: ChatSendMessage | ChatQueueMessage): void;
 }
 
 /**

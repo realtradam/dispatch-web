@@ -2,6 +2,7 @@
 	import type { InvokeMessage, SurfaceSpec } from "@dispatch/ui-contract";
 	import { groupRenderFields, planSurface } from "../logic/plan";
 	import Button from "./Button.svelte";
+	import MessageQueueList from "./MessageQueueList.svelte";
 	import Number from "./Number.svelte";
 	import Progress from "./Progress.svelte";
 	import Selector from "./Selector.svelte";
@@ -40,6 +41,8 @@
 			     unknown ids gracefully render nothing. -->
 			{#if group.field.rendererId === "table"}
 				<SurfaceTable payload={group.field.payload} />
+			{:else if group.field.rendererId === "message-queue"}
+				<MessageQueueList payload={group.field.payload} />
 			{/if}
 		{/if}
 	{/each}
