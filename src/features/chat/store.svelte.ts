@@ -1,9 +1,10 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	ChatQueueMessage,
 	ChatSendMessage,
 } from "@dispatch/transport-contract";
-import type { ChatMessage } from "@dispatch/wire";
+import type { ChatMessage, StoredChunk } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "../../core/chunks";
 import {
 	appendUserMessage,
@@ -89,7 +90,29 @@ export interface ChatStore {
 	readonly thinkingKeyBase: number;
 	handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
 	send(text: string): void;
+	/**
+	 * Enqueue a steering message onto the conversation's queue (`chat.queue`
+	 * WS op). While a turn is generating, the message is delivered mid-turn at
+	 * the next tool-result boundary (a `steering` `AgentEvent` fires + the
+	 * message-queue surface updates). When no turn is active, the server
+	 * auto-starts a turn with the message as its opening prompt (equivalent to
+	 * `chat.send`). No optimistic transcript echo — the queue SURFACE carries the
+	 * pending message until drain; the `steering` event places it in the
+	 * transcript. `text` must be non-empty (the server 400/errors otherwise).
+	 */
+	queueMessage(text: string): void;
 	setModel(model: string): void;
+	/**
+	 * Update the chat limit LIVE: re-normalizes, then adjusts the loaded window.
+	 * Lowering it unloads older committed chunks (deferred via the gate while the
+	 * reader is scrolled up, catching up on the next mutation). Raising it
+	 * REFILLS older history (cache first, then CR-5 `?beforeSeq=`) up to the
+	 * fresh-load window (`initialWindowSize` = 75% of the limit) — the same
+	 * window a fresh `load()` would show — so upping the limit reveals more
+	 * history instead of leaving a partial view. New deltas + loads use the new
+	 * limit. The refill awaits, so a caller can preserve scroll over the prepend.
+	 */
+	setChatLimit(limit: number): Promise<void>;
 	load(): Promise<void>;
 	/**
 	 * Page one unload-unit (`ceil(limit/4)`) of earlier history back in — the
@@ -117,7 +140,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 	let _model = $state<string | undefined>(deps.model);
 	let disposed = false;
 
-	const chatLimit = normalizeChatLimit(deps.chatLimit);
+	let chatLimit = normalizeChatLimit(deps.chatLimit);
 
 	/**
 	 * Enforce the chat limit after a transcript mutation — unless the injected
@@ -163,6 +186,52 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		} catch {
 			// Metrics fetch failure must not block history sync or throw;
 			// live-folded metrics remain intact.
+		}
+	}
+
+	/**
+	 * Fetch up to `want` older chunks (seq < `oldest`) — cache first, then a
+	 * CR-5 `?beforeSeq=&limit=` server backfill when the cache is too shallow,
+	 * persisting it so the next read is local. Returns every locally-known
+	 * chunk older than `oldest` (the caller — `restoreEarlier` — takes the
+	 * newest `count` of them). Shared by `showEarlier` and the raise-refill.
+	 */
+	async function backfillOlder(oldest: number, want: number): Promise<readonly StoredChunk[]> {
+		let earlier = (await deps.cache.load(deps.conversationId)).filter((c) => c.seq < oldest);
+		const oldestKnown = earlier[0]?.seq ?? oldest;
+		if (earlier.length < want && oldestKnown > 1) {
+			const res = await deps.historySync(deps.conversationId, 0, {
+				beforeSeq: oldestKnown,
+				limit: want - earlier.length,
+			});
+			const merged = await deps.cache.commit(deps.conversationId, res.chunks);
+			earlier = merged.filter((c) => c.seq < oldest);
+		}
+		return earlier;
+	}
+
+	/**
+	 * Refill toward the fresh-load window after a limit RAISE: pull older
+	 * history (cache first, then server) so the loaded set grows to match what a
+	 * fresh `load()` would show at the new limit. No-op when already at the
+	 * origin (seq 1) or already within the window. `restoreEarlier` re-derives
+	 * the window start at apply time, so a delta landing during the await can't
+	 * corrupt the merge. NOT gated (refilling prepends above the viewport; the
+	 * caller preserves scroll position).
+	 */
+	async function refill(): Promise<void> {
+		if (disposed) return;
+		const oldest = transcript.committed[0]?.seq ?? transcript.hiddenBeforeSeq;
+		if (oldest <= 1) return;
+		const want = initialWindowSize(chatLimit) - transcript.committed.length;
+		if (want <= 0) return;
+		try {
+			const earlier = await backfillOlder(oldest, want);
+			if (earlier.length === 0) return;
+			transcript = restoreEarlier(transcript, earlier, want);
+			_error = null;
+		} catch (err) {
+			_error = err instanceof Error ? err.message : String(err);
 		}
 	}
 
@@ -230,8 +299,29 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 			deps.transport.send(msg);
 		},
 
+		queueMessage(text: string): void {
+			const trimmed = text.trim();
+			if (trimmed.length === 0) return;
+			const msg: ChatQueueMessage = {
+				type: "chat.queue",
+				conversationId: deps.conversationId,
+				text: trimmed,
+			};
+			deps.transport.send(msg);
+		},
+
 		setModel(model: string): void {
 			_model = model;
+		},
+
+		async setChatLimit(limit: number): Promise<void> {
+			const prev = chatLimit;
+			chatLimit = normalizeChatLimit(limit);
+			if (chatLimit < prev) {
+				maybeTrim();
+			} else if (chatLimit > prev) {
+				await refill();
+			}
 		},
 
 		async load(): Promise<void> {
@@ -256,23 +346,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 			if (oldest <= 1) return;
 			const want = unloadCount(chatLimit);
 			try {
-				let earlier = (await deps.cache.load(deps.conversationId)).filter((c) => c.seq < oldest);
-				// The local cache may not reach far enough back (a server-windowed
-				// fresh load cached only the window): page the missing OLDER run in
-				// from the server (CR-5 `?beforeSeq=&limit=`) and persist it, so the
-				// next page-in is local. Seqs are gap-free, so the fetched run is
-				// contiguous with what we hold. NOTE: the backfill response's
-				// `latestSeq` is a window cursor — never fed to the tail cursor
-				// (ours derives from the cache's max seq).
-				const oldestKnown = earlier[0]?.seq ?? oldest;
-				if (earlier.length < want && oldestKnown > 1) {
-					const res = await deps.historySync(deps.conversationId, 0, {
-						beforeSeq: oldestKnown,
-						limit: want - earlier.length,
-					});
-					const merged = await deps.cache.commit(deps.conversationId, res.chunks);
-					earlier = merged.filter((c) => c.seq < oldest);
-				}
+				const earlier = await backfillOlder(oldest, want);
 				transcript = restoreEarlier(transcript, earlier, want);
 				_error = null;
 			} catch (err) {

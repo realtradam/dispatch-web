@@ -8,10 +8,18 @@
 
 	let {
 		onSend,
+		onQueue,
 		contextSize = undefined,
 		status = "idle",
 	}: {
 		onSend: (text: string) => void;
+		/**
+		 * Enqueue a steering message (`chat.queue`). When provided AND the status
+		 * is `running`, the send button becomes a "Queue" button that steers the
+		 * in-flight turn instead of starting a new one. When absent, `onSend` is
+		 * used regardless (tests / non-steering contexts).
+		 */
+		onQueue?: (text: string) => void;
 		// Current context occupancy (latest turn's contextSize), or `undefined`
 		// when unknown — the status bar then shows "— tokens", never 0%.
 		contextSize?: number | undefined;
@@ -25,6 +33,13 @@
 	const hasText = $derived(text.trim().length > 0);
 	const usage = $derived(computeContextUsage(contextSize, MAX_CONTEXT));
 	const hasUsage = $derived(contextSize !== undefined);
+
+	// While a turn is generating, the send button becomes a "Queue" button that
+	// enqueues a steering message (`chat.queue`) instead of starting a new turn
+	// (`chat.send`). Falls back to `onSend` when no `onQueue` is wired.
+	const steering = $derived(status === "running" && onQueue !== undefined);
+	const submitLabel = $derived(steering ? "Queue" : "Send");
+	const placeholder = $derived(steering ? "Steer the conversation..." : "Type a message...");
 
 	// As the window fills, escalate color: calm → warning → danger.
 	function fillClass(pct: number): string {
@@ -58,7 +73,11 @@
 	function handleSubmit(): void {
 		const trimmed = text.trim();
 		if (trimmed.length === 0) return;
-		onSend(trimmed);
+		if (steering) {
+			onQueue?.(trimmed);
+		} else {
+			onSend(trimmed);
+		}
 		text = "";
 	}
 
@@ -84,12 +103,12 @@
 			class="textarea textarea-bordered flex-1 resize-none leading-normal !min-h-0 h-auto"
 			bind:value={text}
 			onkeydown={handleKeydown}
-			placeholder="Type a message..."
+			placeholder={placeholder}
 			rows="1"
 			aria-label="Message input"
 		></textarea>
 		<button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!hasText}>
-			Send
+			{submitLabel}
 		</button>
 	</div>
 

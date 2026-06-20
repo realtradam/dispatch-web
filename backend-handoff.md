@@ -5,17 +5,37 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-12 (reasoning-effort handoff consumed). **FE is current on
-`ui-contract@0.2.0` / `transport-contract@0.11.0` / `wire@0.7.0`.** All handoffs to date are
+_Last updated: 2026-06-21 (message-queue + steering handoff consumed). **FE is current on
+`ui-contract@0.2.0` / `transport-contract@0.12.0` / `wire@0.8.0`.** All handoffs to date are
 consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming
 (incl. authoritative timer + retention + cache-rate fix + the CR-4 lifecycle below),
 **per-conversation cwd + LSP status**, **context size**, **turn continuity + multi-client live
-view**, the **chat limit + CR-5 history windowing**, and the **reasoning effort
-(thinking-depth knob)** (below).
+view**, the **chat limit + CR-5 history windowing**, the **reasoning effort
+(thinking-depth knob)**, and the **message queue + steering** (below).
 **Open asks: NONE.** CR-1/CR-2/CR-4/CR-5 all RESOLVED ✅ (see §2); §3 lists likely next asks.
 **CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
 `user-message` turn event; FE re-pinned + consumption live.
 The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
+
+**Message-queue + steering handoff (`frontend-message-queue-handoff.md`) → CONSUMED ✅.**
+Re-pinned `wire@0.7.0→0.8.0` + `transport-contract@0.11.0→0.12.0` (`ui-contract` unchanged —
+the queue uses the existing `custom` surface field kind); re-mirrored both
+`.dispatch/*.reference.md`; added "message queue" + "steering" to FE `GLOSSARY.md`. FE work:
+(a) `core/chunks/reducer.ts` folds the new `steering` `AgentEvent` into the transcript as a
+provisional user bubble (after the tool-result it followed; no de-dup — the queue surface, not
+the transcript, carried the pending message); `core/wire/conformance.ts` exhaustiveness guards
+updated for `steering` + `chat.queue`; (b) a `rendererId: "message-queue"` custom renderer
+(`surface-host/logic/message-queue.ts` pure parser + `MessageQueueList.svelte`) renders
+`QueuePayload.messages` (`QueuedMessage[]`); (c) the `message-queue` surface is pulled out of
+the generic Extensions sidebar list and rendered as a compact panel above the Composer (only
+when the queue is non-empty — an idle queue is hidden); (d) `ChatStore.queueMessage(text)` +
+`AppStore.queueMessage(text)` send `chat.queue { conversationId, text }` (trim/validate
+non-empty client-side too); (e) the Composer switches to `chat.queue` while `generating`
+(button label → "Queue", placeholder → "Steer the conversation..."). Carry-to-new-turn needs
+no special handling (surfaces as a normal new turn). **NOT yet live-probed** — the handoff
+flags the live end-to-end steering flow (a real `chat.queue` → tool-call → `steering` event
+against a tool-calling model) as not yet exercised; worth a live smoke. 664 tests green. NO
+new backend ask._
 
 **Reasoning-effort handoff (`frontend-reasoning-effort-handoff.md`) → CONSUMED ✅
 (curl-probed live: GET null on unseen id · PUT `xhigh` → echo + sticky GET · bad level → 400
@@ -81,13 +101,13 @@ backend ask — but the max-limit denominator is now a live FE need; see §3.
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.7.0`; `transport-contract@0.11.0`**.
+Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.8.0`; `transport-contract@0.12.0`**.
 
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`**, **`ReasoningEffort`** |
-| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`**, **`ReasoningEffort`**, **`QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`** |
+| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + **`QueueRequest`/`QueueResponse`/`ChatQueueMessage`** + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` ·
@@ -95,12 +115,14 @@ Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `GET /conversations/:id/metrics` · `GET`/`PUT /conversations/:id/cwd` ·
 `GET`/`PUT /conversations/:id/reasoning-effort` (sticky thinking-depth; `null` ⇒ default `high`) ·
 `GET /conversations/:id/lsp` · `POST /chat/warm` · `POST /conversations/:id/close` (explicit
-tab-close: abort turn + stop/disable warming) · WS `chat.send`→`chat.delta` ·
-WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live).
+tab-close: abort turn + stop/disable warming) · **`POST /conversations/:id/queue`** (enqueue
+steering message; auto-starts a turn if idle) · WS `chat.send`→`chat.delta` ·
+WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live) ·
+**WS `chat.queue`** (enqueue steering; fire-and-forget — surface updates on success).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
-`transport-contract@0.11.0` / `wire@0.7.0`).
+`transport-contract@0.12.0` / `wire@0.8.0`).
 
 ## 2. Open asks FOR THE BACKEND
 

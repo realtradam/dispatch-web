@@ -75,6 +75,7 @@ describe("classifies every AgentEvent type", () => {
 		{ type: "error", conversationId: "c1", turnId: "t1", message: "oops" },
 		{ type: "done", conversationId: "c1", turnId: "t1", reason: "complete" },
 		{ type: "turn-sealed", conversationId: "c1", turnId: "t1" },
+		{ type: "steering", conversationId: "c1", turnId: "t1", text: "steer mid-turn" },
 	];
 
 	it("returns a stable label for every AgentEvent.type variant", () => {
@@ -93,11 +94,12 @@ describe("classifies every AgentEvent type", () => {
 			"error",
 			"done",
 			"turn-sealed",
+			"steering",
 		]);
 	});
 
-	it("covers all 13 AgentEvent variants", () => {
-		expect(samples).toHaveLength(13);
+	it("covers all 14 AgentEvent variants", () => {
+		expect(samples).toHaveLength(14);
 	});
 });
 
@@ -152,6 +154,7 @@ describe("classifies every WsClientMessage type", () => {
 			{ type: "chat.send" as const, message: "hi" },
 			{ type: "chat.subscribe" as const, conversationId: "c1" },
 			{ type: "chat.unsubscribe" as const, conversationId: "c1" },
+			{ type: "chat.queue" as const, conversationId: "c1", text: "steer" },
 		];
 		const labels = msgs.map(assertWsClientMessageExhaustive);
 		expect(labels).toEqual([
@@ -161,6 +164,7 @@ describe("classifies every WsClientMessage type", () => {
 			"chat.send",
 			"chat.subscribe",
 			"chat.unsubscribe",
+			"chat.queue",
 		]);
 	});
 });

@@ -83,6 +83,8 @@ export function applyHistory(
  * - `reasoning-delta` extends the current accumulating ThinkingChunk (or starts one).
  * - `tool-call` / `tool-result` / `error` finalize any accumulating chunk and
  *   add a new provisional chunk.
+ * - `steering` appends a user bubble mid-turn (drained from the message queue
+ *   at a tool-result boundary; the queue surface separately clears on drain).
  * - `usage` stores the latest Usage.
  * - `done` finalizes any accumulating chunk (turn still provisional).
  * - `turn-sealed` finalizes any accumulating chunk and sets sealedTurnId.
@@ -237,6 +239,23 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				accumulating: null,
 				sealedTurnId: event.turnId,
 				generating: false,
+			};
+		}
+
+		case "steering": {
+			// A steering message drained from the queue at a tool-result boundary
+			// (the model sees it alongside the tool results). Append a user bubble
+			// to the provisional transcript; the turn is still in flight. The queue
+			// surface clears separately on drain (a different channel) — no de-dup
+			// here (unlike `user-message`, steering is never optimistically echoed
+			// into the transcript by the sender).
+			if (event.text.length === 0) return state;
+			const provisional = flushAccumulating(state.provisional, state.accumulating);
+			return {
+				...state,
+				provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
+				accumulating: null,
+				generating: true,
 			};
 		}
 	}

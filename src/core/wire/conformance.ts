@@ -34,6 +34,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
 			return "turn-sealed";
 		case "step-complete":
 			return "step-complete";
+		case "steering":
+			return "steering";
 		default:
 			return event satisfies never;
 	}
@@ -102,6 +104,8 @@ export function assertWsClientMessageExhaustive(msg: WsClientMessage): string {
 			return "chat.subscribe";
 		case "chat.unsubscribe":
 			return "chat.unsubscribe";
+		case "chat.queue":
+			return "chat.queue";
 		default:
 			return msg satisfies never;
 	}
