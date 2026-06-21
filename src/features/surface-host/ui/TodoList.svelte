@@ -1,15 +1,9 @@
 <script lang="ts">
-	import { parseTodoPayload, type TodoPriority, type TodoStatus } from "../logic/todo";
+	import { parseTodoPayload } from "../logic/todo";
 
 	let { payload }: { readonly payload: unknown } = $props();
 
 	const data = $derived(parseTodoPayload(payload));
-
-	const priorityDot: Record<TodoPriority, string> = {
-		high: "bg-error",
-		medium: "bg-warning",
-		low: "bg-base-content/30",
-	};
 </script>
 
 {#if data !== null && data.todos.length > 0}
@@ -61,9 +55,6 @@
 				>
 					{todo.content}
 				</span>
-
-				<!-- Priority dot -->
-				<span class="mt-1 h-2 w-2 shrink-0 rounded-full {priorityDot[todo.priority]}"></span>
 			</li>
 		{/each}
 	</ul>

@@ -14,12 +14,10 @@
  * (the model hasn't created a list / cleared it); the caller hides the panel.
  */
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
-export type TodoPriority = "high" | "medium" | "low";
 
 export interface TodoItem {
 	readonly content: string;
 	readonly status: TodoStatus;
-	readonly priority: TodoPriority;
 }
 
 export interface TodoData {
@@ -27,18 +25,11 @@ export interface TodoData {
 }
 
 const STATUSES = new Set<string>(["pending", "in_progress", "completed", "cancelled"]);
-const PRIORITIES = new Set<string>(["high", "medium", "low"]);
 
 function isTodoItem(v: unknown): v is TodoItem {
 	if (typeof v !== "object" || v === null) return false;
 	const o = v as Record<string, unknown>;
-	return (
-		typeof o.content === "string" &&
-		typeof o.status === "string" &&
-		STATUSES.has(o.status) &&
-		typeof o.priority === "string" &&
-		PRIORITIES.has(o.priority)
-	);
+	return typeof o.content === "string" && typeof o.status === "string" && STATUSES.has(o.status);
 }
 
 export function parseTodoPayload(payload: unknown): TodoData | null {

@@ -1,26 +1,25 @@
 import { describe, expect, it } from "vitest";
 import { parseTodoPayload, type TodoItem } from "./todo";
 
-const item = (
-	content: string,
-	status: TodoItem["status"] = "pending",
-	priority: TodoItem["priority"] = "medium",
-): TodoItem => ({ content, status, priority });
+const item = (content: string, status: TodoItem["status"] = "pending"): TodoItem => ({
+	content,
+	status,
+});
 
 describe("parseTodoPayload", () => {
 	it("parses a well-formed payload with items", () => {
 		const data = parseTodoPayload({
 			todos: [
-				item("Write tests", "in_progress", "high"),
-				item("Ship it", "pending", "medium"),
-				item("Read docs", "completed", "low"),
+				item("Write tests", "in_progress"),
+				item("Ship it", "pending"),
+				item("Read docs", "completed"),
 			],
 		});
 		expect(data).toEqual({
 			todos: [
-				item("Write tests", "in_progress", "high"),
-				item("Ship it", "pending", "medium"),
-				item("Read docs", "completed", "low"),
+				item("Write tests", "in_progress"),
+				item("Ship it", "pending"),
+				item("Read docs", "completed"),
 			],
 		});
 	});
@@ -30,9 +29,7 @@ describe("parseTodoPayload", () => {
 	});
 
 	it("preserves item order", () => {
-		const data = parseTodoPayload({
-			todos: [item("a"), item("b"), item("c")],
-		});
+		const data = parseTodoPayload({ todos: [item("a"), item("b"), item("c")] });
 		expect(data?.todos.map((t) => t.content)).toEqual(["a", "b", "c"]);
 	});
 
@@ -53,17 +50,6 @@ describe("parseTodoPayload", () => {
 		]);
 	});
 
-	it("accepts all three priority values", () => {
-		const data = parseTodoPayload({
-			todos: [
-				item("h", "pending", "high"),
-				item("m", "pending", "medium"),
-				item("l", "pending", "low"),
-			],
-		});
-		expect(data?.todos.map((t) => t.priority)).toEqual(["high", "medium", "low"]);
-	});
-
 	it.each([
 		["null", null],
 		["a number", 7],
@@ -71,15 +57,10 @@ describe("parseTodoPayload", () => {
 		["missing todos key", { foo: [] }],
 		["todos not an array", { todos: "x" }],
 		["entry not an object", { todos: ["x"] }],
-		["entry missing content", { todos: [{ status: "pending", priority: "low" }] }],
-		[
-			"entry with non-string content",
-			{ todos: [{ content: 1, status: "pending", priority: "low" }] },
-		],
-		["entry missing status", { todos: [{ content: "x", priority: "low" }] }],
+		["entry missing content", { todos: [{ status: "pending" }] }],
+		["entry with non-string content", { todos: [{ content: 1, status: "pending" }] }],
+		["entry missing status", { todos: [{ content: "x" }] }],
 		["entry with invalid status", { todos: [item("x", "done" as never)] }],
-		["entry missing priority", { todos: [{ content: "x", status: "pending" }] }],
-		["entry with invalid priority", { todos: [item("x", "pending", "urgent" as never)] }],
 	])("returns null for invalid payload: %s", (_label, payload) => {
 		expect(parseTodoPayload(payload)).toBeNull();
 	});
