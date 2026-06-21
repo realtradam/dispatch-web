@@ -5,21 +5,30 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-22 (conversation lifecycle handoff consumed). **FE is current on
-`ui-contract@0.2.0` / `transport-contract@0.14.0` / `wire@0.10.0`.** All handoffs to date are
+_Last updated: 2026-06-22 (compaction handoff consumed). **FE is current on
+`ui-contract@0.2.0` / `transport-contract@0.15.0` / `wire@0.11.0`.** All handoffs to date are
 consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming
 (incl. authoritative timer + retention + cache-rate fix + the CR-4 lifecycle below),
 **per-conversation cwd + LSP status**, **context size**, **turn continuity + multi-client live
 view**, the **chat limit + CR-5 history windowing**, the **reasoning effort
 (thinking-depth knob)**, the **message queue + steering**, the **todo task list**, the
-**conversation.open broadcast**, and the **conversation lifecycle (cross-device tab sync)**
-(below).
+**conversation.open broadcast**, the **conversation lifecycle (cross-device tab sync)**, and the
+**conversation compaction** (below).
 **Open asks: NONE.** CR-1/CR-2/CR-4/CR-5 all RESOLVED ✅ (see §2); §3 lists likely next asks.
 **CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
 `user-message` turn event; FE re-pinned + consumption live.
 The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
 
-**Conversation lifecycle handoff (`frontend-conversation-lifecycle-handoff.md`) → CONSUMED ✅.**
+**Compaction handoff (`frontend-compaction-handoff.md`) → CONSUMED ✅.**
+Re-pinned `wire@0.10.0→0.11.0` + `transport-contract@0.14.0→0.15.0` (`ui-contract` unchanged);
+re-mirrored both `.dispatch/*.reference.md`. FE work: a dedicated "Compaction" sidebar view
+(`features/chat/ui/CompactionView.svelte`) with a "Compact now" button (`POST
+/conversations/:id/compact`) + an auto-compact threshold number input (`GET`/`PUT
+/conversations/:id/compact-threshold`; 0 = disabled, default 350000). The app store exposes
+`compactNow()` + `compactThreshold` reactive state + `setCompactThreshold()`, seeded on focus
+change (like reasoning-effort + cwd). The `conversation.compacted` WS handler (already wired in
+the lifecycle commit) disposes the stale store + cache + reloads history. 686 tests green. NO
+new backend ask._
 Re-pinned `wire@0.9.0→0.10.0` + `transport-contract@0.13.0→0.14.0` (`ui-contract` unchanged);
 re-mirrored both `.dispatch/*.reference.md`. FE work: `fetchOpenConversations()` on connect fetches
 `GET /conversations?status=active,idle` to restore the tab bar across devices (merges with
@@ -127,7 +136,7 @@ backend ask — but the max-limit denominator is now a live FE need; see §3.
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.10.0`; `transport-contract@0.14.0`**.
+Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.11.0`; `transport-contract@0.15.0`**.
 
 | Package | Used for |
 |---|---|

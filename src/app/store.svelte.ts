@@ -1,6 +1,8 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	CompactResponse,
+	CompactThresholdResponse,
 	ConversationCompactedMessage,
 	ConversationHistoryResponse,
 	ConversationListResponse,
@@ -12,6 +14,7 @@ import type {
 	ModelsResponse,
 	ReasoningEffort,
 	ReasoningEffortResponse,
+	SetCompactThresholdRequest,
 	SetCwdRequest,
 	SetReasoningEffortRequest,
 	WarmRequest,
@@ -63,6 +66,16 @@ export type LspResult =
 /** Outcome of `PUT /conversations/:id/reasoning-effort`. */
 export type ReasoningEffortResult =
 	| { readonly ok: true; readonly reasoningEffort: ReasoningEffort }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `POST /conversations/:id/compact` (manual compaction). */
+export type CompactResult =
+	| { readonly ok: true; readonly response: CompactResponse }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `PUT /conversations/:id/compact-threshold`. */
+export type CompactThresholdResult =
+	| { readonly ok: true; readonly threshold: number }
 	| { readonly ok: false; readonly error: string };
 
 /** Outcome of persisting a chat-limit setting (localStorage; FE-local). */
@@ -122,6 +135,24 @@ export interface AppStore {
 	 * Takes effect from the NEXT turn; resolution stays server-owned.
 	 */
 	setReasoningEffort(level: ReasoningEffort): Promise<ReasoningEffortResult | null>;
+	/**
+	 * Manually trigger conversation compaction (`POST /conversations/:id/compact`).
+	 * Summarizes old messages + retains the most recent N. Returns null when no
+	 * conversation is focused (a draft has nothing to compact).
+	 */
+	compactNow(keepLastN?: number): Promise<CompactResult | null>;
+	/**
+	 * The workspace conversation's auto-compact threshold (tokens). `0` = disabled
+	 * (manual only); a positive number = auto-compact triggers when the last
+	 * turn's input tokens exceed it. Seeded from the backend on focus change.
+	 */
+	readonly compactThreshold: number | null;
+	/**
+	 * Persist the workspace conversation's auto-compact threshold
+	 * (`PUT /conversations/:id/compact-threshold`). `0` disables; any positive
+	 * number enables. Works for a draft too (its id survives promotion).
+	 */
+	setCompactThreshold(threshold: number): Promise<CompactThresholdResult | null>;
 	/**
 	 * Fetch the workspace conversation's language-server status (`GET /conversations/:id/lsp`).
 	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
@@ -317,6 +348,26 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		}
 	}
 
+	// The workspace conversation's auto-compact threshold. Seeded from the
+	// backend on focus change; null = not yet fetched. 0 = disabled.
+	let compactThreshold = $state<number | null>(null);
+
+	/** Refetch the workspace conversation's compact threshold (works for a draft too). */
+	async function refreshCompactThreshold(): Promise<void> {
+		const id = workspaceConversationId();
+		compactThreshold = null;
+		try {
+			const res = await fetchImpl(
+				`${httpBase}/conversations/${encodeURIComponent(id)}/compact-threshold`,
+			);
+			if (!res.ok) return;
+			const data = (await res.json()) as CompactThresholdResponse;
+			if (workspaceConversationId() === id) compactThreshold = data.threshold;
+		} catch {
+			// Non-fatal: a threshold fetch failure just leaves null.
+		}
+	}
+
 	function getActiveChat(): ChatStore {
 		const activeId = tabsStore.activeConversationId;
 		if (activeId === null) {
@@ -481,6 +532,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		syncSubscriptions();
 		void refreshCwd();
 		void refreshReasoningEffort();
+		void refreshCompactThreshold();
 	}
 
 	// Conversation lifecycle status (backend-owned, pushed via WS +
@@ -562,8 +614,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			}
 		},
 		onConversationCompacted(msg: ConversationCompactedMessage): void {
-			// The conversation's history was summarized — reload it from the server.
-			// Dispose the old store (stale cache) + create a fresh one + load.
+			// Compaction keeps the conversation ID — the old full history is forked
+			// to an archive (newConversationId). Just reload the same conversation's
+			// history (dispose stale store + cache + re-fetch).
 			const cid = msg.conversationId;
 			const wasActive = tabsStore.activeConversationId === cid;
 			const store = chatStores.get(cid);
@@ -650,6 +703,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	refreshActiveChat();
 	void refreshCwd();
 	void refreshReasoningEffort();
+	void refreshCompactThreshold();
 
 	// Fetch the authoritative open-conversation list from the backend (cross-
 	// device tab sync). Merges with the localStorage-restored tabs: opens new
@@ -692,6 +746,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get reasoningEffort(): ReasoningEffort | null {
 			return reasoningEffort;
 		},
+		get compactThreshold(): number | null {
+			return compactThreshold;
+		},
 		get chatLimit(): number {
 			return chatLimit;
 		},
@@ -730,6 +787,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				syncSubscriptions();
 				void refreshCwd();
 				void refreshReasoningEffort();
+				void refreshCompactThreshold();
 				// Now send on the promoted store
 				chatStores.get(conversationId)?.send(text);
 			} else {
@@ -766,6 +824,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			syncSubscriptions();
 			void refreshCwd();
 			void refreshReasoningEffort();
+			void refreshCompactThreshold();
 		},
 
 		selectTab(conversationId: string): void {
@@ -778,6 +837,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			syncSubscriptions();
 			void refreshCwd();
 			void refreshReasoningEffort();
+			void refreshCompactThreshold();
 		},
 
 		closeTab(conversationId: string): void {
@@ -870,6 +930,67 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				return {
 					ok: false,
 					error: err instanceof Error ? err.message : "Set reasoning effort request failed",
+				};
+			}
+		},
+
+		async compactNow(keepLastN?: number): Promise<CompactResult | null> {
+			const conversationId = tabsStore.activeConversationId;
+			if (conversationId === null) return null;
+			const body: Record<string, unknown> = {};
+			if (keepLastN !== undefined) body.keepLastN = keepLastN;
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/conversations/${encodeURIComponent(conversationId)}/compact`,
+					{
+						method: "POST",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(body),
+					},
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Compact failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as CompactResponse;
+				return { ok: true, response: data };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Compact request failed",
+				};
+			}
+		},
+
+		async setCompactThreshold(threshold: number): Promise<CompactThresholdResult | null> {
+			const id = workspaceConversationId();
+			const body: SetCompactThresholdRequest = { threshold };
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/conversations/${encodeURIComponent(id)}/compact-threshold`,
+					{
+						method: "PUT",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(body),
+					},
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Set compact threshold failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as CompactThresholdResponse;
+				if (workspaceConversationId() === id) compactThreshold = data.threshold;
+				return { ok: true, threshold: data.threshold };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Set compact threshold request failed",
 				};
 			}
 		},

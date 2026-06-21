@@ -10,11 +10,14 @@
 	} from "../features/cache-warming";
 	import {
 		ChatView,
+		CompactionView,
 		Composer,
 		manifest as chatManifest,
 		ModelSelector,
 		ReasoningEffortSelector,
+		type CompactNowResult,
 		type ReasoningEffortSaveResult,
+		type SaveCompactThresholdResult,
 	} from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
@@ -65,11 +68,20 @@
 		{ id: "extensions", label: "Extensions" },
 		{ id: "cache-warming", label: "Cache Warming" },
 		{ id: "tasks", label: "Tasks" },
+		{ id: "compaction", label: "Compaction" },
 		{ id: "settings", label: "Settings" },
 	] as const;
 
-	// Default sidebar layout: Model, Language Servers, Extensions, Cache Warming, Tasks, Settings.
-	const initialViews = ["model", "lsp", "extensions", "cache-warming", "tasks", "settings"] as const;
+	// Default sidebar layout: Model, Language Servers, Extensions, Cache Warming, Tasks, Compaction, Settings.
+	const initialViews = [
+		"model",
+		"lsp",
+		"extensions",
+		"cache-warming",
+		"tasks",
+		"compaction",
+		"settings",
+	] as const;
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -208,6 +220,29 @@
 		if (result === null) return null;
 		return result.ok
 			? { ok: true, reasoningEffort: result.reasoningEffort }
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's compact result to the compaction view's port.
+	async function compactNow(): Promise<CompactNowResult | null> {
+		const result = await store.compactNow();
+		if (result === null) return null;
+		return result.ok
+			? {
+					ok: true,
+					messagesSummarized: result.response.messagesSummarized,
+					messagesKept: result.response.messagesKept,
+				}
+			: { ok: false, error: result.error };
+	}
+
+	async function saveCompactThreshold(
+		threshold: number,
+	): Promise<SaveCompactThresholdResult | null> {
+		const result = await store.setCompactThreshold(threshold);
+		if (result === null) return null;
+		return result.ok
+			? { ok: true, threshold: result.threshold }
 			: { ok: false, error: result.error };
 	}
 
@@ -425,6 +460,16 @@
 			{:else}
 				<p class="text-xs opacity-60">No tasks yet.</p>
 			{/if}
+		{/key}
+	{:else if kind === "compaction"}
+		<!-- Re-mount per conversation so the threshold + feedback can't bleed across tabs. -->
+		{#key store.currentConversationId}
+			<CompactionView
+				threshold={store.compactThreshold}
+				canCompact={store.activeConversationId !== null}
+				{compactNow}
+				saveThreshold={saveCompactThreshold}
+			/>
 		{/key}
 	{:else if kind === "settings"}
 		<!-- FE-local settings. Not conversation-scoped (no {#key}: the chat limit is
