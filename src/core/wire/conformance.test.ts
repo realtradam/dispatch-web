@@ -139,9 +139,18 @@ describe("classifies every WsServerMessage type", () => {
 				event: { type: "done" as const, conversationId: "c", turnId: "t", reason: "r" },
 			},
 			{ type: "chat.error" as const, message: "e" },
+			{ type: "conversation.open" as const, conversationId: "c1" },
 		];
 		const labels = msgs.map(assertWsServerMessageExhaustive);
-		expect(labels).toEqual(["catalog", "surface", "update", "error", "chat.delta", "chat.error"]);
+		expect(labels).toEqual([
+			"catalog",
+			"surface",
+			"update",
+			"error",
+			"chat.delta",
+			"chat.error",
+			"conversation.open",
+		]);
 	});
 });
 

@@ -1,6 +1,7 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	ConversationOpenMessage,
 	WsClientMessage,
 	WsServerMessage,
 } from "@dispatch/transport-contract";
@@ -18,6 +19,7 @@ const VALID_SERVER_TYPES = new Set([
 	"error",
 	"chat.delta",
 	"chat.error",
+	"conversation.open",
 ]);
 
 /** Serialize a client message to a JSON string for the wire. */
@@ -105,6 +107,14 @@ export function parseServerMessage(data: string): WsServerMessage | null {
 				conversationId !== undefined
 					? { type: "chat.error", conversationId, message: parsed.message }
 					: { type: "chat.error", message: parsed.message };
+			return msg;
+		}
+		case "conversation.open": {
+			if (typeof parsed.conversationId !== "string") return null;
+			const msg: ConversationOpenMessage = {
+				type: "conversation.open",
+				conversationId: parsed.conversationId,
+			};
 			return msg;
 		}
 		default:

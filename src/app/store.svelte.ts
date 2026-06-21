@@ -3,6 +3,7 @@ import type {
 	ChatErrorMessage,
 	ConversationHistoryResponse,
 	ConversationMetricsResponse,
+	ConversationOpenMessage,
 	CwdResponse,
 	LspStatusResponse,
 	ModelsResponse,
@@ -432,10 +433,39 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	let socket: ReturnType<typeof createSurfaceSocket> | null = null;
 
+	/**
+	 * Open (or focus) a conversation tab — used by the `conversation.open` WS
+	 * broadcast (CLI `--open` flag). If the conversation is already open, just
+	 * focus it; otherwise create a chat store, load its history, subscribe to its
+	 * live turns, and create+select the tab.
+	 */
+	function openConversation(conversationId: string): void {
+		const alreadyOpen = chatStores.has(conversationId);
+		if (!alreadyOpen) {
+			const store = createChatFor(conversationId, activeModel);
+			chatStores.set(conversationId, store);
+			void store.load();
+			subscribeChat(conversationId);
+			tabsStore.createTab({
+				conversationId,
+				model: activeModel,
+				title: "Conversation",
+			});
+		}
+		tabsStore.selectTab(conversationId);
+		refreshActiveChat();
+		syncSubscriptions();
+		void refreshCwd();
+		void refreshReasoningEffort();
+	}
+
 	const socketOpts: SurfaceSocketOptions = {
 		url: wsUrl,
 		onMessage: handleServerMessage,
 		onChat: handleChatMessage,
+		onConversationOpen(msg: ConversationOpenMessage): void {
+			openConversation(msg.conversationId);
+		},
 		onReopen() {
 			// The server forgot our subscriptions on reconnect; re-send each with the
 			// conversation it was subscribed under (protocolSubscribe would no-op since

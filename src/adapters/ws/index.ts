@@ -1,6 +1,7 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	ConversationOpenMessage,
 	WsClientMessage,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -18,6 +19,8 @@ export interface SurfaceSocketOptions {
 	url: string;
 	onMessage: (msg: SurfaceServerMessage) => void;
 	onChat?: (msg: ChatDeltaMessage | ChatErrorMessage) => void;
+	/** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
+	onConversationOpen?: (msg: ConversationOpenMessage) => void;
 	onReopen?: () => void;
 	socketFactory?: (url: string) => WebSocketLike;
 }
@@ -60,6 +63,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
 			if (msg !== null) {
 				if (msg.type === "chat.delta" || msg.type === "chat.error") {
 					opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage);
+				} else if (msg.type === "conversation.open") {
+					opts.onConversationOpen?.(msg as ConversationOpenMessage);
 				} else {
 					opts.onMessage(msg as SurfaceServerMessage);
 				}
