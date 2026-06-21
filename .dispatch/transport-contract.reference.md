@@ -5,9 +5,18 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.13.0` (conversation.open broadcast).
-> Depends on `@dispatch/wire@0.9.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.14.0` (conversation lifecycle).
+> Depends on `@dispatch/wire@0.10.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
 > `ui-contract.reference.md`).
+>
+> **2026-06-22 delta (conversation lifecycle handoff — package bumped `0.13.0` → `0.14.0`, ADDITIVE):**
+> adds conversation lifecycle **status** (`active`/`idle`/`closed`) for cross-device tab
+> persistence. `ConversationMeta` (re-exported from `wire@0.10.0`) gains a `status` field. New
+> WS message `ConversationStatusChangedMessage` (`{ type: "conversation.statusChanged";
+> conversationId; status }`) is broadcast to ALL clients on every status change. `GET
+> /conversations` gains an optional `?status=active,idle` filter (comma-separated; default = all).
+> `POST /conversations/:id/close` now also sets status to `closed` (persists across restarts).
+> The FE fetches `?status=active,idle` on connect to restore the tab bar across devices.
 >
 > **2026-06-21 delta (conversation.open handoff — package bumped `0.12.0` → `0.13.0`, ADDITIVE):**
 > adds the `conversation.open` WS broadcast — when the CLI's `--open` flag fires
@@ -212,6 +221,7 @@ import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-co
 import type {
 	AgentEvent,
 	ConversationMeta,
+	ConversationStatus,
 	QueuedMessage,
 	ReasoningEffort,
 	StoredChunk,
@@ -221,6 +231,7 @@ import type {
 export type {
 	AgentEvent,
 	ConversationMeta,
+	ConversationStatus,
 	QueuedMessage,
 	ReasoningEffort,
 	StepMetrics,
@@ -666,7 +677,9 @@ export type WsServerMessage =
 	| SurfaceServerMessage
 	| ChatDeltaMessage
 	| ChatErrorMessage
-	| ConversationOpenMessage;
+	| ConversationOpenMessage
+	| ConversationStatusChangedMessage
+	| ConversationCompactedMessage;
 
 // ─── Conversation list + metadata ────────────────────────────────────────────
 
@@ -678,6 +691,29 @@ export type WsServerMessage =
 export interface ConversationOpenMessage {
 	readonly type: "conversation.open";
 	readonly conversationId: string;
+}
+
+/**
+ * Broadcast to all connected WS clients when a conversation's lifecycle status
+ * changes (`active`/`idle`/`closed`). The FE uses this for cross-device tab
+ * sync: `closed` → remove the tab; `active` → show a generating indicator.
+ */
+export interface ConversationStatusChangedMessage {
+	readonly type: "conversation.statusChanged";
+	readonly conversationId: string;
+	readonly status: ConversationStatus;
+}
+
+/**
+ * Broadcast to all connected WS clients when a conversation's history has been
+ * compacted (summarized). The frontend should reload the conversation history
+ * via `GET /conversations/:id` to reflect the compacted state.
+ */
+export interface ConversationCompactedMessage {
+	readonly type: "conversation.compacted";
+	readonly conversationId: string;
+	readonly messagesSummarized: number;
+	readonly messagesKept: number;
 }
 
 /**

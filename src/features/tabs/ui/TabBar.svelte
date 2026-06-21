@@ -5,12 +5,15 @@
 	let {
 		tabs,
 		activeConversationId,
+		statusFor,
 		onSelect,
 		onClose,
 		onNewDraft,
 	}: {
 		tabs: readonly Tab[];
 		activeConversationId: string | null;
+		/** Returns the conversation's lifecycle status, or undefined when unknown. */
+		statusFor?: (conversationId: string) => string | undefined;
 		onSelect: (conversationId: string) => void;
 		onClose: (conversationId: string) => void;
 		onNewDraft: () => void;
@@ -84,6 +87,9 @@
 					{handles.get(tab.conversationId) ?? tab.conversationId}
 				</span>
 				<span class="min-w-0 flex-1 truncate text-left">{tab.title}</span>
+				{#if statusFor?.(tab.conversationId) === "active"}
+					<span class="loading loading-spinner loading-xs shrink-0 text-primary"></span>
+				{/if}
 				<button
 					class="btn btn-ghost btn-xs shrink-0"
 					aria-label="Close tab"

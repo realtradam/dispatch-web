@@ -83,6 +83,10 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
 			return "chat.error";
 		case "conversation.open":
 			return "conversation.open";
+		case "conversation.statusChanged":
+			return "conversation.statusChanged";
+		case "conversation.compacted":
+			return "conversation.compacted";
 		default:
 			return msg satisfies never;
 	}

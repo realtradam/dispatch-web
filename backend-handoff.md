@@ -5,18 +5,30 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-21 (conversation.open handoff consumed). **FE is current on
-`ui-contract@0.2.0` / `transport-contract@0.13.0` / `wire@0.9.0`.** All handoffs to date are
+_Last updated: 2026-06-22 (conversation lifecycle handoff consumed). **FE is current on
+`ui-contract@0.2.0` / `transport-contract@0.14.0` / `wire@0.10.0`.** All handoffs to date are
 consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming
 (incl. authoritative timer + retention + cache-rate fix + the CR-4 lifecycle below),
 **per-conversation cwd + LSP status**, **context size**, **turn continuity + multi-client live
 view**, the **chat limit + CR-5 history windowing**, the **reasoning effort
-(thinking-depth knob)**, the **message queue + steering**, the **todo task list**, and the
-**conversation.open broadcast** (below).
+(thinking-depth knob)**, the **message queue + steering**, the **todo task list**, the
+**conversation.open broadcast**, and the **conversation lifecycle (cross-device tab sync)**
+(below).
 **Open asks: NONE.** CR-1/CR-2/CR-4/CR-5 all RESOLVED ✅ (see §2); §3 lists likely next asks.
 **CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
 `user-message` turn event; FE re-pinned + consumption live.
 The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
+
+**Conversation lifecycle handoff (`frontend-conversation-lifecycle-handoff.md`) → CONSUMED ✅.**
+Re-pinned `wire@0.9.0→0.10.0` + `transport-contract@0.13.0→0.14.0` (`ui-contract` unchanged);
+re-mirrored both `.dispatch/*.reference.md`. FE work: `fetchOpenConversations()` on connect fetches
+`GET /conversations?status=active,idle` to restore the tab bar across devices (merges with
+localStorage-restored tabs — opens new ones, removes closed ones, updates titles). The
+`conversation.statusChanged` WS message handler updates a per-conversation status map: `closed` →
+`removeTabLocally` (FE cleanup without re-POSTing `/close`); `active` → opens the tab if not
+already open + shows a spinner in the TabBar (via `statusFor` prop). The `closeTab` path now uses
+`removeTabLocally` (extracted from the old inline cleanup). Conformance guards + WS adapter tests
+cover the new type. 686 tests green. NO new backend ask._
 
 **Conversation.open handoff (`frontend-conversation-open-handoff.md`) → CONSUMED ✅.**
 Re-pinned `wire@0.8.0→0.9.0` + `transport-contract@0.12.0→0.13.0` (`ui-contract` unchanged);
@@ -115,13 +127,13 @@ backend ask — but the max-limit denominator is now a live FE need; see §3.
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.9.0`; `transport-contract@0.13.0`**.
+Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.10.0`; `transport-contract@0.14.0`**.
 
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`**, **`ReasoningEffort`**, **`QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`**, **`ConversationMeta`** |
-| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + **`QueueRequest`/`QueueResponse`/`ChatQueueMessage`** + **`ConversationOpenMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse`** + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`**, **`ReasoningEffort`**, **`QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`**, **`ConversationMeta`/`ConversationStatus`** |
+| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + **`QueueRequest`/`QueueResponse`/`ChatQueueMessage`** + **`ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse`** + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` ·
@@ -133,11 +145,12 @@ tab-close: abort turn + stop/disable warming) · **`POST /conversations/:id/queu
 steering message; auto-starts a turn if idle) · WS `chat.send`→`chat.delta` ·
 WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live) ·
 **WS `chat.queue`** (enqueue steering; fire-and-forget — surface updates on success) ·
-**WS `conversation.open`** (broadcast: CLI `--open` flag signals the FE to open/focus a tab).
+**WS `conversation.open`** (broadcast: CLI `--open` flag signals the FE to open/focus a tab) ·
+**WS `conversation.statusChanged`** (broadcast: lifecycle status change — `active`/`idle`/`closed`).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
-`transport-contract@0.13.0` / `wire@0.9.0`).
+`transport-contract@0.14.0` / `wire@0.10.0`).
 
 ## 2. Open asks FOR THE BACKEND
 

@@ -16,15 +16,16 @@
 - **Reasoning effort** — sticky per-conversation thinking-depth knob (`GET`/`PUT /reasoning-effort`, `null` ⇒ default `high`).
 - **Message queue + steering** — `chat.queue` WS op, `steering` AgentEvent → user bubble in transcript, message-queue surface panel above composer.
 - **Todo task list** — `rendererId: "todo"` custom renderer, dedicated "Tasks" sidebar view (status indicators: pending/in_progress/completed/cancelled).
-- **Conversation.open broadcast** — `conversation.open` WS message handler, opens/focuses a tab from CLI `--open` flag.
+- **Conversation.open broadcast** — `conversation.open` WS message handler, opens a tab (without auto-switching) from CLI `--open` flag.
+- **Conversation lifecycle (cross-device tab sync)** — `GET /conversations?status=active,idle` on connect restores tabs across devices; `conversation.statusChanged` WS handler updates tab status + removes closed tabs; TabBar shows a spinner on `active` conversations.
 
 ## Next up
 
 ### Conversation list + title editing (`frontend-conversation-list-handoff.md`)
 
-Types already in `wire@0.9.0` + `transport-contract@0.13.0` (mirrored, deps re-pinned). The `conversation.open` WS handler is already consumed. Remaining FE work:
+Types already in `wire@0.10.0` + `transport-contract@0.14.0` (mirrored, deps re-pinned). The `conversation.open` + lifecycle handlers are already consumed. Remaining FE work:
 
-1. **Conversation list sidebar view** — `GET /conversations` → `ConversationListResponse` (`ConversationMeta[]` with id, title, createdAt, lastActivityAt). Render a "Conversations" sidebar view (title + relative time). Click to open (create tab + load history + subscribe). Fetch on mount + on focus / manual refresh.
+1. **Conversation list sidebar view** — `GET /conversations` → `ConversationListResponse` (`ConversationMeta[]` with id, title, createdAt, lastActivityAt, status). Render a "Conversations" sidebar view (title + relative time + status). Click to open (create tab + load history + subscribe). Fetch on mount + on focus / manual refresh. Filter by status (active/idle vs closed for a history view).
 2. **Title editing** — `GET`/`PUT /conversations/:id/title` (`TitleResponse`/`SetTitleRequest`). Inline rename affordance on the active conversation's title. Auto-title from first user message is backend-owned; FE overrides via PUT.
 
 ## Backlog (likely next backend asks — not yet requested)

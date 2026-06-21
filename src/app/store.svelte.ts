@@ -1,9 +1,12 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	ConversationCompactedMessage,
 	ConversationHistoryResponse,
+	ConversationListResponse,
 	ConversationMetricsResponse,
 	ConversationOpenMessage,
+	ConversationStatusChangedMessage,
 	CwdResponse,
 	LspStatusResponse,
 	ModelsResponse,
@@ -15,6 +18,7 @@ import type {
 	WarmResponse,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
+import type { ConversationStatus } from "@dispatch/wire";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
 import type { WebSocketLike } from "../adapters/ws";
@@ -125,6 +129,12 @@ export interface AppStore {
 	lspStatus(): Promise<LspResult | null>;
 	/** The persisted chat limit (max loaded chunks per conversation). */
 	readonly chatLimit: number;
+	/**
+	 * A conversation's backend lifecycle status (`active`/`idle`/`closed`), or
+	 * `undefined` when unknown. Drives the tab-bar generating indicator
+	 * (cross-device: a tab spinning because another device's turn is running).
+	 */
+	conversationStatus(conversationId: string): ConversationStatus | undefined;
 	/**
 	 * Persist + live-apply a new chat limit: writes `dispatch.chatLimit` to
 	 * localStorage and propagates to every live chat store (trim if lower,
@@ -453,12 +463,120 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		});
 	}
 
+	/**
+	 * Remove a tab + its chat store locally (NO `POST /close` — used when the
+	 * backend already marked the conversation `closed` via `conversation.statusChanged`).
+	 */
+	function removeTabLocally(conversationId: string): void {
+		unsubscribeChat(conversationId);
+		const store = chatStores.get(conversationId);
+		if (store !== undefined) {
+			store.dispose();
+			chatStores.delete(conversationId);
+		}
+		void cache.delete(conversationId);
+		tabsStore.closeTab(conversationId);
+		conversationStatuses.delete(conversationId);
+		refreshActiveChat();
+		syncSubscriptions();
+		void refreshCwd();
+		void refreshReasoningEffort();
+	}
+
+	// Conversation lifecycle status (backend-owned, pushed via WS +
+	// fetched on connect). Keyed by conversationId.
+	let conversationStatuses = $state<Map<string, ConversationStatus>>(new Map());
+
+	/**
+	 * Fetch `GET /conversations?status=active,idle` on connect to restore the
+	 * tab bar across devices. Merges: opens tabs for conversations not already
+	 * open, removes tabs for conversations that are no longer active/idle
+	 * (closed on another device), and subscribes to `active` conversations'
+	 * live streams.
+	 */
+	async function fetchOpenConversations(): Promise<void> {
+		try {
+			const res = await fetchImpl(`${httpBase}/conversations?status=active,idle`);
+			if (!res.ok) return;
+			const data = (await res.json()) as ConversationListResponse;
+
+			// Update the status map from the authoritative backend list.
+			const newStatuses = new Map<string, ConversationStatus>();
+			for (const conv of data.conversations) {
+				newStatuses.set(conv.id, conv.status);
+			}
+			conversationStatuses = newStatuses;
+
+			// Open tabs for conversations not already open.
+			const existingIds = new Set(chatStores.keys());
+			for (const conv of data.conversations) {
+				if (!existingIds.has(conv.id)) {
+					const store = createChatFor(conv.id, activeModel);
+					chatStores.set(conv.id, store);
+					void store.load();
+					subscribeChat(conv.id);
+					tabsStore.openTab({
+						conversationId: conv.id,
+						model: activeModel,
+						title: conv.title,
+					});
+				} else {
+					// Already open — update the title from the backend if it differs.
+					tabsStore.setTitle(conv.id, conv.title);
+				}
+			}
+
+			// Remove tabs for conversations no longer active/idle (closed elsewhere).
+			const backendIds = new Set(data.conversations.map((c) => c.id));
+			for (const tab of tabsStore.tabs) {
+				if (!backendIds.has(tab.conversationId)) {
+					removeTabLocally(tab.conversationId);
+				}
+			}
+		} catch {
+			// Non-fatal: fall back to the localStorage-restored tabs.
+		}
+	}
+
 	const socketOpts: SurfaceSocketOptions = {
 		url: wsUrl,
 		onMessage: handleServerMessage,
 		onChat: handleChatMessage,
 		onConversationOpen(msg: ConversationOpenMessage): void {
 			openConversation(msg.conversationId);
+		},
+		onConversationStatusChanged(msg: ConversationStatusChangedMessage): void {
+			const { conversationId, status } = msg;
+			if (status === "closed") {
+				// Closed on another device (or the backend) — remove the tab locally.
+				if (chatStores.has(conversationId)) {
+					removeTabLocally(conversationId);
+				}
+				return;
+			}
+			// active / idle — update the status map (drives the tab spinner).
+			conversationStatuses = new Map(conversationStatuses).set(conversationId, status);
+			// If this is a new active conversation we don't have a tab for, open one.
+			if (status === "active" && !chatStores.has(conversationId)) {
+				openConversation(conversationId);
+			}
+		},
+		onConversationCompacted(msg: ConversationCompactedMessage): void {
+			// The conversation's history was summarized — reload it from the server.
+			// Dispose the old store (stale cache) + create a fresh one + load.
+			const cid = msg.conversationId;
+			const wasActive = tabsStore.activeConversationId === cid;
+			const store = chatStores.get(cid);
+			if (store !== undefined) {
+				store.dispose();
+			}
+			void cache.delete(cid);
+			const fresh = createChatFor(cid, activeModel);
+			chatStores.set(cid, fresh);
+			void fresh.load();
+			if (wasActive) {
+				refreshActiveChat();
+			}
 		},
 		onReopen() {
 			// The server forgot our subscriptions on reconnect; re-send each with the
@@ -533,6 +651,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	void refreshCwd();
 	void refreshReasoningEffort();
 
+	// Fetch the authoritative open-conversation list from the backend (cross-
+	// device tab sync). Merges with the localStorage-restored tabs: opens new
+	// ones, removes closed ones, updates titles + statuses.
+	void fetchOpenConversations();
+
 	return {
 		get tabs(): readonly Tab[] {
 			return tabsStore.tabs;
@@ -571,6 +694,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		},
 		get chatLimit(): number {
 			return chatLimit;
+		},
+		conversationStatus(conversationId: string): ConversationStatus | undefined {
+			return conversationStatuses.get(conversationId);
 		},
 		get currentConversationId(): string {
 			return workspaceConversationId();
@@ -655,22 +781,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		},
 
 		closeTab(conversationId: string): void {
-			tabsStore.closeTab(conversationId);
-			// The user is DONE with this chat for now: abort any in-flight turn and
-			// stop + disable its cache-warming, server-side.
+			// The user is DONE with this chat: abort any in-flight turn + stop/disable
+			// its cache-warming, server-side (POST /close sets status → "closed").
 			closeConversation(conversationId);
-			// Stop watching the closed conversation's turns.
-			unsubscribeChat(conversationId);
-			const store = chatStores.get(conversationId);
-			if (store !== undefined) {
-				store.dispose();
-				chatStores.delete(conversationId);
-			}
-			void cache.delete(conversationId);
-			refreshActiveChat();
-			syncSubscriptions();
-			void refreshCwd();
-			void refreshReasoningEffort();
+			removeTabLocally(conversationId);
 		},
 
 		invoke(surfaceId: string, actionId: string, payload?: unknown): void {
