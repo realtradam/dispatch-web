@@ -233,6 +233,37 @@ describe("parseServerMessage", () => {
 			parseServerMessage(JSON.stringify({ type: "conversation.open", conversationId: 42 })),
 		).toBeNull();
 	});
+
+	it("parses a conversation.statusChanged message", () => {
+		const data = JSON.stringify({
+			type: "conversation.statusChanged",
+			conversationId: "c1",
+			status: "active",
+		});
+		expect(parseServerMessage(data)).toEqual({
+			type: "conversation.statusChanged",
+			conversationId: "c1",
+			status: "active",
+		});
+	});
+
+	it("returns null for conversation.statusChanged with invalid status", () => {
+		expect(
+			parseServerMessage(
+				JSON.stringify({
+					type: "conversation.statusChanged",
+					conversationId: "c1",
+					status: "done",
+				}),
+			),
+		).toBeNull();
+	});
+
+	it("returns null for conversation.statusChanged with missing conversationId", () => {
+		expect(
+			parseServerMessage(JSON.stringify({ type: "conversation.statusChanged", status: "idle" })),
+		).toBeNull();
+	});
 });
 
 describe("round-trip: parseServerMessage(serialize(...))", () => {

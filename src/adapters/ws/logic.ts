@@ -1,7 +1,9 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	ConversationCompactedMessage,
 	ConversationOpenMessage,
+	ConversationStatusChangedMessage,
 	WsClientMessage,
 	WsServerMessage,
 } from "@dispatch/transport-contract";
@@ -20,6 +22,8 @@ const VALID_SERVER_TYPES = new Set([
 	"chat.delta",
 	"chat.error",
 	"conversation.open",
+	"conversation.statusChanged",
+	"conversation.compacted",
 ]);
 
 /** Serialize a client message to a JSON string for the wire. */
@@ -114,6 +118,31 @@ export function parseServerMessage(data: string): WsServerMessage | null {
 			const msg: ConversationOpenMessage = {
 				type: "conversation.open",
 				conversationId: parsed.conversationId,
+			};
+			return msg;
+		}
+		case "conversation.statusChanged": {
+			if (typeof parsed.conversationId !== "string") return null;
+			if (typeof parsed.status !== "string") return null;
+			if (parsed.status !== "active" && parsed.status !== "idle" && parsed.status !== "closed") {
+				return null;
+			}
+			const msg: ConversationStatusChangedMessage = {
+				type: "conversation.statusChanged",
+				conversationId: parsed.conversationId,
+				status: parsed.status,
+			};
+			return msg;
+		}
+		case "conversation.compacted": {
+			if (typeof parsed.conversationId !== "string") return null;
+			if (typeof parsed.messagesSummarized !== "number") return null;
+			if (typeof parsed.messagesKept !== "number") return null;
+			const msg: ConversationCompactedMessage = {
+				type: "conversation.compacted",
+				conversationId: parsed.conversationId,
+				messagesSummarized: parsed.messagesSummarized,
+				messagesKept: parsed.messagesKept,
 			};
 			return msg;
 		}

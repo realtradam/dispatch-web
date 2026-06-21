@@ -1,7 +1,9 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	ConversationCompactedMessage,
 	ConversationOpenMessage,
+	ConversationStatusChangedMessage,
 	WsClientMessage,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -21,6 +23,10 @@ export interface SurfaceSocketOptions {
 	onChat?: (msg: ChatDeltaMessage | ChatErrorMessage) => void;
 	/** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
 	onConversationOpen?: (msg: ConversationOpenMessage) => void;
+	/** Broadcast when a conversation's lifecycle status changes (active/idle/closed). */
+	onConversationStatusChanged?: (msg: ConversationStatusChangedMessage) => void;
+	/** Broadcast when a conversation's history has been compacted (reload needed). */
+	onConversationCompacted?: (msg: ConversationCompactedMessage) => void;
 	onReopen?: () => void;
 	socketFactory?: (url: string) => WebSocketLike;
 }
@@ -65,6 +71,10 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
 					opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage);
 				} else if (msg.type === "conversation.open") {
 					opts.onConversationOpen?.(msg as ConversationOpenMessage);
+				} else if (msg.type === "conversation.statusChanged") {
+					opts.onConversationStatusChanged?.(msg as ConversationStatusChangedMessage);
+				} else if (msg.type === "conversation.compacted") {
+					opts.onConversationCompacted?.(msg as ConversationCompactedMessage);
 				} else {
 					opts.onMessage(msg as SurfaceServerMessage);
 				}

@@ -257,6 +257,7 @@
 			<TabBar
 				tabs={store.tabs}
 				activeConversationId={store.activeConversationId}
+				statusFor={(id) => store.conversationStatus(id)}
 				onSelect={(id) => store.selectTab(id)}
 				onClose={(id) => store.closeTab(id)}
 				onNewDraft={() => store.newDraft()}

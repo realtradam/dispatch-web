@@ -293,6 +293,34 @@ describe("createSurfaceSocket", () => {
 		expect(onChat).not.toHaveBeenCalled();
 	});
 
+	it("routes conversation.statusChanged to onConversationStatusChanged", () => {
+		const ws = fakeSocket();
+		const onMessage = vi.fn();
+		const onConversationStatusChanged = vi.fn();
+		createSurfaceSocket({
+			url: "ws://test",
+			onMessage,
+			onConversationStatusChanged,
+			socketFactory: () => ws,
+		});
+
+		ws.resolveOpen();
+		ws.invokeMessage(
+			JSON.stringify({
+				type: "conversation.statusChanged",
+				conversationId: "c1",
+				status: "active",
+			}),
+		);
+		expect(onConversationStatusChanged).toHaveBeenCalledOnce();
+		expect(onConversationStatusChanged).toHaveBeenCalledWith({
+			type: "conversation.statusChanged",
+			conversationId: "c1",
+			status: "active",
+		});
+		expect(onMessage).not.toHaveBeenCalled();
+	});
+
 	it("still routes surface catalog/surface to onMessage", () => {
 		const ws = fakeSocket();
 		const onMessage = vi.fn();

@@ -4,8 +4,16 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.9.0` (conversation metadata). Regenerate
+> **Orchestrator:** SNAPSHOT of `wire@0.10.0` (conversation lifecycle status). Regenerate
 > whenever `@dispatch/wire` changes.
+>
+> **2026-06-22 delta (conversation lifecycle handoff — package bumped `0.9.0` → `0.10.0`, ADDITIVE):**
+> adds `ConversationStatus` (`"active" | "idle" | "closed"`) — the per-conversation lifecycle
+> status. `ConversationMeta` gains a `status` field. `active` = a turn is generating; `idle` =
+> exists, not generating; `closed` = dismissed (hidden from the tab bar). Transitions are
+> backend-owned: `idle → active` on turn start, `active → idle` on turn settle, `→ closed` on
+> `POST /conversations/:id/close`. Pushed to all WS clients via `conversation.statusChanged`
+> (see `transport-contract@0.14.0`).
 >
 > **2026-06-21 delta (conversation.open handoff — package bumped `0.8.0` → `0.9.0`, ADDITIVE):**
 > adds `ConversationMeta` — metadata for a conversation (id, title, createdAt, lastActivityAt),
@@ -585,6 +593,14 @@ export interface TurnSteeringEvent {
 // ─── Conversation metadata ───────────────────────────────────────────────────
 
 /**
+ * The per-conversation lifecycle status. `active` = a turn is generating;
+ * `idle` = exists, not generating; `closed` = dismissed (hidden from the tab
+ * bar, not deleted). Transitions are backend-owned and pushed via the
+ * `conversation.statusChanged` WS message (see `transport-contract`).
+ */
+export type ConversationStatus = "active" | "idle" | "closed";
+
+/**
  * Metadata for a conversation, returned by `GET /conversations` (the list
  * endpoint). The title defaults to the first user message (truncated) and can
  * be set via `PUT /conversations/:id/title`. `createdAt` is set on first write;
@@ -595,5 +611,6 @@ export interface ConversationMeta {
 	readonly createdAt: number;
 	readonly lastActivityAt: number;
 	readonly title: string;
+	readonly status: ConversationStatus;
 }
 ```

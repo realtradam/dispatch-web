@@ -140,6 +140,17 @@ describe("classifies every WsServerMessage type", () => {
 			},
 			{ type: "chat.error" as const, message: "e" },
 			{ type: "conversation.open" as const, conversationId: "c1" },
+			{
+				type: "conversation.statusChanged" as const,
+				conversationId: "c1",
+				status: "active" as const,
+			},
+			{
+				type: "conversation.compacted" as const,
+				conversationId: "c1",
+				messagesSummarized: 10,
+				messagesKept: 5,
+			},
 		];
 		const labels = msgs.map(assertWsServerMessageExhaustive);
 		expect(labels).toEqual([
@@ -150,6 +161,8 @@ describe("classifies every WsServerMessage type", () => {
 			"chat.delta",
 			"chat.error",
 			"conversation.open",
+			"conversation.statusChanged",
+			"conversation.compacted",
 		]);
 	});
 });
