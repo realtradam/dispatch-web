@@ -25,23 +25,28 @@ function addUsage(a: Usage, b: Usage): Usage {
  * Interleave turn metrics into the rendered transcript.
  *
  * Splits groups into per-turn segments: a new segment begins at each `single`
- * group with `group.chunk.role === "user"`. Head-aligns: segment `i` receives
- * `entries[i]` (the first `min(K, T)` segments get the first `min(K, T)` entries).
+ * group with `group.chunk.role === "user"`. Segments are matched to entries
+ * by `stepId` presence when possible (robust against chat-limit trimming: when
+ * a turn's user message is trimmed, head-alignment would be off by one, but
+ * stepId matching still finds the right entry). Segments with no stepId-bearing
+ * groups (text-only turns) fall back to sequential matching against unused
+ * entries.
  *
- * Within a segment that has an aligned turn entry, each completed step's metrics
- * are placed INLINE right after the last group bearing that step's `stepId` (tool-call/
- * tool-result chunks and tool-batch groups carry `stepId`). Steps whose `stepId` does
- * not appear in any group ("unanchored") fall back to the segment tail, before the
- * turn-metrics row (if present).
+ * Within a segment that has a matched entry, each completed step's metrics
+ * are placed INLINE right after the last group bearing that step's `stepId`.
+ * Steps whose `stepId` does not appear in any group ("unanchored"):
+ * - If the segment HAS stepId-bearing groups (tool chunks exist but this step's
+ *   were trimmed): SKIPPED (no blank "step N · 0 tok" bubbles).
+ * - If the segment has NO stepId-bearing groups (text-only turn): placed at the
+ *   segment tail before the turn-metrics row (the original behavior).
  *
  * A `turn-metrics` row is emitted ONLY when `entry.total !== null` (i.e. the turn
- * is finalized via `done` or durable data). A still-generating turn emits its
- * completed step rows but NO turn-total row.
+ * is finalized via `done` or durable data). A still-generating turn emits no
+ * turn-total row.
  *
- * Head-alignment is stable: the durable `/metrics` endpoint returns every
- * SEALED turn in turn order (a contiguous prefix from turn 0), and we append
- * only the just-finished live turn — so `entries[i]` is turn `i`, and existing
- * turns never move when a new turn is appended.
+ * Cumulative usage is computed across finalized turns in entry-array order
+ * (turn order), so the per-turn "chat total" cache rate is correct regardless
+ * of which turns were trimmed.
  */
 export function interleaveTurnMetrics(
 	groups: readonly RenderGroup[],
@@ -66,22 +71,67 @@ export function interleaveTurnMetrics(
 	}
 
 	const K = entries.length;
-	const matched = Math.min(K, T);
 
-	// Head-alignment: segment i ↔ entries[i] for i in [0, matched).
-	// A trailing segment with no corresponding entry renders no metrics.
-	const segmentEntries = new Map<number, TurnMetricsEntry>();
-	for (let i = 0; i < matched; i++) {
-		const entry = entries[i];
-		if (entry !== undefined) {
-			segmentEntries.set(i, entry);
+	// Build stepId → entry-index lookup for matching.
+	const entryStepIds: Set<string>[] = entries.map((e) => new Set(e.steps.map((s) => s.stepId)));
+
+	// Match segments to entries. Pass 1: match by stepId overlap (handles
+	// trimming where head-alignment would be wrong). Pass 2: sequential fallback
+	// for unmatched segments (text-only turns with no stepId-bearing groups).
+	const usedEntries = new Set<number>();
+	const segmentEntry = new Map<number, TurnMetricsEntry>();
+	const segmentEntryIndex = new Map<number, number>();
+
+	// Pass 1: stepId matching.
+	for (let seg = 0; seg < T; seg++) {
+		const start = segmentStarts[seg] ?? 0;
+		const end = seg + 1 < T ? (segmentStarts[seg + 1] ?? groups.length) : groups.length;
+
+		const segStepIds = new Set<string>();
+		for (let i = start; i < end; i++) {
+			const g = groups[i];
+			if (g === undefined) continue;
+			const sid = groupStepId(g);
+			if (sid !== undefined) segStepIds.add(sid);
+		}
+		if (segStepIds.size === 0) continue; // text-only — defer to pass 2
+
+		let bestEntry = -1;
+		let bestMatch = 0;
+		for (let i = 0; i < K; i++) {
+			if (usedEntries.has(i)) continue;
+			let match = 0;
+			for (const sid of segStepIds) {
+				if (entryStepIds[i]?.has(sid)) match++;
+			}
+			if (match > bestMatch) {
+				bestMatch = match;
+				bestEntry = i;
+			}
+		}
+		if (bestEntry >= 0) {
+			usedEntries.add(bestEntry);
+			segmentEntry.set(seg, entries[bestEntry]!);
+			segmentEntryIndex.set(seg, bestEntry);
 		}
 	}
 
-	// Running cumulative usage across finalized turns (conversation total at each
-	// entry index), for the per-turn "chat total" cache rate. Alongside it, the
-	// previous finalized turn's usage at each index — the baseline for cross-turn
-	// retention (expected cache).
+	// Pass 2: sequential fallback for unmatched segments.
+	let nextUnused = 0;
+	for (let seg = 0; seg < T; seg++) {
+		if (segmentEntry.has(seg)) continue;
+		while (nextUnused < K && usedEntries.has(nextUnused)) nextUnused++;
+		if (nextUnused < K) {
+			usedEntries.add(nextUnused);
+			segmentEntry.set(seg, entries[nextUnused]!);
+			segmentEntryIndex.set(seg, nextUnused);
+			nextUnused++;
+		}
+	}
+
+	// Running cumulative usage across ALL finalized turns (in entry order), for
+	// the per-turn "chat total" cache rate. Alongside it, the previous finalized
+	// turn's usage at each index — the baseline for cross-turn retention.
 	const cumulativeByEntry: Usage[] = [];
 	const prevUsageByEntry: (Usage | null)[] = [];
 	let runningUsage: Usage = { inputTokens: 0, outputTokens: 0 };
@@ -109,7 +159,7 @@ export function interleaveTurnMetrics(
 		const start = segmentStarts[seg] ?? 0;
 		const end = seg + 1 < T ? (segmentStarts[seg + 1] ?? groups.length) : groups.length;
 
-		const entry = segmentEntries.get(seg);
+		const entry = segmentEntry.get(seg);
 
 		if (entry === undefined) {
 			for (let i = start; i < end; i++) {
@@ -120,6 +170,8 @@ export function interleaveTurnMetrics(
 			}
 			continue;
 		}
+
+		const entryIdx = segmentEntryIndex.get(seg) ?? 0;
 
 		// Build anchor map: for each stepId, the LAST group index in this segment.
 		const anchorByStepId = new Map<string, number>();
@@ -132,7 +184,7 @@ export function interleaveTurnMetrics(
 			}
 		}
 
-		// Classify each step as anchored (at a group index) or unanchored.
+		// Classify each step as anchored or unanchored.
 		const anchored: Map<number, { stepIndex: number; step: (typeof entry.steps)[number] }[]> =
 			new Map();
 		const unanchored: { stepIndex: number; step: (typeof entry.steps)[number] }[] = [];
@@ -177,8 +229,8 @@ export function interleaveTurnMetrics(
 			rows.push({
 				kind: "turn-metrics",
 				turn: entry.total,
-				cumulativeUsage: cumulativeByEntry[seg] ?? entry.total.usage,
-				prevTurnUsage: prevUsageByEntry[seg] ?? null,
+				cumulativeUsage: cumulativeByEntry[entryIdx] ?? entry.total.usage,
+				prevTurnUsage: prevUsageByEntry[entryIdx] ?? null,
 			});
 		}
 	}
