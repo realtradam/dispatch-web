@@ -142,6 +142,13 @@ export interface AppStore {
 	 */
 	compactNow(keepLastN?: number): Promise<CompactResult | null>;
 	/**
+	 * Stop an in-flight generation (`POST /conversations/:id/stop`). Aborts the
+	 * turn without closing the conversation — partial messages are persisted, the
+	 * turn seals with `reason: "aborted"`, and the conversation goes `active → idle`.
+	 * Returns null when no conversation is focused.
+	 */
+	stopGeneration(): void;
+	/**
 	 * The workspace conversation's auto-compact threshold (tokens). `0` = disabled
 	 * (manual only); a positive number = auto-compact triggers when the last
 	 * turn's input tokens exceed it. Seeded from the backend on focus change.
@@ -932,6 +939,16 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 					error: err instanceof Error ? err.message : "Set reasoning effort request failed",
 				};
 			}
+		},
+
+		stopGeneration(): void {
+			const conversationId = tabsStore.activeConversationId;
+			if (conversationId === null) return;
+			void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/stop`, {
+				method: "POST",
+			}).catch(() => {
+				// Non-fatal — the existing event flow handles the turn settle.
+			});
 		},
 
 		async compactNow(keepLastN?: number): Promise<CompactResult | null> {

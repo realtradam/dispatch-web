@@ -195,6 +195,10 @@
 		store.queueMessage(text);
 	}
 
+	function handleStop() {
+		store.stopGeneration();
+	}
+
 	function handleSelectModel(model: string) {
 		store.selectModel(model);
 	}
@@ -372,6 +376,7 @@
 		<Composer
 			onSend={handleSend}
 			onQueue={handleQueue}
+			onStop={handleStop}
 			contextSize={store.activeChat.currentContextSize}
 			status={store.activeChat.error
 				? "error"
