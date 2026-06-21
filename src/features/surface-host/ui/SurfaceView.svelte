@@ -8,6 +8,7 @@
 	import Selector from "./Selector.svelte";
 	import StatTable from "./StatTable.svelte";
 	import SurfaceTable from "./SurfaceTable.svelte";
+	import TodoList from "./TodoList.svelte";
 	import Toggle from "./Toggle.svelte";
 
 	let {
@@ -43,6 +44,8 @@
 				<SurfaceTable payload={group.field.payload} />
 			{:else if group.field.rendererId === "message-queue"}
 				<MessageQueueList payload={group.field.payload} />
+			{:else if group.field.rendererId === "todo"}
+				<TodoList payload={group.field.payload} />
 			{/if}
 		{/if}
 	{/each}

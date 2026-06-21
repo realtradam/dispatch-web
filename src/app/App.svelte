@@ -30,6 +30,8 @@
 	} from "../features/smart-scroll";
 	import { manifest as surfaceHostManifest, SurfaceView } from "../features/surface-host";
 	import { parseMessageQueuePayload } from "../features/surface-host/logic/message-queue";
+	import { parseTodoPayload } from "../features/surface-host/logic/todo";
+	import TodoList from "../features/surface-host/ui/TodoList.svelte";
 	import { manifest as tabsManifest, TabBar } from "../features/tabs";
 	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
 	import {
@@ -52,6 +54,8 @@
 	// out of the generic Extensions list and rendered as a compact panel above the
 	// composer — pending steering messages are tied to the chat, not the sidebar.
 	const MESSAGE_QUEUE_ID = "message-queue";
+	// The `todo` extension's per-conversation task list surface (model-maintained).
+	const TODO_ID = "todo";
 
 	// The view kinds offered in the sidebar's dropdown. Generic data — the
 	// `viewContent` snippet below maps each kind id to its renderer.
@@ -60,11 +64,12 @@
 		{ id: "lsp", label: "Language Servers" },
 		{ id: "extensions", label: "Extensions" },
 		{ id: "cache-warming", label: "Cache Warming" },
+		{ id: "tasks", label: "Tasks" },
 		{ id: "settings", label: "Settings" },
 	] as const;
 
-	// Default sidebar layout: Model, Language Servers, Extensions, Cache Warming, Settings.
-	const initialViews = ["model", "lsp", "extensions", "cache-warming", "settings"] as const;
+	// Default sidebar layout: Model, Language Servers, Extensions, Cache Warming, Tasks, Settings.
+	const initialViews = ["model", "lsp", "extensions", "cache-warming", "tasks", "settings"] as const;
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -142,6 +147,16 @@
 		if (field === undefined || field.kind !== "custom") return false;
 		const data = parseMessageQueuePayload(field.payload);
 		return data !== null && data.messages.length > 0;
+	});
+
+	// The todo surface spec + its parsed task list (model-maintained, read-only).
+	const todoSpec = $derived(store.surface(TODO_ID));
+	const todoData = $derived.by(() => {
+		const spec = todoSpec;
+		if (spec === null) return null;
+		const field = spec.fields.find((f) => f.kind === "custom" && f.rendererId === TODO_ID);
+		if (field === undefined || field.kind !== "custom") return null;
+		return parseTodoPayload(field.payload);
 	});
 
 	// Conversation/tab switch → snap to the bottom of the new transcript.
@@ -386,7 +401,7 @@
 		</section>
 		<section class="mt-4 flex flex-col gap-3">
 			<h3 class="text-xs font-semibold uppercase opacity-60">Surfaces</h3>
-			{#each store.surfaces.filter((s) => s.id !== CACHE_WARMING_ID && s.id !== MESSAGE_QUEUE_ID) as spec (spec.id)}
+			{#each store.surfaces.filter((s) => s.id !== CACHE_WARMING_ID && s.id !== MESSAGE_QUEUE_ID && s.id !== TODO_ID) as spec (spec.id)}
 				<SurfaceView {spec} onInvoke={handleInvoke} />
 			{/each}
 		</section>
@@ -400,6 +415,15 @@
 				onInvoke={handleInvoke}
 				{warmNow}
 			/>
+		{/key}
+	{:else if kind === "tasks"}
+		<!-- Re-mount per conversation so the task list is isolated per conversation. -->
+		{#key store.activeConversationId}
+			{#if todoData !== null && todoData.todos.length > 0}
+				<TodoList payload={todoData} />
+			{:else}
+				<p class="text-xs opacity-60">No tasks yet.</p>
+			{/if}
 		{/key}
 	{:else if kind === "settings"}
 		<!-- FE-local settings. Not conversation-scoped (no {#key}: the chat limit is
