@@ -434,29 +434,23 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let socket: ReturnType<typeof createSurfaceSocket> | null = null;
 
 	/**
-	 * Open (or focus) a conversation tab — used by the `conversation.open` WS
-	 * broadcast (CLI `--open` flag). If the conversation is already open, just
-	 * focus it; otherwise create a chat store, load its history, subscribe to its
-	 * live turns, and create+select the tab.
+	 * Open a conversation tab — used by the `conversation.open` WS broadcast
+	 * (CLI `--open` flag). If the conversation is already open, this is a no-op;
+	 * otherwise create a chat store, load its history, subscribe to its live
+	 * turns, and add the tab WITHOUT switching the active conversation (the user
+	 * stays on their current tab; the new tab appears in the strip).
 	 */
 	function openConversation(conversationId: string): void {
-		const alreadyOpen = chatStores.has(conversationId);
-		if (!alreadyOpen) {
-			const store = createChatFor(conversationId, activeModel);
-			chatStores.set(conversationId, store);
-			void store.load();
-			subscribeChat(conversationId);
-			tabsStore.createTab({
-				conversationId,
-				model: activeModel,
-				title: "Conversation",
-			});
-		}
-		tabsStore.selectTab(conversationId);
-		refreshActiveChat();
-		syncSubscriptions();
-		void refreshCwd();
-		void refreshReasoningEffort();
+		if (chatStores.has(conversationId)) return;
+		const store = createChatFor(conversationId, activeModel);
+		chatStores.set(conversationId, store);
+		void store.load();
+		subscribeChat(conversationId);
+		tabsStore.openTab({
+			conversationId,
+			model: activeModel,
+			title: "Conversation",
+		});
 	}
 
 	const socketOpts: SurfaceSocketOptions = {

@@ -4,6 +4,7 @@ import {
 	closeTab as reduceCloseTab,
 	createTab as reduceCreateTab,
 	newDraft as reduceNewDraft,
+	openTab as reduceOpenTab,
 	selectTab as reduceSelectTab,
 	setModel as reduceSetModel,
 	setTitle as reduceSetTitle,
@@ -21,6 +22,8 @@ export interface TabsStore {
 	readonly activeTab: Tab | null;
 	newDraft(): void;
 	createTab(tab: Tab): void;
+	/** Add a tab WITHOUT focusing it (for `conversation.open`). No-op if already open. */
+	openTab(tab: Tab): void;
 	selectTab(conversationId: string): void;
 	closeTab(conversationId: string): void;
 	setModel(conversationId: string, model: string): void;
@@ -50,6 +53,9 @@ export function createTabsStore(storage: TabsStorage): TabsStore {
 		},
 		createTab(tab: Tab): void {
 			apply(reduceCreateTab(state, tab));
+		},
+		openTab(tab: Tab): void {
+			apply(reduceOpenTab(state, tab));
 		},
 		selectTab(conversationId: string): void {
 			apply(reduceSelectTab(state, conversationId));

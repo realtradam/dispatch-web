@@ -27,6 +27,17 @@ export function createTab(state: TabsState, tab: Tab): TabsState {
 	return { tabs, activeConversationId: tab.conversationId };
 }
 
+/**
+ * Add a tab WITHOUT switching the active conversation — used by the
+ * `conversation.open` WS broadcast (CLI `--open`): the tab appears in the
+ * strip but the user stays on their current tab. No-op if already open.
+ */
+export function openTab(state: TabsState, tab: Tab): TabsState {
+	const exists = state.tabs.some((t) => t.conversationId === tab.conversationId);
+	if (exists) return state;
+	return { tabs: [...state.tabs, tab], activeConversationId: state.activeConversationId };
+}
+
 export function selectTab(state: TabsState, conversationId: string): TabsState {
 	return { ...state, activeConversationId: conversationId };
 }
