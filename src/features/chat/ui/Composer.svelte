@@ -37,12 +37,16 @@
 	const usage = $derived(computeContextUsage(contextSize, MAX_CONTEXT));
 	const hasUsage = $derived(contextSize !== undefined);
 
-	// While a turn is generating, the send button becomes a "Queue" button that
-	// enqueues a steering message (`chat.queue`) instead of starting a new turn
-	// (`chat.send`). Falls back to `onSend` when no `onQueue` is wired.
-	const steering = $derived(status === "running" && onQueue !== undefined);
-	const submitLabel = $derived(steering ? "Queue" : "Send");
-	const placeholder = $derived(steering ? "Steer the conversation..." : "Type a message...");
+	// One button, three modes:
+	// - idle → "Send" (starts a turn via chat.send)
+	// - running + text → "Queue" (steers via chat.queue)
+	// - running + empty → "Stop" (aborts via POST /stop)
+	const buttonMode = $derived.by<"send" | "queue" | "stop">(() => {
+		if (status === "running" && !hasText && onStop !== undefined) return "stop";
+		if (status === "running" && hasText && onQueue !== undefined) return "queue";
+		return "send";
+	});
+	const placeholder = $derived(status === "running" ? "Steer the conversation..." : "Type a message...");
 
 	// As the window fills, escalate color: calm → warning → danger.
 	function fillClass(pct: number): string {
@@ -76,7 +80,7 @@
 	function handleSubmit(): void {
 		const trimmed = text.trim();
 		if (trimmed.length === 0) return;
-		if (steering) {
+		if (buttonMode === "queue") {
 			onQueue?.(trimmed);
 		} else {
 			onSend(trimmed);
@@ -99,7 +103,7 @@
 		handleSubmit();
 	}}
 >
-	<!-- Top bar: expanding textarea + send button -->
+	<!-- Top bar: expanding textarea + single context-aware button -->
 	<div class="flex items-end gap-2 px-4 pt-3 pb-2">
 		<textarea
 			bind:this={inputEl}
@@ -110,24 +114,18 @@
 			rows="1"
 			aria-label="Message input"
 		></textarea>
-		<button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!hasText}>
-			{submitLabel}
-		</button>
-		{#if status === "running" && onStop}
+		{#if buttonMode === "stop"}
 			<button
-				class="btn btn-error btn-square shrink-0"
+				class="btn btn-error w-20 shrink-0"
 				type="button"
 				aria-label="Stop generation"
-				onclick={onStop}
+				onclick={() => onStop?.()}
 			>
-				<svg
-					xmlns="http://www.w3.org/2000/svg"
-					viewBox="0 0 24 24"
-					fill="currentColor"
-					class="h-4 w-4"
-				>
-					<rect x="6" y="6" width="12" height="12" rx="2"></rect>
-				</svg>
+				Stop
+			</button>
+		{:else}
+			<button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!hasText}>
+				{buttonMode === "queue" ? "Queue" : "Send"}
 			</button>
 		{/if}
 	</div>
