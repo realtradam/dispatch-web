@@ -136,11 +136,13 @@ export function parseServerMessage(data: string): WsServerMessage | null {
 		}
 		case "conversation.compacted": {
 			if (typeof parsed.conversationId !== "string") return null;
+			if (typeof parsed.newConversationId !== "string") return null;
 			if (typeof parsed.messagesSummarized !== "number") return null;
 			if (typeof parsed.messagesKept !== "number") return null;
 			const msg: ConversationCompactedMessage = {
 				type: "conversation.compacted",
 				conversationId: parsed.conversationId,
+				newConversationId: parsed.newConversationId,
 				messagesSummarized: parsed.messagesSummarized,
 				messagesKept: parsed.messagesKept,
 			};

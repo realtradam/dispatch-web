@@ -5,9 +5,17 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.14.0` (conversation lifecycle).
-> Depends on `@dispatch/wire@0.10.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.15.0` (compaction).
+> Depends on `@dispatch/wire@0.11.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
 > `ui-contract.reference.md`).
+>
+> **2026-06-22 delta (compaction handoff — package bumped `0.14.0` → `0.15.0`, ADDITIVE):**
+> adds conversation compaction — summarize old history + retain recent N messages. Manual:
+> `POST /conversations/:id/compact` (optional `{ keepLastN, modelName }`) → `CompactResponse`.
+> Automatic: after each turn settles, if the last turn's input tokens exceeded the per-conversation
+> `compactThreshold`, compaction runs automatically. `GET`/`PUT /conversations/:id/compact-threshold`
+> (`CompactThresholdResponse`/`SetCompactThresholdRequest`) — `threshold: 0` = disabled; default
+> 350000 when not stored. Re-exports `CompactionResult` from `wire@0.11.0`.
 >
 > **2026-06-22 delta (conversation lifecycle handoff — package bumped `0.13.0` → `0.14.0`, ADDITIVE):**
 > adds conversation lifecycle **status** (`active`/`idle`/`closed`) for cross-device tab
@@ -712,6 +720,7 @@ export interface ConversationStatusChangedMessage {
 export interface ConversationCompactedMessage {
 	readonly type: "conversation.compacted";
 	readonly conversationId: string;
+	readonly newConversationId: string;
 	readonly messagesSummarized: number;
 	readonly messagesKept: number;
 }
@@ -759,5 +768,35 @@ export interface SetTitleRequest {
 export interface TitleResponse {
 	readonly conversationId: string;
 	readonly title: string;
+}
+
+// ─── Compaction ──────────────────────────────────────────────────────────────
+
+/**
+ * Response for `POST /conversations/:id/compact` — confirms the conversation
+ * history was compacted (old messages summarized, recent messages retained).
+ */
+export interface CompactResponse {
+	readonly conversationId: string;
+	readonly newConversationId: string;
+	readonly messagesSummarized: number;
+	readonly messagesKept: number;
+}
+
+/**
+ * Response for `GET /conversations/:id/compact-threshold` — the token count
+ * at which automatic compaction triggers (0 = manual only; default 350000
+ * when not stored).
+ */
+export interface CompactThresholdResponse {
+	readonly conversationId: string;
+	readonly threshold: number;
+}
+
+/**
+ * Request body for `PUT /conversations/:id/compact-threshold`.
+ */
+export interface SetCompactThresholdRequest {
+	readonly threshold: number;
 }
 ```

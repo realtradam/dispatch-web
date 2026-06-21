@@ -4,8 +4,13 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.10.0` (conversation lifecycle status). Regenerate
+> **Orchestrator:** SNAPSHOT of `wire@0.11.0` (compaction). Regenerate
 > whenever `@dispatch/wire` changes.
+>
+> **2026-06-22 delta (compaction handoff — package bumped `0.10.0` → `0.11.0`, ADDITIVE):**
+> adds `CompactionResult` — the result of a compaction operation (`summary`, `messagesSummarized`,
+> `messagesKept`). The summary text is the model's output; the FE doesn't render it directly (it
+> becomes the conversation's first system message after compaction).
 >
 > **2026-06-22 delta (conversation lifecycle handoff — package bumped `0.9.0` → `0.10.0`, ADDITIVE):**
 > adds `ConversationStatus` (`"active" | "idle" | "closed"`) — the per-conversation lifecycle
@@ -612,5 +617,21 @@ export interface ConversationMeta {
 	readonly lastActivityAt: number;
 	readonly title: string;
 	readonly status: ConversationStatus;
+	/** Points to the archive conversation with full pre-compaction history. */
+	readonly compactedFrom?: string;
+}
+
+// ─── Compaction ──────────────────────────────────────────────────────────────
+
+/**
+ * Result of a compaction operation. `summary` is the text the model produced;
+ * `messagesKept` is how many recent messages were retained after the summary;
+ * `messagesSummarized` is how many old messages were replaced by the summary.
+ */
+export interface CompactionResult {
+	readonly summary: string;
+	readonly newConversationId: string;
+	readonly messagesSummarized: number;
+	readonly messagesKept: number;
 }
 ```

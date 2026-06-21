@@ -148,6 +148,7 @@ describe("classifies every WsServerMessage type", () => {
 			{
 				type: "conversation.compacted" as const,
 				conversationId: "c1",
+				newConversationId: "c2",
 				messagesSummarized: 10,
 				messagesKept: 5,
 			},

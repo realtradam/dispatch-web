@@ -18,6 +18,7 @@
 - **Todo task list** — `rendererId: "todo"` custom renderer, dedicated "Tasks" sidebar view (status indicators: pending/in_progress/completed/cancelled).
 - **Conversation.open broadcast** — `conversation.open` WS message handler, opens a tab (without auto-switching) from CLI `--open` flag.
 - **Conversation lifecycle (cross-device tab sync)** — `GET /conversations?status=active,idle` on connect restores tabs across devices; `conversation.statusChanged` WS handler updates tab status + removes closed tabs; TabBar shows a spinner on `active` conversations.
+- **Conversation compaction** — "Compaction" sidebar view with manual "Compact now" button (`POST /conversations/:id/compact`) + auto-compact threshold input (`GET`/`PUT /conversations/:id/compact-threshold`); `conversation.compacted` WS handler reloads history.
 
 ## Next up
 
