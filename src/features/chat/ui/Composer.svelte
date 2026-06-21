@@ -9,6 +9,7 @@
 	let {
 		onSend,
 		onQueue,
+		onStop,
 		contextSize = undefined,
 		status = "idle",
 	}: {
@@ -20,6 +21,8 @@
 		 * used regardless (tests / non-steering contexts).
 		 */
 		onQueue?: (text: string) => void;
+		/** Stop the in-flight generation (`POST /conversations/:id/stop`). */
+		onStop?: () => void;
 		// Current context occupancy (latest turn's contextSize), or `undefined`
 		// when unknown — the status bar then shows "— tokens", never 0%.
 		contextSize?: number | undefined;
@@ -110,6 +113,23 @@
 		<button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!hasText}>
 			{submitLabel}
 		</button>
+		{#if status === "running" && onStop}
+			<button
+				class="btn btn-error btn-square shrink-0"
+				type="button"
+				aria-label="Stop generation"
+				onclick={onStop}
+			>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					viewBox="0 0 24 24"
+					fill="currentColor"
+					class="h-4 w-4"
+				>
+					<rect x="6" y="6" width="12" height="12" rx="2"></rect>
+				</svg>
+			</button>
+		{/if}
 	</div>
 
 	<!-- Bottom status bar: status icon · context-window fill · token count -->
