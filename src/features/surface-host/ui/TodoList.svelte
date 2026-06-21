@@ -19,7 +19,7 @@
 				<!-- Status indicator -->
 				<span class="mt-0.5 shrink-0">
 					{#if todo.status === "in_progress"}
-						<span class="loading loading-spinner loading-xs text-primary"></span>
+						<span class="block h-4 w-4 rounded-full bg-primary"></span>
 					{:else if todo.status === "completed"}
 						<svg
 							xmlns="http://www.w3.org/2000/svg"
