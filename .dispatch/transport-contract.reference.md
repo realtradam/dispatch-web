@@ -5,9 +5,20 @@
 > hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
 > this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.12.0` (message queue + steering).
-> Depends on `@dispatch/wire@0.8.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.13.0` (conversation.open broadcast).
+> Depends on `@dispatch/wire@0.9.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
 > `ui-contract.reference.md`).
+>
+> **2026-06-21 delta (conversation.open handoff — package bumped `0.12.0` → `0.13.0`, ADDITIVE):**
+> adds the `conversation.open` WS broadcast — when the CLI's `--open` flag fires
+> (`POST /conversations/:id/open`), the backend broadcasts a `ConversationOpenMessage`
+> (`{ type: "conversation.open"; conversationId }`) to ALL connected WS clients. Additive to
+> `WsServerMessage`. The FE handles it by opening/focusing a tab for the `conversationId`. Also
+> adds conversation metadata endpoints (not yet consumed by the FE): `GET /conversations` (list,
+> `ConversationListResponse`/`ConversationMeta`), `GET /conversations/:id/last` (blocking last
+> message, `LastMessageResponse`), `GET`/`PUT /conversations/:id/title` (`TitleResponse`/
+> `SetTitleRequest`), and `POST /conversations/:id/open` (`OpenConversationResponse`). Re-exports
+> `ConversationMeta` from `wire@0.9.0`.
 >
 > **2026-06-21 delta (message-queue + steering handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):**
 > adds the enqueue surface for the per-conversation message queue (the wire types `QueuedMessage` /
@@ -200,6 +211,7 @@
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
 import type {
 	AgentEvent,
+	ConversationMeta,
 	QueuedMessage,
 	ReasoningEffort,
 	StoredChunk,
@@ -208,6 +220,7 @@ import type {
 
 export type {
 	AgentEvent,
+	ConversationMeta,
 	QueuedMessage,
 	ReasoningEffort,
 	StepMetrics,
@@ -649,5 +662,66 @@ export type WsClientMessage =
  * Every server → client WS message: surface ops (`@dispatch/ui-contract`) + chat
  * ops. A client discriminates on `type`.
  */
-export type WsServerMessage = SurfaceServerMessage | ChatDeltaMessage | ChatErrorMessage;
+export type WsServerMessage =
+	| SurfaceServerMessage
+	| ChatDeltaMessage
+	| ChatErrorMessage
+	| ConversationOpenMessage;
+
+// ─── Conversation list + metadata ────────────────────────────────────────────
+
+/**
+ * Broadcast to all connected WS clients when a conversation is "opened" (e.g.
+ * via the CLI `--open` flag). The frontend decides whether to open/focus a tab
+ * — the backend just signals. Additive to `WsServerMessage`.
+ */
+export interface ConversationOpenMessage {
+	readonly type: "conversation.open";
+	readonly conversationId: string;
+}
+
+/**
+ * Response for `GET /conversations` — the list of all known conversations,
+ * sorted by `lastActivityAt` descending (most recent first). Each entry carries
+ * enough metadata for a conversation picker UI (id, title, timestamps).
+ * Optional `?q=` query param filters by id prefix (short-id resolution).
+ */
+export interface ConversationListResponse {
+	readonly conversations: readonly ConversationMeta[];
+}
+
+/**
+ * Response for `GET /conversations/:id/last` — blocks server-side until the
+ * in-flight turn settles (if one is active), then returns the last assistant
+ * text message. `content` is empty if the conversation has no assistant message.
+ * `turnId` is the turn that produced the message (absent if no turn ran).
+ */
+export interface LastMessageResponse {
+	readonly conversationId: string;
+	readonly content: string;
+	readonly turnId?: string;
+}
+
+/**
+ * Response for `POST /conversations/:id/open` — confirms the conversation.open
+ * signal was broadcast to connected WS clients.
+ */
+export interface OpenConversationResponse {
+	readonly conversationId: string;
+}
+
+/**
+ * Request body for `PUT /conversations/:id/title` — set a human-readable title.
+ */
+export interface SetTitleRequest {
+	readonly title: string;
+}
+
+/**
+ * Response for `GET/PUT /conversations/:id/title` — the current title.
+ */
+export interface TitleResponse {
+	readonly conversationId: string;
+	readonly title: string;
+}
 ```

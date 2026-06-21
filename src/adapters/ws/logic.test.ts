@@ -217,6 +217,22 @@ describe("parseServerMessage", () => {
 			),
 		).toBeNull();
 	});
+
+	it("parses a conversation.open message", () => {
+		const data = JSON.stringify({ type: "conversation.open", conversationId: "c1" });
+		const result = parseServerMessage(data);
+		expect(result).toEqual({ type: "conversation.open", conversationId: "c1" });
+	});
+
+	it("returns null for conversation.open with missing conversationId", () => {
+		expect(parseServerMessage(JSON.stringify({ type: "conversation.open" }))).toBeNull();
+	});
+
+	it("returns null for conversation.open with non-string conversationId", () => {
+		expect(
+			parseServerMessage(JSON.stringify({ type: "conversation.open", conversationId: 42 })),
+		).toBeNull();
+	});
 });
 
 describe("round-trip: parseServerMessage(serialize(...))", () => {

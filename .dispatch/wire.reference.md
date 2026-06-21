@@ -4,8 +4,12 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.8.0` (message queue + steering). Regenerate
+> **Orchestrator:** SNAPSHOT of `wire@0.9.0` (conversation metadata). Regenerate
 > whenever `@dispatch/wire` changes.
+>
+> **2026-06-21 delta (conversation.open handoff — package bumped `0.8.0` → `0.9.0`, ADDITIVE):**
+> adds `ConversationMeta` — metadata for a conversation (id, title, createdAt, lastActivityAt),
+> returned by `GET /conversations` (the list endpoint, see `transport-contract@0.13.0`).
 >
 > **2026-06-21 delta (message-queue + steering handoff — package bumped `0.7.0` → `0.8.0`, ADDITIVE):**
 > adds the per-conversation **message queue** + **steering** feature. While a turn is GENERATING,
@@ -576,5 +580,20 @@ export interface TurnSteeringEvent {
 	readonly conversationId: string;
 	readonly turnId: string;
 	readonly text: string;
+}
+
+// ─── Conversation metadata ───────────────────────────────────────────────────
+
+/**
+ * Metadata for a conversation, returned by `GET /conversations` (the list
+ * endpoint). The title defaults to the first user message (truncated) and can
+ * be set via `PUT /conversations/:id/title`. `createdAt` is set on first write;
+ * `lastActivityAt` is updated on every append.
+ */
+export interface ConversationMeta {
+	readonly id: string;
+	readonly createdAt: number;
+	readonly lastActivityAt: number;
+	readonly title: string;
 }
 ```
