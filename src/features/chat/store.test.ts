@@ -1057,8 +1057,9 @@ describe("createChatStore", () => {
 		}
 		expect(store.chunks).toHaveLength(15);
 
-		// Reader returns to the bottom — but provisional chunks are never unloaded,
-		// so the deferred trim still can't shrink an all-provisional transcript.
+		// Reader returns to the bottom — the deferred trim now catches up.
+		// With no committed chunks, it drops the oldest provisional chunks
+		// (the in-flight turn) to stay within the limit.
 		atBottom = true;
 		store.handleDelta(
 			deltaEvent({
@@ -1071,7 +1072,8 @@ describe("createChatStore", () => {
 				stepId: "t1#15" as StepId,
 			}),
 		);
-		expect(store.chunks).toHaveLength(16);
+		// 16 provisional, limit 10, quarter 3 → drop 6 oldest → 10 remain.
+		expect(store.chunks).toHaveLength(10);
 
 		store.dispose();
 	});

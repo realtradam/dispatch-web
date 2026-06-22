@@ -64,17 +64,17 @@ The backend now persists chunks **incrementally at step boundaries** during gene
 FE's existing `syncTail` already polls this — it will find new chunks as each step completes. No
 wire/transport-contract change needed (`StoredChunk` already has `seq`; `AgentEvent` types unchanged).
 
-**FE adoption plan (option (c) from the CR):**
-- Fold events for the **current in-progress step** only (streaming text, thinking dots) — provisional state shrinks to one step's worth of chunks, never a trim concern.
-- `syncTail` for **sealed steps** — picks up committed chunks incrementally as each step completes.
-- `trimTranscript` drops oldest committed chunks uniformly — no special provisional case.
-- `turn-sealed` becomes a "refresh" signal — all chunks already committed.
-- "Show earlier" works uniformly for all turns (including in-flight — sealed steps have seq).
-- Remove `hiddenThinkingCount` (no provisional thinking blocks to track) and the `sealedTurnId` flush.
+**FE adoption: NOT pursuing syncTail-during-generation.** Investigation revealed
+the kernel emits `step-complete` (line 360 of `run-turn.ts`) BEFORE calling
+`onStepComplete` (line 542) — the step's chunks are persisted only AFTER tool
+results come back, not when `step-complete` fires. So `syncTail` triggered by
+`step-complete` finds nothing. Moving the emission after `onStepComplete` would
+be a kernel change.
 
-**Not yet implemented.** The FE currently still uses the provisional/committed split. The interim
-fix (frontend-only cache for dropped provisional chunks) was not built — CR-6 resolution makes it
-unnecessary. Adoption is the next FE task when prioritized.
+Instead, the FE now trims provisional chunks directly in `trimTranscript` when
+committed is exhausted — no `syncTail` needed. Dropped provisional chunks are
+lost temporarily (no "Show earlier" for them) but come back as committed when
+the turn seals and `syncTail` fetches everything.
 
 ---
 

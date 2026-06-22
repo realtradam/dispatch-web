@@ -86,7 +86,7 @@ describe("trimTranscript", () => {
 		expect(next.hiddenBeforeSeq).toBe(51);
 	});
 
-	it("counts provisional + accumulating toward the limit but never drops them", () => {
+	it("counts provisional + accumulating toward the limit (drops committed first)", () => {
 		const base = stateWith(chunks(1, 98));
 		const state: TranscriptState = {
 			...base,
@@ -103,17 +103,18 @@ describe("trimTranscript", () => {
 		expect(next.accumulating).not.toBeNull();
 	});
 
-	it("caps the drop at the committed length", () => {
+	it("drops oldest provisional when committed is exhausted", () => {
 		const base = stateWith(chunks(1, 2));
 		const provisional = Array.from({ length: 20 }, (_, i) => ({
 			role: "assistant" as const,
 			chunk: { type: "text" as const, text: `p${i}` },
 		}));
 		const state: TranscriptState = { ...base, provisional };
+		// 2 + 20 = 22 > 10. quarter = 3. Drop 2 committed, then drop
+		// ceil((20-10)/3)*3 = 12 provisional → 8 remain.
 		const next = trimTranscript(state, 10);
 		expect(next.committed).toHaveLength(0);
-		expect(next.provisional).toHaveLength(20);
-		// Watermark advances past the last dropped committed chunk.
+		expect(next.provisional).toHaveLength(8);
 		expect(next.hiddenBeforeSeq).toBe(3);
 	});
 
