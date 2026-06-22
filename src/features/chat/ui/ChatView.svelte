@@ -120,20 +120,20 @@
 		     the card inherits the same left offset as the bubble bodies. -->
 		<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
 			<div class="chat-bubble bg-transparent">
-				{#if rendered.chunk.type === "tool-call"}
-					<div class="w-fit max-w-full rounded-box bg-base-200 p-3 text-sm">
-						<strong>{rendered.chunk.toolName}</strong>
-						<pre class="text-xs mt-1">{JSON.stringify(rendered.chunk.input, null, 2)}</pre>
-					</div>
-				{:else}
-					<div
-						class="w-fit max-w-full rounded-box bg-base-200 p-3 text-sm"
-						class:text-error={rendered.chunk.isError}
-					>
-						<strong>{rendered.chunk.toolName}</strong>
-						<pre class="text-xs mt-1">{rendered.chunk.content}</pre>
-					</div>
-				{/if}
+			{#if rendered.chunk.type === "tool-call"}
+				<div class="w-fit max-w-full overflow-hidden rounded-box bg-base-200 p-3 text-sm">
+					<strong>{rendered.chunk.toolName}</strong>
+					<pre class="mt-1 overflow-x-auto text-xs">{JSON.stringify(rendered.chunk.input, null, 2)}</pre>
+				</div>
+			{:else}
+				<div
+					class="w-fit max-w-full overflow-hidden rounded-box bg-base-200 p-3 text-sm"
+					class:text-error={rendered.chunk.isError}
+				>
+					<strong>{rendered.chunk.toolName}</strong>
+					<pre class="mt-1 overflow-x-auto text-xs">{rendered.chunk.content}</pre>
+				</div>
+			{/if}
 			</div>
 		</div>
 	{:else}
@@ -224,21 +224,21 @@
 			     the single tool card so it lines up with the other messages. -->
 			<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
 				<div class="chat-bubble bg-transparent">
-					<ul class="list w-fit max-w-full rounded-box bg-base-200 text-sm">
-						{#each row.group.entries as entry (entry.call.toolCallId)}
-							<li class="list-row">
-								<div>
-									<strong>{entry.call.toolName}</strong>
-									<pre class="text-xs mt-1">{JSON.stringify(entry.call.input, null, 2)}</pre>
-									{#if entry.result}
-										<pre
-											class="text-xs mt-1"
-											class:text-error={entry.result.isError}>{entry.result.content}</pre>
-									{/if}
-								</div>
-							</li>
-						{/each}
-					</ul>
+			<ul class="list w-fit max-w-full overflow-hidden rounded-box bg-base-200 text-sm">
+					{#each row.group.entries as entry (entry.call.toolCallId)}
+						<li class="list-row">
+							<div class="min-w-0">
+								<strong>{entry.call.toolName}</strong>
+								<pre class="mt-1 overflow-x-auto text-xs">{JSON.stringify(entry.call.input, null, 2)}</pre>
+								{#if entry.result}
+									<pre
+										class="mt-1 overflow-x-auto text-xs"
+										class:text-error={entry.result.isError}>{entry.result.content}</pre>
+								{/if}
+							</div>
+						</li>
+					{/each}
+				</ul>
 				</div>
 			</div>
 		{/if}
