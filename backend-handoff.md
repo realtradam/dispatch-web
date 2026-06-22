@@ -5,132 +5,10 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-22 (compaction handoff consumed). **FE is current on
-`ui-contract@0.2.0` / `transport-contract@0.15.0` / `wire@0.11.0`.** All handoffs to date are
-consumed: surfaces + WS, conversation transcript/metrics, tabs + model selector, cache-warming
-(incl. authoritative timer + retention + cache-rate fix + the CR-4 lifecycle below),
-**per-conversation cwd + LSP status**, **context size**, **turn continuity + multi-client live
-view**, the **chat limit + CR-5 history windowing**, the **reasoning effort
-(thinking-depth knob)**, the **message queue + steering**, the **todo task list**, the
-**conversation.open broadcast**, the **conversation lifecycle (cross-device tab sync)**, and the
-**conversation compaction** (below).
-**Open asks: NONE.** CR-1/CR-2/CR-4/CR-5 all RESOLVED ✅ (see §2); §3 lists likely next asks.
-**CR-3 (watcher couldn't see the USER prompt until seal) → RESOLVED ✅** — backend shipped the
-`user-message` turn event; FE re-pinned + consumption live.
-The cwd/LSP draft-path verification (`backend-handoff-cwd-lsp.md`) came back **all ✅ confirmed**._
-
-**Compaction handoff (`frontend-compaction-handoff.md`) → CONSUMED ✅.**
-Re-pinned `wire@0.10.0→0.11.0` + `transport-contract@0.14.0→0.15.0` (`ui-contract` unchanged);
-re-mirrored both `.dispatch/*.reference.md`. FE work: a dedicated "Compaction" sidebar view
-(`features/chat/ui/CompactionView.svelte`) with a "Compact now" button (`POST
-/conversations/:id/compact`) + an auto-compact threshold number input (`GET`/`PUT
-/conversations/:id/compact-threshold`; 0 = disabled, default 350000). The app store exposes
-`compactNow()` + `compactThreshold` reactive state + `setCompactThreshold()`, seeded on focus
-change (like reasoning-effort + cwd). The `conversation.compacted` WS handler (already wired in
-the lifecycle commit) disposes the stale store + cache + reloads history. 686 tests green. NO
-new backend ask._
-Re-pinned `wire@0.9.0→0.10.0` + `transport-contract@0.13.0→0.14.0` (`ui-contract` unchanged);
-re-mirrored both `.dispatch/*.reference.md`. FE work: `fetchOpenConversations()` on connect fetches
-`GET /conversations?status=active,idle` to restore the tab bar across devices (merges with
-localStorage-restored tabs — opens new ones, removes closed ones, updates titles). The
-`conversation.statusChanged` WS message handler updates a per-conversation status map: `closed` →
-`removeTabLocally` (FE cleanup without re-POSTing `/close`); `active` → opens the tab if not
-already open + shows a spinner in the TabBar (via `statusFor` prop). The `closeTab` path now uses
-`removeTabLocally` (extracted from the old inline cleanup). Conformance guards + WS adapter tests
-cover the new type. 686 tests green. NO new backend ask._
-
-**Conversation.open handoff (`frontend-conversation-open-handoff.md`) → CONSUMED ✅.**
-Re-pinned `wire@0.8.0→0.9.0` + `transport-contract@0.12.0→0.13.0` (`ui-contract` unchanged);
-re-mirrored both `.dispatch/*.reference.md`. FE work: the WS adapter (`adapters/ws/logic.ts` +
-`index.ts`) parses + routes the new `"conversation.open"` top-level `WsServerMessage` to an
-`onConversationOpen` handler; the app store's `openConversation(conversationId)` opens (or
-focuses) a tab for the broadcast conversation — if not already open, creates a chat store,
-loads history, subscribes to live turns, creates the tab; then selects it + refreshes
-cwd/effort/surfaces. The conformance guard + WS adapter tests cover the new type. The backend
-also shipped conversation metadata endpoints (`GET /conversations`, `GET /conversations/:id/last`,
-`GET`/`PUT /conversations/:id/title`, `POST /conversations/:id/open`) — NOT yet consumed by the FE
-(mirrored for reference; wire when a conversation picker/list UI is built). 682 tests green. NO
-new backend ask._
-
-**Message-queue + steering handoff (`frontend-message-queue-handoff.md`) → CONSUMED ✅.**
-Re-pinned `wire@0.7.0→0.8.0` + `transport-contract@0.11.0→0.12.0` (`ui-contract` unchanged —
-the queue uses the existing `custom` surface field kind); re-mirrored both
-`.dispatch/*.reference.md`; added "message queue" + "steering" to FE `GLOSSARY.md`. FE work:
-(a) `core/chunks/reducer.ts` folds the new `steering` `AgentEvent` into the transcript as a
-provisional user bubble (after the tool-result it followed; no de-dup — the queue surface, not
-the transcript, carried the pending message); `core/wire/conformance.ts` exhaustiveness guards
-updated for `steering` + `chat.queue`; (b) a `rendererId: "message-queue"` custom renderer
-(`surface-host/logic/message-queue.ts` pure parser + `MessageQueueList.svelte`) renders
-`QueuePayload.messages` (`QueuedMessage[]`); (c) the `message-queue` surface is pulled out of
-the generic Extensions sidebar list and rendered as a compact panel above the Composer (only
-when the queue is non-empty — an idle queue is hidden); (d) `ChatStore.queueMessage(text)` +
-`AppStore.queueMessage(text)` send `chat.queue { conversationId, text }` (trim/validate
-non-empty client-side too); (e) the Composer switches to `chat.queue` while `generating`
-(button label → "Queue", placeholder → "Steer the conversation..."). Carry-to-new-turn needs
-no special handling (surfaces as a normal new turn). **NOT yet live-probed** — the handoff
-flags the live end-to-end steering flow (a real `chat.queue` → tool-call → `steering` event
-against a tool-calling model) as not yet exercised; worth a live smoke. 664 tests green. NO
-new backend ask._
-
-**Reasoning-effort handoff (`frontend-reasoning-effort-handoff.md`) → CONSUMED ✅
-(curl-probed live: GET null on unseen id · PUT `xhigh` → echo + sticky GET · bad level → 400
-listing the ladder · CORS preflight allows PUT).** Re-pinned `wire@0.6.1→0.7.0` +
-`transport-contract@0.10.0→0.11.0`; re-mirrored both `.dispatch/*.reference.md`; added
-"reasoning effort" to FE `GLOSSARY.md`. FE work: a **per-conversation effort selector** in the
-sidebar's **Model view**, under the provider + model dropdowns
-(`features/chat/ui/ReasoningEffortSelector.svelte`, pure helpers in
-`features/chat/reasoning-effort.ts`): renders `null` as "high (default)" per the server-owned
-resolution chain, PUTs on change (effective next turn), shows the save error + reverts on 400,
-disables while in flight; re-mounted per conversation (incl. drafts — the draft id survives
-promotion, so an effort set on a draft applies from turn 1, same pattern as cwd). The app store
-seeds it on every focus change via `GET /conversations/:id/reasoning-effort` (cleared first so a
-switch never flashes the previous conversation's level) and exposes
-`reasoningEffort`/`setReasoningEffort`. The optional per-turn `chat.send` override is NOT built
-(no composer affordance yet — `chat.send` still omits the key, which the contract specifies as
-"no override"). The "expect more thinking" note needs no change: the transcript already renders
-arbitrary runs of reasoning deltas, and `generating` is structural (not timer-based). 616 tests
-green. NO new backend ask._
-
-**CR-4 cache-warming lifecycle (`frontend-cache-warming-lifecycle-handoff.md`) → CONSUMED ✅
-(live-probed 17/17 against `bin/up`).** Re-pinned `ui-contract@0.1.0→0.2.0` +
-`transport-contract@0.8.0→0.9.0` (`wire` unchanged); re-mirrored both `.dispatch/*.reference.md`. FE
-work: `store.closeTab()` now POSTs `POST /conversations/:id/close` (fire-and-forget, idempotent) —
-the explicit "done with this chat" affordance that aborts an in-flight turn + stops/disables that
-conversation's warming, while disconnect/`chat.unsubscribe` still leave both running;
-`syncSubscriptions` honors the new catalog `scope` flag (a `scope:"global"` surface is no longer
-re-subscribed on every conversation switch; absent = conversation-scoped, conservative);
-`secondsUntilNext` gained a 3s belt-and-braces stale guard (a past `nextWarmAt` renders "waiting…",
-should never trigger now). **CR-4d correction: the missing `conversationId` echo on the initial
-`surface` message was OURS** — the backend was right, HEAD echoes it; our WS parser
-(`adapters/ws/logic.ts` `case "surface"`) rebuilt the message and DROPPED the field. Fixed + unit
-tests; the protocol reducer's stale-scope filtering now actually bites on the initial reply too.
-Probe verified live: default OFF + nothing scheduled on a fresh conversation; toggle-on/interval
-updates carry FUTURE `nextWarmAt`; repeated automatic warms each push a FUTURE `nextWarmAt`;
-`nextWarmAt: null` pushed on `turn-start`; close mid-turn → 200 `abortedTurn:true`, watcher gets
-`done` `reason:"aborted"` + `turn-sealed`, surface flips `enabled:false`/`nextWarmAt:null`; second
-close idempotent (`abortedTurn:false`). CR-1 table payload also verified arriving (FE renderer
-pre-existing). 568 tests green._
-
-**Turn-continuity handoff (`frontend-turn-continuity-handoff.md`) → CONSUMED ✅.** Re-pinned
-`transport-contract@0.6.0→0.7.0` (additive; `wire` unchanged at `0.5.0`); re-mirrored
-`.dispatch/transport-contract.reference.md` with `ChatSubscribeMessage`/`ChatUnsubscribeMessage` + the
-widened `WsClientMessage` union. FE now: re-subscribes `chat.subscribe` for EVERY open conversation on
-page load + on WS (re)connect (and on close sends `chat.unsubscribe`); `chat.send` still auto-subscribes
-the sender, so the draft/promotion path adds none. A pure `generating` flag is folded structurally in
-`core/chunks` (`turn-start`/deltas ⇒ true; `done`/`turn-sealed`/`error` ⇒ false; NOT inferred from the
-free-form `status` string) and surfaced as `ChatStore.generating` → the Composer status icon now shows a
-"running" spinner for any watching client. `ChatStore.resync()` (called from `onReopen`) clears a stale
-spinner then pulls a turn that sealed while disconnected from history. 558 tests green. NO new backend
-ask. NOT yet live-probed — needs the two-WS / second-device manual check from the handoff's "Quick
-manual check" against a running backend.
-
-**Context-size handoff (`frontend-context-size-handoff.md`) → CONSUMED ✅.** Re-pinned `wire@0.4.0→0.5.0`
-+ `transport-contract@0.5.0→0.6.0`; re-mirrored both `.dispatch/*.reference.md`; added "context size" +
-"context window" to FE `GLOSSARY.md`. `core/metrics` now threads `contextSize` through the `done` fold +
-durable metrics and exposes `selectCurrentContextSize` (LATEST turn's defined value, `undefined`⇒unknown,
-never `0`, durable-wins-over-live); the chat store exposes `currentContextSize`; `ContextSizeBadge`
-renders "N tokens in context" / "context size unknown" above the composer. 533 tests green. NO new
-backend ask — but the max-limit denominator is now a live FE need; see §3.
+_Last updated: 2026-06-22 (CR-6 resolved by backend — incremental seq at step boundaries).
+**FE is current on `ui-contract@0.2.0` / `transport-contract@0.15.0` / `wire@0.11.0`.** 686 tests green.
+**Open asks: NONE.** All CRs resolved (CR-1 through CR-6). CR-6 not yet consumed by the FE —
+see §2 for the adoption plan._
 
 ---
 
@@ -141,8 +19,8 @@ Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.11.0`; `transport-contrac
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, **`done.contextSize`/`TurnMetrics.contextSize`**, **`ReasoningEffort`**, **`QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`**, **`ConversationMeta`/`ConversationStatus`** |
-| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + **`QueueRequest`/`QueueResponse`/`ChatQueueMessage`** + **`ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse`** + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, `done.contextSize`/`TurnMetrics.contextSize`, `ReasoningEffort`, `QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`, `ConversationMeta`/`ConversationStatus` |
+| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + `QueueRequest`/`QueueResponse`/`ChatQueueMessage` + `ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` ·
@@ -150,166 +28,78 @@ Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `GET /conversations/:id/metrics` · `GET`/`PUT /conversations/:id/cwd` ·
 `GET`/`PUT /conversations/:id/reasoning-effort` (sticky thinking-depth; `null` ⇒ default `high`) ·
 `GET /conversations/:id/lsp` · `POST /chat/warm` · `POST /conversations/:id/close` (explicit
-tab-close: abort turn + stop/disable warming) · **`POST /conversations/:id/queue`** (enqueue
+tab-close: abort turn + stop/disable warming) · `POST /conversations/:id/queue` (enqueue
 steering message; auto-starts a turn if idle) · WS `chat.send`→`chat.delta` ·
 WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live) ·
-**WS `chat.queue`** (enqueue steering; fire-and-forget — surface updates on success) ·
-**WS `conversation.open`** (broadcast: CLI `--open` flag signals the FE to open/focus a tab) ·
-**WS `conversation.statusChanged`** (broadcast: lifecycle status change — `active`/`idle`/`closed`).
+WS `chat.queue` (enqueue steering; fire-and-forget — surface updates on success) ·
+WS `conversation.open` (broadcast: CLI `--open` flag signals the FE to open/focus a tab) ·
+WS `conversation.statusChanged` (broadcast: lifecycle status change — `active`/`idle`/`closed`).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
-`transport-contract@0.14.0` / `wire@0.10.0`).
+`transport-contract@0.15.0` / `wire@0.11.0`).
+
+### FE invariants to keep (don't regress)
+
+- **`chat.send` must omit `cwd`** (send `undefined`), never `cwd:""`/`cwd:null`. The `/chat` `cwd`
+  field treats any non-`undefined` value as "provided". Verified safe: `chat/store.svelte.ts` builds
+  `chat.send` with only `type`/`conversationId`/`message`/`model` — no `cwd` field.
+- **Per-conversation seqs are 1-based, monotonic, gap-free** (CR-5 contractual guarantee on
+  `StoredChunk`). The FE derives `hasOlder = oldestLoaded.seq > 1`.
+- **Warming opt-in is NOT re-hydrated across a backend restart** — a conversation reads disabled
+  until toggled again (fail-safe). Backend offered boot hydration if it becomes a product need.
+
+---
 
 ## 2. Open asks FOR THE BACKEND
 
-**None open.** Resolved history below.
+### CR-6 — Assign seq during generation → **RESOLVED ✅** (backend shipped; FE adoption pending)
 
-### CR-5 — history windowing for the FE chat limit → **RESOLVED ✅** (courier `backend-handoff-chat-limit.md`; reply `frontend-history-windowing-handoff.md`; consumed + live-probed 23/23)
+The backend now persists chunks **incrementally at step boundaries** during generation:
+1. Turn starts → user message is `append`ed immediately (gets seq).
+2. Each step completes → step's messages are `append`ed immediately (get seq).
+3. Turn seals → `turn-sealed` emitted (no batch append needed — already persisted).
 
-_Live-probed against `bin/up` after consumption: seq origin `1`; `?limit=2` → newest 2 ascending
-with `latestSeq` = window tail; `?limit=200` on a 3-chunk log → whole log (short-chat exactness);
-`?beforeSeq=2&limit=50` → `[1]`; `limit=0` and `beforeSeq=-1` both 400. 23/23 incl. all
-pre-existing checks._
+`GET /conversations/:id?sinceSeq=N` returns committed, seq'd chunks **during generation**. The
+FE's existing `syncTail` already polls this — it will find new chunks as each step completes. No
+wire/transport-contract change needed (`StoredChunk` already has `seq`; `AgentEvent` types unchanged).
 
-Backend shipped everything asked (`transport-contract@0.10.0`, `wire@0.6.1` doc-only):
-`?limit=<k>` (newest-k of the selection, ascending; ≤ k ⇒ whole selection, exact) +
-`?beforeSeq=<s>` (exclusive `seq < s`; combined `sinceSeq < seq < s`) on
-`GET /conversations/:id`; ask #3 answered via our preferred cheapest option — a WRITTEN
-contractual guarantee that per-conversation seqs are **1-based, monotonic, gap-free** (codified
-on `StoredChunk`), so the FE derives `hasOlder = oldestLoaded.seq > 1` (no new response field).
-Validation: `limit`/`beforeSeq` must be positive ints, else 400 (FE never sends `beforeSeq=0` —
-`oldestLoaded.seq === 1` already means "nothing older"). **FE consumed:** re-pinned + re-mirrored
-both `.dispatch/*.reference.md`; `HistorySync` port gained an optional `{ limit?, beforeSeq? }`
-window; a COLD-cache fresh load now fetches `?sinceSeq=0&limit=<floor(0.75×L)>` (a warm-cache
-tail sync stays unwindowed — windowing a tail that outgrew the limit would leave a silent seq
-gap behind the cache); `hasEarlier` is seq-derived per the new contract; "Show earlier messages"
-pages from the local cache first and BACKFILLS the missing older run via
-`?beforeSeq=<oldestKnown>&limit=` (persisted to cache, so the next page-in is local). The
-`latestSeq` windowed-read caveat is satisfied structurally: the FE's tail cursor derives from
-the cache's max seq, never from a response's `latestSeq`. Chat-limit recap (FE-side, shipped
-with CR-5 still open): default 256 (`localStorage["dispatch.chatLimit"]`), bulk quarter-unload
-past the limit gated on reader-at-bottom, 75% fresh-load window.
+**FE adoption plan (option (c) from the CR):**
+- Fold events for the **current in-progress step** only (streaming text, thinking dots) — provisional state shrinks to one step's worth of chunks, never a trim concern.
+- `syncTail` for **sealed steps** — picks up committed chunks incrementally as each step completes.
+- `trimTranscript` drops oldest committed chunks uniformly — no special provisional case.
+- `turn-sealed` becomes a "refresh" signal — all chunks already committed.
+- "Show earlier" works uniformly for all turns (including in-flight — sealed steps have seq).
+- Remove `hiddenThinkingCount` (no provisional thinking blocks to track) and the `sealedTurnId` flush.
 
-### CR-1 — Loaded Extensions as a true table → **RESOLVED ✅** (shipped + consumed)
+**Not yet implemented.** The FE currently still uses the provisional/committed split. The interim
+fix (frontend-only cache for dropped provisional chunks) was not built — CR-6 resolution makes it
+unnecessary. Adoption is the next FE task when prioritized.
 
-Backend now emits the "Loaded" count stat plus ONE
-`{ kind: "custom", rendererId: "table", payload: { columns, rows } }` field
-(`columns: ["Name", "Version", "Trust", "Activation"]`, one row per loaded extension, all trust
-tiers). Verified arriving live; the FE's pre-existing `SurfaceTable` renderer (dispatch on
-`rendererId === "table"`) shows it with no FE change. A typed `TablePayload` (+ `TABLE_RENDERER_ID`)
-is exported from `@dispatch/surface-loaded-extensions` if we ever want to narrow instead of
-duck-typing — not consumed (would add a dep for no behavior change). Data-quality note stands:
-`Version` cells all read `0.0.0` (manifests genuinely unversioned; optional backend cleanup).
+---
 
-### CR-2 — catalog `scope` flag → **RESOLVED ✅** (`ui-contract@0.2.0`, consumed)
+### Resolved CRs (for reference)
 
-`SurfaceCatalogEntry.scope?: "global" | "conversation"` shipped (emitted: `loaded-extensions` →
-global, `cache-warming` → conversation). FE consumed: `syncSubscriptions` subscribes a
-`scope:"global"` surface WITHOUT a conversationId, so a conversation switch no longer churns a
-redundant unsubscribe+subscribe per global surface. ABSENT scope = assume conversation-scoped
-(conservative, per contract).
+| CR | Summary | Status |
+|---|---|---|
+| CR-1 | Loaded Extensions as a true table (`rendererId: "table"`) | ✅ shipped + consumed |
+| CR-2 | catalog `scope` flag (`"global"` / `"conversation"`) | ✅ `ui-contract@0.2.0` |
+| CR-3 | `user-message` event (watcher sees user prompt mid-turn) | ✅ `wire@0.6.0` |
+| CR-4 | cache-warming lifecycle (default OFF, future `nextWarmAt`, `POST /close`) | ✅ `transport-contract@0.9.0` |
+| CR-5 | history windowing (`?limit=`, `?beforeSeq=`, 1-based gap-free seqs) | ✅ `wire@0.6.1` / `transport-contract@0.10.0` |
+| CR-6 | Assign seq during generation (incremental persist at step boundaries) | ✅ shipped; FE adoption pending |
 
-### CR-4 — cache-warming lifecycle → **RESOLVED ✅** (courier `backend-handoff-cache-warming.md`; reply `frontend-cache-warming-lifecycle-handoff.md`; live-probed 17/17)
-
-All four asks shipped + consumed (`transport-contract@0.9.0`):
-- **(a) default OFF** for a new conversation (interval default still 240s; re-enable restores the
-  persisted interval). Verified live.
-- **(b) FUTURE `nextWarmAt`** pushed after every automatic warm + after `turn-sealed`;
-  `nextWarmAt: null` pushed on `turn-start` (FE renders "waiting…" while generating) and when
-  disabled. Verified live (2 automatic warms @10s, both future).
-- **(c) `POST /conversations/:id/close`** (`CloseConversationResponse { conversationId,
-  abortedTurn }`): aborts an in-flight turn (partial persisted, seals with `reason: "aborted"` →
-  watchers' `generating` clears structurally) + stops/disables warming (persisted OFF), idempotent;
-  disconnect/`chat.unsubscribe` still never touch either. FE wires it in `store.closeTab()`
-  (fire-and-forget). Verified live incl. mid-turn abort + idempotent re-close.
-- **(d) `conversationId` echo on the initial `surface` message — was an FE BUG, not backend.**
-  The backend's frame carries it (raw-frame verified); our WS parser
-  (`adapters/ws/logic.ts` `case "surface"`) rebuilt the message and dropped the field. Fixed FE-side
-  + unit-tested; stale-scope filtering now applies to the initial reply too. Backend owes nothing.
-
-**Known caveat (accepted, fail-safe):** the warming opt-in is NOT re-hydrated across a backend
-RESTART — a conversation reads disabled until toggled again. Flag to the backend if persistence
-across restarts becomes a product need (they offered boot hydration).
-
-### cwd + LSP draft path → **VERIFIED ✅ (all 6 asks confirmed; courier `backend-handoff-cwd-lsp.md`)**
-
-The backend confirmed all six asks (answers in their `frontend-lsp-cwd-handoff.md`, code refs
-`transport-http/src/app.ts` + `session-orchestrator/src/orchestrator.ts`; live-verified): unseen-id
-`GET /cwd`⇒`{cwd:null}` and `GET /lsp`⇒`{cwd:null,servers:[]}` (no 404/500); `PUT /cwd` on a draft id
-upserts by key; **draft cwd carries into turn 1** when `/chat` omits `cwd`; CORS preflight for `PUT` is
-answered; no LSP spawn while `cwd` is null; errors are `{error:string}`. **No backend change needed —
-the draft→first-message cwd path the FE built is fully supported.**
-
-**FE invariant to KEEP (don't regress):** the chat send must **omit** `cwd` (send `undefined`), never
-`cwd:""`/`cwd:null`. The `/chat` `cwd` field treats any non-`undefined` value as "provided", so a literal
-empty would override the persisted draft cwd. Verified safe today: `chat/store.svelte.ts` builds
-`chat.send` with only `type`/`conversationId`/`message`/`model` — no `cwd` field. (The backend offered to
-harden `/chat` to treat blank as "not provided" if we ever want it — not needed while we omit the field.)
-
-### CR-3 (BUG, multi-client) → **RESOLVED ✅** (Option B shipped; courier `frontend-cr3-user-message-handoff.md`)
-
-The backend implemented Option B + live-verified it: a new `AgentEvent` member `TurnInputEvent`
-(`{ type: "user-message"; conversationId; turnId; text }`) is emitted as the FIRST event of every turn
-(before `turn-start`), buffered + replayed to live AND late-join subscribers. `wire@0.5.0→0.6.0`,
-`transport-contract@0.7.0→0.8.0` (re-exports the union; no transport-shape change). **FE consumed:**
-re-pinned both, re-mirrored `.dispatch/{wire,transport-contract}.reference.md`, promoted the staged
-`core/chunks` fold to a typed `case "user-message"` (appends the prompt with a text de-dup vs the sender's
-optimistic echo), and added `user-message` to the FE exhaustiveness guard. A pure watcher now shows the user
-bubble the moment the turn starts. The original report follows for history.
-
-**Symptom (reproduced live):** open a conversation in two windows; window A sends a message. Window B
-(`chat.subscribe`, a pure watcher) renders the streaming **reply** but NOT the user **prompt** that
-triggered it — the user bubble only pops in after `turn-sealed`.
-
-**Root cause (backend):** the user prompt is never part of the turn's live/replayable stream, and isn't
-persisted until the turn ends — so a watcher has no source for it mid-turn.
-- The replay buffer holds only `AgentEvent`s (`session-orchestrator/src/orchestrator.ts` `ActiveTurn.buffer`,
-  pushed in `emitToHub`). `buildUserMessage(text)` (`pure.ts`) is passed straight to the provider and is
-  **never `emitToHub`'d** → not buffered, not replayed.
-- The prompt is persisted only at turn end, atomically with the reply: `orchestrator.ts:244-245`
-  (`toPersist = [userMsg, ...result.messages]; conversationStore.append(...)`), just before `turn-sealed`.
-  So a mid-turn `GET /conversations/:id` returns nothing for it either.
-
-The sender looks fine only because the FE optimistically echoes its own prompt; a pure watcher never sent,
-so it has nothing to show. **No FE-only fix is possible** — the prompt text simply isn't sent until seal.
-
-**Requested fix — Option B (preferred): emit the prompt into the turn's event stream.**
-- **`@dispatch/wire` (additive):** add a `TurnInputEvent` to the `AgentEvent` union, e.g.
-  `{ type: "user-message"; conversationId: string; turnId: string; text: string }`. Bump `wire`.
-- **`session-orchestrator`:** `emitToHub(conversationId, { type: "user-message", conversationId, turnId, text })`
-  at the very start of `runTurnDetached` (before `runTurn`), so it is the first buffered event → replayed to
-  every subscriber, live and late-join. (No `runTurn`/kernel change needed — the orchestrator already holds
-  `text` + `turnId` + the hub.)
-- Emitting it (and only it) does not change persistence semantics; the existing seal-time append is unchanged.
-
-**FE side — already staged (inert until you ship it):** `core/chunks` folds a `user-message` event into a
-provisional user chunk for watchers, with a content dedup so the sender's optimistic echo isn't duplicated
-(`reducer.ts` forward-compat branch + tests). The moment the backend emits `user-message`, both windows show
-the prompt immediately; nothing breaks before then. On the new `wire`, we'll re-pin + re-mirror + add it to
-the FE exhaustiveness guard.
-
-**Alternative — Option A (no wire change):** persist the user message at turn START (append `[userMsg]`
-before `runTurn`; append only `result.messages` at seal) — then watchers fetch it via history. We do NOT
-prefer this: it needs an extra history round-trip per watched turn and changes persistence semantics (an
-errored turn would leave a persisted prompt with no reply).
+---
 
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
-- **Model max context-window LIMIT** (the denominator for context size) — the context-size handoff
-  flagged this as the separate, later field. **The FE already renders `contextSize / limit · pct%` + a
-  fill bar in the composer status bar, but the limit is currently HARDCODED to `1,000,000` as a
-  placeholder** (`MAX_CONTEXT` in `features/chat/ui/Composer.svelte`; GLOSSARY "context window" notes it).
-  When a per-model/per-turn `contextWindow` (max token capacity) ships, wire the real value through (drop
-  the hardcode) so the bar/percent are accurate. **Likely the next ask** — raise when the backend can
-  source the model's advertised window.
-- `GET /conversations` — conversation list / sidebar (history explorer / switcher); could also expose a
-  per-conversation "last model" so a reopened tab seeds its model from the server instead of localStorage.
-- ~~`POST /conversations/:id/cancel`~~ — **superseded by `POST /conversations/:id/close`
-  (CR-4c, shipped)**. A standalone "stop generating WITHOUT closing/disabling warming" button would
-  still need a separate affordance if the product ever wants it.
-- **Warming opt-in persistence across backend restarts** — currently fail-safe-off after a restart;
-  backend offered boot hydration if it becomes a need (see CR-4 caveat in §2).
-- **LSP status over WS** (push) — today the FE HTTP-polls `GET /conversations/:id/lsp` on panel mount /
-  cwd change + a manual refresh; a live surface/WS push would remove the manual refresh and reflect a
-  server flipping to `error`/`connected` without a reload. (Backend flagged this as a future option.)
+- **Model max context-window LIMIT** (the denominator for context size) — the FE renders
+  `contextSize / limit · pct%` + a fill bar in the composer status bar, but the limit is currently
+  HARDCODED to `1,000,000` as a placeholder (`MAX_CONTEXT` in `features/chat/ui/Composer.svelte`).
+  When a per-model `contextWindow` (max token capacity) ships, wire the real value through so the
+  bar/percent are accurate.
+- **`GET /conversations`** — conversation list / sidebar (history explorer / switcher); could also
+  expose a per-conversation "last model" so a reopened tab seeds its model from the server.
+- **LSP status over WS** (push) — today the FE HTTP-polls `GET /conversations/:id/lsp` on panel mount
+  / cwd change + a manual refresh; a live surface/WS push would remove the manual refresh and reflect
+  a server flipping to `error`/`connected` without a reload.
