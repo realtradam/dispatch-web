@@ -391,7 +391,7 @@ describe("interleaveTurnMetrics", () => {
 		expectTurnMetricsAt(rows, 4, "t1");
 	});
 
-	it("more metrics than segments: only T entries placed (extra ignored)", () => {
+	it("more metrics than segments: unmatched entry emits standalone turn-metrics", () => {
 		const g1 = userGroup(1, "q1");
 		const g2 = toolCallGroup(2, "s1", "c1");
 		const step1 = makeStep("s1", 100, 50);
@@ -401,9 +401,13 @@ describe("interleaveTurnMetrics", () => {
 			[makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
 		);
 
-		expect(rows).toHaveLength(4);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
+		// Unmatched entry (t2) emits a standalone turn-metrics row at the top.
+		expect(rows).toHaveLength(5);
+		expectTurnMetricsAt(rows, 0, "t2");
+		expectGroupAt(rows, 1, g1);
+		expectGroupAt(rows, 2, g2);
+		expectStepMetricsAt(rows, 3, "s1", 0);
+		expectTurnMetricsAt(rows, 4, "t1");
 	});
 
 	it("turn with no steps emits only turn-metrics (no step-metrics)", () => {

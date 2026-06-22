@@ -154,6 +154,23 @@ export function interleaveTurnMetrics(
 	const rows: MetricsRow[] = [];
 
 	const firstUserIdx = segmentStarts[0] ?? 0;
+
+	// Emit turn-metrics rows for entries that weren't matched to any segment
+	// (fully trimmed turns — their content was unloaded by the chat limit, but
+	// their aggregate metrics still show so the user knows what was trimmed).
+	for (let i = 0; i < entries.length; i++) {
+		if (usedEntries.has(i)) continue;
+		const e = entries[i];
+		if (e === undefined || e.total === null) continue;
+		rows.push({
+			kind: "turn-metrics",
+			turn: e.total,
+			turnNumber: i + 1,
+			cumulativeUsage: cumulativeByEntry[i] ?? e.total.usage,
+			prevTurnUsage: prevUsageByEntry[i] ?? null,
+		});
+	}
+
 	for (let i = 0; i < firstUserIdx; i++) {
 		const g = groups[i];
 		if (g !== undefined) {
