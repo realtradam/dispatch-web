@@ -329,6 +329,18 @@ describe("ChatView", () => {
 				chunk: { type: "text", text: "Hello!" },
 				provisional: false,
 			},
+			{
+				seq: 3,
+				role: "assistant",
+				chunk: {
+					type: "tool-call",
+					toolCallId: "tc1",
+					toolName: "test",
+					input: {},
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
 		];
 
 		const turnMetrics: TurnMetricsEntry[] = [
@@ -502,6 +514,18 @@ describe("ChatView", () => {
 				chunk: { type: "text", text: "Response" },
 				provisional: false,
 			},
+			{
+				seq: 3,
+				role: "assistant",
+				chunk: {
+					type: "tool-call",
+					toolCallId: "tc1",
+					toolName: "test",
+					input: {},
+					stepId: "t1#0" as StepId,
+				},
+				provisional: false,
+			},
 		];
 
 		const turnMetrics: TurnMetricsEntry[] = [
@@ -545,6 +569,18 @@ describe("ChatView", () => {
 				seq: 2,
 				role: "assistant",
 				chunk: { type: "text", text: "Hello!" },
+				provisional: false,
+			},
+			{
+				seq: 3,
+				role: "assistant",
+				chunk: {
+					type: "tool-call",
+					toolCallId: "tc1",
+					toolName: "test",
+					input: {},
+					stepId: "t1#0" as StepId,
+				},
 				provisional: false,
 			},
 		];
