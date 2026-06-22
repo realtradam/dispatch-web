@@ -17,7 +17,7 @@
 		ReasoningEffortSelector,
 		type CompactNowResult,
 		type ReasoningEffortSaveResult,
-		type SaveCompactThresholdResult,
+		type SaveCompactPercentResult,
 	} from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
@@ -249,13 +249,13 @@
 			: { ok: false, error: result.error };
 	}
 
-	async function saveCompactThreshold(
-		threshold: number,
-	): Promise<SaveCompactThresholdResult | null> {
-		const result = await store.setCompactThreshold(threshold);
+	async function saveCompactPercent(
+		percent: number,
+	): Promise<SaveCompactPercentResult | null> {
+		const result = await store.setCompactPercent(percent);
 		if (result === null) return null;
 		return result.ok
-			? { ok: true, threshold: result.threshold }
+			? { ok: true, percent: result.percent }
 			: { ok: false, error: result.error };
 	}
 
@@ -393,6 +393,7 @@
 			onQueue={handleQueue}
 			onStop={handleStop}
 			contextSize={store.activeChat.currentContextSize}
+			contextWindow={store.modelInfo[store.activeModel]?.contextWindow}
 			status={store.activeChat.error
 				? "error"
 				: store.activeChat.generating
@@ -482,13 +483,13 @@
 			{/if}
 		{/key}
 	{:else if kind === "compaction"}
-		<!-- Re-mount per conversation so the threshold + feedback can't bleed across tabs. -->
+		<!-- Re-mount per conversation so the percent + feedback can't bleed across tabs. -->
 		{#key store.currentConversationId}
 			<CompactionView
-				threshold={store.compactThreshold}
+				percent={store.compactPercent}
 				canCompact={store.activeConversationId !== null}
 				{compactNow}
-				saveThreshold={saveCompactThreshold}
+				savePercent={saveCompactPercent}
 			/>
 		{/key}
 	{:else if kind === "settings"}
