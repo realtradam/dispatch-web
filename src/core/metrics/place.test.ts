@@ -169,9 +169,9 @@ describe("interleaveTurnMetrics", () => {
 
 	it("head-aligned: segment i gets entries[i]", () => {
 		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
+		const g2 = toolCallGroup(2, "s1", "c1");
 		const g3 = userGroup(3, "q2");
-		const g4 = assistantGroup(4, "a2");
+		const g4 = toolCallGroup(4, "s2", "c2");
 		const step1 = makeStep("s1", 100, 50);
 		const step2 = makeStep("s2", 200, 80);
 		const rows = interleaveTurnMetrics(
@@ -192,7 +192,7 @@ describe("interleaveTurnMetrics", () => {
 
 	it("a trailing segment with no entry (in-flight turn) renders no metrics", () => {
 		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
+		const g2 = toolCallGroup(2, "s1", "c1");
 		const g3 = userGroup(3, "q2");
 		const g4 = assistantGroup(4, "a2");
 		const step = makeStep("s1", 100, 50);
@@ -207,18 +207,17 @@ describe("interleaveTurnMetrics", () => {
 		expectGroupAt(rows, 5, g4);
 	});
 
-	it("single text-only turn: step row + turn-metrics both at tail", () => {
+	it("single text-only turn: no step row (unanchored), turn-metrics at tail", () => {
 		const g1 = userGroup(1, "q1");
 		const g2 = assistantGroup(2, "a1");
 		const step = makeStep("s1", 100, 50);
 		const turn = makeEntry("t1", 100, 50, [step]);
 		const rows = interleaveTurnMetrics([g1, g2], [turn]);
 
-		expect(rows).toHaveLength(4);
+		expect(rows).toHaveLength(3);
 		expectGroupAt(rows, 0, g1);
 		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
+		expectTurnMetricsAt(rows, 2, "t1");
 	});
 
 	it("tool step anchors inline after its tool-batch group", () => {
@@ -230,13 +229,12 @@ describe("interleaveTurnMetrics", () => {
 		const turn = makeEntry("t1", 300, 130, [step0, step1]);
 		const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
 
-		expect(rows).toHaveLength(6);
+		expect(rows).toHaveLength(5);
 		expectGroupAt(rows, 0, g1);
 		expectGroupAt(rows, 1, g2);
 		expectStepMetricsAt(rows, 2, "t#0", 0);
 		expectGroupAt(rows, 3, g3);
-		expectStepMetricsAt(rows, 4, "t#1", 1);
-		expectTurnMetricsAt(rows, 5, "t1");
+		expectTurnMetricsAt(rows, 4, "t1");
 	});
 
 	it("single tool-call group anchors its step", () => {
@@ -271,7 +269,7 @@ describe("interleaveTurnMetrics", () => {
 		expectTurnMetricsAt(rows, 4, "t1");
 	});
 
-	it("multi-step: each tool step inline, final step + total at tail", () => {
+	it("multi-step: each tool step inline, unanchored text step skipped", () => {
 		const g1 = userGroup(1, "q1");
 		const g2 = toolBatchGroup("t#0", ["c1"]);
 		const g3 = assistantGroup(2, "thinking");
@@ -283,7 +281,7 @@ describe("interleaveTurnMetrics", () => {
 		const turn = makeEntry("t1", 350, 150, [step0, step1, step2]);
 		const rows = interleaveTurnMetrics([g1, g2, g3, g4, g5], [turn]);
 
-		expect(rows).toHaveLength(9);
+		expect(rows).toHaveLength(8);
 		expectGroupAt(rows, 0, g1);
 		expectGroupAt(rows, 1, g2);
 		expectStepMetricsAt(rows, 2, "t#0", 0);
@@ -291,8 +289,7 @@ describe("interleaveTurnMetrics", () => {
 		expectGroupAt(rows, 4, g4);
 		expectStepMetricsAt(rows, 5, "t#1", 1);
 		expectGroupAt(rows, 6, g5);
-		expectStepMetricsAt(rows, 7, "t#2", 2);
-		expectTurnMetricsAt(rows, 8, "t1");
+		expectTurnMetricsAt(rows, 7, "t1");
 	});
 
 	it("multiple turns head-aligned with inline steps", () => {
@@ -300,7 +297,7 @@ describe("interleaveTurnMetrics", () => {
 		const g2 = toolBatchGroup("s1", ["c1"]);
 		const g3 = assistantGroup(2, "a1");
 		const g4 = userGroup(3, "q2");
-		const g5 = assistantGroup(4, "a2");
+		const g5 = toolCallGroup(4, "s2", "c2");
 		const step1 = makeStep("s1", 100, 50);
 		const step2 = makeStep("s2", 200, 80);
 		const rows = interleaveTurnMetrics(
@@ -320,23 +317,22 @@ describe("interleaveTurnMetrics", () => {
 		expectTurnMetricsAt(rows, 8, "t2");
 	});
 
-	it("unanchored step (stepId not in groups) falls back to tail before turn-metrics", () => {
+	it("unanchored step (stepId not in groups) is skipped — only turn-metrics", () => {
 		const g1 = userGroup(1, "q1");
 		const g2 = assistantGroup(2, "a1");
 		const step0 = makeStep("orphan", 100, 50);
 		const turn = makeEntry("t1", 100, 50, [step0]);
 		const rows = interleaveTurnMetrics([g1, g2], [turn]);
 
-		expect(rows).toHaveLength(4);
+		expect(rows).toHaveLength(3);
 		expectGroupAt(rows, 0, g1);
 		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "orphan", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
+		expectTurnMetricsAt(rows, 2, "t1");
 	});
 
 	it("fewer metrics than segments: trailing segments are bare", () => {
 		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
+		const g2 = toolCallGroup(2, "s1", "c1");
 		const g3 = userGroup(3, "q2");
 		const g4 = assistantGroup(4, "a2");
 		const g5 = userGroup(5, "q3");
@@ -358,9 +354,9 @@ describe("interleaveTurnMetrics", () => {
 		expectGroupAt(rows, 7, g6);
 	});
 
-	it("in-flight turn (no durationMs) still produces step + turn rows", () => {
+	it("in-flight turn (no durationMs) still produces turn row", () => {
 		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
+		const g2 = toolCallGroup(2, "s1", "c1");
 		const step = makeStep("s1", 100, 50);
 		const turn: TurnMetricsEntry = {
 			turnId: "t1",
@@ -383,7 +379,7 @@ describe("interleaveTurnMetrics", () => {
 	it("leading non-turn groups emit as plain group rows", () => {
 		const g0 = assistantGroup(1, "system msg");
 		const g1 = userGroup(2, "q1");
-		const g2 = assistantGroup(3, "a1");
+		const g2 = toolCallGroup(3, "s1", "c1");
 		const step = makeStep("s1", 100, 50);
 		const rows = interleaveTurnMetrics([g0, g1, g2], [makeEntry("t1", 100, 50, [step])]);
 
@@ -397,7 +393,7 @@ describe("interleaveTurnMetrics", () => {
 
 	it("more metrics than segments: only T entries placed (extra ignored)", () => {
 		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
+		const g2 = toolCallGroup(2, "s1", "c1");
 		const step1 = makeStep("s1", 100, 50);
 		const step2 = makeStep("s2", 200, 80);
 		const rows = interleaveTurnMetrics(
@@ -452,7 +448,7 @@ describe("interleaveTurnMetrics", () => {
 		expectTurnMetricsAt(rows, 4, "t1");
 	});
 
-	it("progressive multi-step: unanchored steps at tail, no turn-metrics", () => {
+	it("progressive multi-step: unanchored steps skipped, no turn-metrics", () => {
 		const g1 = userGroup(1, "q1");
 		const g2 = assistantGroup(2, "a1");
 		const step0 = makeStep("s1", 100, 50);
@@ -460,11 +456,9 @@ describe("interleaveTurnMetrics", () => {
 		const entry = makeProgressiveEntry("t1", [step0, step1]);
 		const rows = interleaveTurnMetrics([g1, g2], [entry]);
 
-		expect(rows).toHaveLength(4);
+		expect(rows).toHaveLength(2);
 		expectGroupAt(rows, 0, g1);
 		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectStepMetricsAt(rows, 3, "s2", 1);
 	});
 });
 

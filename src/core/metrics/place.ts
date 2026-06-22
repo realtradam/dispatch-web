@@ -190,10 +190,11 @@ export function interleaveTurnMetrics(
 			}
 		}
 
-		// Classify each step as anchored or unanchored.
+		// Classify each step as anchored or unanchored. Unanchored steps
+		// (content trimmed, or text-only steps with no tool chunks) are SKIPPED —
+		// step-metrics are only shown inline next to the content they describe.
 		const anchored: Map<number, { stepIndex: number; step: (typeof entry.steps)[number] }[]> =
 			new Map();
-		const unanchored: { stepIndex: number; step: (typeof entry.steps)[number] }[] = [];
 
 		for (let i = 0; i < entry.steps.length; i++) {
 			const step = entry.steps[i];
@@ -206,9 +207,8 @@ export function interleaveTurnMetrics(
 					anchored.set(anchorGroupIdx, arr);
 				}
 				arr.push({ stepIndex: i, step });
-			} else {
-				unanchored.push({ stepIndex: i, step });
 			}
+			// Unanchored steps (no matching group) are skipped — no tail bubbles.
 		}
 
 		// Emit groups; after each anchored group, emit its step-metrics rows.
@@ -226,11 +226,8 @@ export function interleaveTurnMetrics(
 			}
 		}
 
-		// Segment tail: unanchored steps, then turn-metrics (only when total is present).
-		unanchored.sort((a, b) => a.stepIndex - b.stepIndex);
-		for (const { step, stepIndex } of unanchored) {
-			rows.push({ kind: "step-metrics", step, index: stepIndex });
-		}
+		// Turn-metrics row (only when the turn is finalized). Unanchored steps
+		// are skipped — no tail bubbles.
 		if (entry.total !== null) {
 			rows.push({
 				kind: "turn-metrics",
