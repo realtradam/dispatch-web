@@ -120,18 +120,41 @@ export function interleaveTurnMetrics(
 	}
 
 	// Pass 2: sequential fallback for unmatched segments.
-	let nextUnused = 0;
-	for (let seg = 0; seg < T; seg++) {
-		if (segmentEntry.has(seg)) continue;
-		while (nextUnused < K && usedEntries.has(nextUnused)) nextUnused++;
-		if (nextUnused < K) {
-			usedEntries.add(nextUnused);
-			const e = entries[nextUnused];
-			if (e !== undefined) {
-				segmentEntry.set(seg, e);
-				segmentEntryIndex.set(seg, nextUnused);
+	// If NO segments were matched by stepId (pass 1), use TAIL-ALIGNMENT:
+	// the loaded chunks are always the NEWEST (chat-limit/windowing keeps the
+	// newest and trims the oldest), so match the LAST T entries to the T
+	// segments. This prevents misaligning oldest (trimmed) entries to newest
+	// segments — which would show "turn 1" on turn 20's content.
+	const pass1Matches = segmentEntry.size;
+	if (pass1Matches === 0 && K >= T) {
+		// Tail-align: skip the first K-T entries (trimmed turns).
+		for (let seg = 0; seg < T; seg++) {
+			if (segmentEntry.has(seg)) continue;
+			const entryIdx = K - T + seg;
+			if (entryIdx < K && !usedEntries.has(entryIdx)) {
+				usedEntries.add(entryIdx);
+				const e = entries[entryIdx];
+				if (e !== undefined) {
+					segmentEntry.set(seg, e);
+					segmentEntryIndex.set(seg, entryIdx);
+				}
 			}
-			nextUnused++;
+		}
+	} else {
+		// Head-align fallback for remaining unmatched segments.
+		let nextUnused = 0;
+		for (let seg = 0; seg < T; seg++) {
+			if (segmentEntry.has(seg)) continue;
+			while (nextUnused < K && usedEntries.has(nextUnused)) nextUnused++;
+			if (nextUnused < K) {
+				usedEntries.add(nextUnused);
+				const e = entries[nextUnused];
+				if (e !== undefined) {
+					segmentEntry.set(seg, e);
+					segmentEntryIndex.set(seg, nextUnused);
+				}
+				nextUnused++;
+			}
 		}
 	}
 
