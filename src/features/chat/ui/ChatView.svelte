@@ -115,25 +115,37 @@
 			</div>
 		</div>
 	{:else if rendered.chunk.type === "tool-call" || rendered.chunk.type === "tool-result"}
-		<!-- Single tool call/result: a regular (non-speech) card. Nested in the
-		     chat-start grid via a transparent, padding-stripped chat-bubble shim so
-		     the card inherits the same left offset as the bubble bodies. -->
-		<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
-			<div class="chat-bubble bg-transparent">
-			{#if rendered.chunk.type === "tool-call"}
-				<div class="w-fit max-w-full overflow-hidden rounded-box bg-base-200 p-3 text-sm">
-					<strong>{rendered.chunk.toolName}</strong>
-					<pre class="mt-1 overflow-x-auto text-xs">{JSON.stringify(rendered.chunk.input, null, 2)}</pre>
-				</div>
-			{:else}
-				<div
-					class="w-fit max-w-full overflow-hidden rounded-box bg-base-200 p-3 text-sm"
-					class:text-error={rendered.chunk.isError}
-				>
-					<strong>{rendered.chunk.toolName}</strong>
-					<pre class="mt-1 overflow-x-auto text-xs">{rendered.chunk.content}</pre>
-				</div>
-			{/if}
+		<!-- Single tool call/result: a collapsible card (collapsed by default,
+		     like thinking). Title shows the tool name; content shows the
+		     input/output. Same chat-start grid shim as the thinking block. -->
+		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
+			<div class="chat-bubble w-full bg-transparent">
+				{#if rendered.chunk.type === "tool-call"}
+					<div class="collapse w-full rounded-box bg-base-200 text-sm">
+						<input type="checkbox" aria-label="Toggle tool call" />
+						<div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
+							<svg class="h-4 w-4 opacity-60" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+							<span>{rendered.chunk.toolName}</span>
+						</div>
+						<div class="collapse-content">
+							<pre class="overflow-x-auto text-xs">{JSON.stringify(rendered.chunk.input, null, 2)}</pre>
+						</div>
+					</div>
+				{:else}
+					<div class="collapse w-full rounded-box bg-base-200 text-sm">
+						<input type="checkbox" aria-label="Toggle tool result" />
+						<div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium" class:text-error={rendered.chunk.isError}>
+							<svg class="h-4 w-4 opacity-60" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+							<span>{rendered.chunk.toolName}</span>
+							{#if rendered.chunk.isError}
+								<span class="badge badge-error badge-xs">error</span>
+							{/if}
+						</div>
+						<div class="collapse-content">
+							<pre class="max-h-96 overflow-auto text-xs">{rendered.chunk.content}</pre>
+						</div>
+					</div>
+				{/if}
 			</div>
 		</div>
 	{:else}
@@ -219,26 +231,32 @@
 		{:else if row.group.kind === "single"}
 			{@render chunkRow(row.group.chunk)}
 		{:else}
-			<!-- Batched tool calls (one step): a single bubble holding a DaisyUI list,
-			     one row per call paired with its result. Same chat-start grid shim as
-			     the single tool card so it lines up with the other messages. -->
-			<div class="chat chat-start [&>.chat-bubble]:max-w-full [&>.chat-bubble]:p-0">
-				<div class="chat-bubble bg-transparent">
-			<ul class="list w-fit max-w-full overflow-hidden rounded-box bg-base-200 text-sm">
-					{#each row.group.entries as entry (entry.call.toolCallId)}
-						<li class="list-row">
-							<div class="min-w-0">
-								<strong>{entry.call.toolName}</strong>
-								<pre class="mt-1 overflow-x-auto text-xs">{JSON.stringify(entry.call.input, null, 2)}</pre>
-								{#if entry.result}
-									<pre
-										class="mt-1 overflow-x-auto text-xs"
-										class:text-error={entry.result.isError}>{entry.result.content}</pre>
-								{/if}
+			<!-- Batched tool calls (one step): each entry is a collapsible card.
+			     Click to expand and see the input/output. -->
+			<div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
+				<div class="chat-bubble w-full bg-transparent">
+					<div class="flex flex-col gap-1">
+						{#each row.group.entries as entry (entry.call.toolCallId)}
+							<div class="collapse w-full rounded-box bg-base-200 text-sm">
+								<input type="checkbox" aria-label="Toggle tool call" />
+								<div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
+									<svg class="h-4 w-4 opacity-60" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+									<span>{entry.call.toolName}</span>
+									{#if entry.result?.isError}
+										<span class="badge badge-error badge-xs">error</span>
+									{:else if entry.result === null}
+										<span class="loading loading-spinner loading-xs" aria-label="Running"></span>
+									{/if}
+								</div>
+								<div class="collapse-content">
+									<pre class="overflow-x-auto text-xs">{JSON.stringify(entry.call.input, null, 2)}</pre>
+									{#if entry.result}
+										<pre class="mt-1 max-h-96 overflow-auto text-xs" class:text-error={entry.result.isError}>{entry.result.content}</pre>
+									{/if}
+								</div>
 							</div>
-						</li>
-					{/each}
-				</ul>
+						{/each}
+					</div>
 				</div>
 			</div>
 		{/if}
