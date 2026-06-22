@@ -2,11 +2,14 @@
 /* Syntax-highlight theme for fenced code blocks in rendered Markdown. */
 @import "highlight.js/styles/atom-one-dark.min.css";
 
-/* DaisyUI v5 — enable the plugin AND bundle the dracula theme (set as default,
-   applied via <html data-theme="dracula">). Themes not listed here are NOT
-   bundled, so dracula must be named explicitly, not merely referenced. */
+/* Custom monokai theme — must be imported BEFORE the @plugin block. */
+@import "./themes/monokai.css";
+
+/* DaisyUI v5 — enable the plugin AND bundle the monokai theme (set as default,
+   applied via <html data-theme="monokai">). Themes not listed here are NOT
+   bundled, so monokai must be named explicitly, not merely referenced. */
 @plugin "daisyui" {
-	themes: dracula --default;
+	themes: monokai --default;
 }
 
 /* Rendered-Markdown (assistant messages) typography — scoped to .markdown-body
