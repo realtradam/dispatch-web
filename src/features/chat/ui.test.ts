@@ -242,10 +242,9 @@ describe("ChatView", () => {
 
 		const { container } = render(ChatView, { props: { chunks } });
 
-		// One DaisyUI list with two rows (one per call), not separate cards.
-		const lists = container.querySelectorAll("ul.list");
-		expect(lists).toHaveLength(1);
-		expect(container.querySelectorAll("ul.list > li.list-row")).toHaveLength(2);
+		// Batched calls render as collapsible cards (one per call), not a list.
+		const collapses = container.querySelectorAll(".collapse");
+		expect(collapses).toHaveLength(2);
 
 		// Both call names + the available result are shown; the result is absorbed
 		// (no standalone tool-result card).
