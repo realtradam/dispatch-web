@@ -54,10 +54,8 @@ export function applyHistory(
 ): TranscriptState {
 	const seqMap = new Map<number, StoredChunk>();
 	for (const c of state.committed) seqMap.set(c.seq, c);
-	let addedNew = false;
 	for (const c of chunks) {
 		if (c.seq < state.hiddenBeforeSeq) continue;
-		if (!seqMap.has(c.seq)) addedNew = true;
 		seqMap.set(c.seq, c);
 	}
 	const committed = Array.from(seqMap.values()).sort((a, b) => a.seq - b.seq);
@@ -70,15 +68,6 @@ export function applyHistory(
 			accumulating: null,
 			sealedTurnId: null,
 		};
-	}
-
-	// During generation: if new committed chunks arrived (CR-6 — backend
-	// persists at step boundaries), clear provisional chunks. They're
-	// duplicates — the same content was folded from live events but is now
-	// persisted with seq. Keep the accumulating chunk (current in-progress
-	// step, not yet persisted).
-	if (addedNew && state.generating) {
-		return { ...state, committed, provisional: [], accumulating: state.accumulating };
 	}
 
 	return { ...state, committed };

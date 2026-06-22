@@ -84,7 +84,9 @@ function dropOldest(state: TranscriptState, drop: number): TranscriptState {
  * quarters (`unloadCount(limit)` each) of the OLDEST committed chunks until back
  * at/under the limit — normally exactly one quarter (limit 100: 101 → 76); more
  * only when trimming was deferred (e.g. while the reader was scrolled up).
- * At/under the limit this is the identity. Never drops provisional chunks.
+ * At/under the limit this is the identity. When committed chunks are
+ * exhausted, also drops the oldest provisional chunks (the in-flight turn)
+ * to keep the browser responsive during very long turns.
  */
 export function trimTranscript(state: TranscriptState, limit: number): TranscriptState {
 	if (!Number.isFinite(limit) || limit <= 0) return state;
@@ -92,9 +94,31 @@ export function trimTranscript(state: TranscriptState, limit: number): Transcrip
 	if (total <= limit) return state;
 	const quarter = unloadCount(limit);
 	const passes = Math.ceil((total - limit) / quarter);
-	const drop = Math.min(passes * quarter, state.committed.length);
-	if (drop <= 0) return state;
-	return dropOldest(state, drop);
+
+	// First, drop oldest committed chunks (the usual path).
+	const committedDrop = Math.min(passes * quarter, state.committed.length);
+	let next = committedDrop > 0 ? dropOldest(state, committedDrop) : state;
+
+	// If still over the limit and committed is exhausted, drop oldest
+	// provisional chunks (the in-flight turn). These chunks have no seq
+	// (not yet persisted) and can't be "Show earlier" — but dropping them
+	// keeps the browser responsive. They'll come back as committed when
+	// the turn seals and syncTail fetches them from the server.
+	const remaining = totalCount(next);
+	if (remaining > limit && next.provisional.length > 0) {
+		const provisionalDrop = Math.min(
+			Math.ceil((remaining - limit) / quarter) * quarter,
+			next.provisional.length,
+		);
+		if (provisionalDrop > 0) {
+			next = {
+				...next,
+				provisional: next.provisional.slice(provisionalDrop),
+			};
+		}
+	}
+
+	return next;
 }
 
 /**
