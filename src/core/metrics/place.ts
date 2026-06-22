@@ -64,7 +64,15 @@ export function interleaveTurnMetrics(
 		}
 	}
 
-	const T = segmentStarts.length;
+	let T = segmentStarts.length;
+
+	// No user messages — e.g. a compacted conversation whose history starts
+	// with a system summary. Treat the entire transcript as one segment so
+	// turn/step metrics can still be placed.
+	if (T === 0 && entries.length > 0) {
+		segmentStarts.push(0);
+		T = 1;
+	}
 
 	if (T === 0) {
 		return groups.map((g) => ({ kind: "group" as const, group: g }));
