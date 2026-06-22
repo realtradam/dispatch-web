@@ -9,6 +9,7 @@
 		onSelect,
 		onClose,
 		onNewDraft,
+		onRename,
 	}: {
 		tabs: readonly Tab[];
 		activeConversationId: string | null;
@@ -17,6 +18,7 @@
 		onSelect: (conversationId: string) => void;
 		onClose: (conversationId: string) => void;
 		onNewDraft: () => void;
+		onRename?: (conversationId: string, title: string) => void;
 	} = $props();
 
 	// The new-chat button is `position: sticky; right: 0`. It floats over the tabs
@@ -65,6 +67,31 @@
 			ro?.disconnect();
 		};
 	});
+	// Inline rename: double-click a tab's title to edit, Enter/blur to save.
+	let editingId = $state<string | null>(null);
+	let editValue = $state("");
+	let editEl = $state<HTMLInputElement>();
+
+	function startRename(tab: Tab): void {
+		if (onRename === undefined) return;
+		editingId = tab.conversationId;
+		editValue = tab.title;
+		// Focus the input after it renders.
+		queueMicrotask(() => editEl?.focus());
+	}
+
+	function commitRename(): void {
+		const id = editingId;
+		if (id !== null && onRename !== undefined) {
+			const trimmed = editValue.trim();
+			if (trimmed.length > 0) onRename(id, trimmed);
+		}
+		editingId = null;
+	}
+
+	function cancelRename(): void {
+		editingId = null;
+	}
 </script>
 
 <div bind:this={scrollEl} class="min-w-0 flex-1 overflow-x-auto">
@@ -86,7 +113,37 @@
 				>
 					{handles.get(tab.conversationId) ?? tab.conversationId}
 				</span>
-				<span class="min-w-0 flex-1 truncate text-left">{tab.title}</span>
+				{#if editingId === tab.conversationId}
+					<input
+						bind:this={editEl}
+						bind:value={editValue}
+						class="min-w-0 flex-1 rounded bg-base-100 px-1 py-0.5 text-left text-sm outline outline-1 outline-primary"
+						onclick={(e) => e.stopPropagation()}
+						onkeydown={(e) => {
+							if (e.key === "Enter") {
+								e.preventDefault();
+								commitRename();
+							} else if (e.key === "Escape") {
+								e.preventDefault();
+								cancelRename();
+							}
+						}}
+						onblur={commitRename}
+					/>
+				{:else}
+					<span
+						class="min-w-0 flex-1 cursor-pointer truncate text-left"
+						role="button"
+						tabindex="-1"
+						title="Double-click to rename"
+						ondblclick={(e) => {
+							e.stopPropagation();
+							startRename(tab);
+						}}
+					>
+						{tab.title}
+					</span>
+				{/if}
 				{#if statusFor?.(tab.conversationId) === "active"}
 					<span class="loading loading-spinner loading-xs shrink-0 text-primary"></span>
 				{/if}

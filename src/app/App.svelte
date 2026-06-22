@@ -309,6 +309,7 @@
 				onSelect={(id) => store.selectTab(id)}
 				onClose={(id) => store.closeTab(id)}
 				onNewDraft={() => store.newDraft()}
+				onRename={(id, title) => store.renameTab(id, title)}
 			/>
 			<span
 				class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-base-content/30"
