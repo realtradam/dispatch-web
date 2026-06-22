@@ -284,6 +284,11 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 			if (transcript.sealedTurnId !== null) {
 				void syncTail();
 				void syncMetrics();
+			} else if (msg.event.type === "step-complete") {
+				// CR-6: backend persists chunks at step boundaries. Fetch them
+				// as committed so trimTranscript can unload oldest chunks
+				// uniformly — no unbounded provisional growth during long turns.
+				void syncTail();
 			}
 		},
 
