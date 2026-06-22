@@ -232,6 +232,7 @@ export function interleaveTurnMetrics(
 			rows.push({
 				kind: "turn-metrics",
 				turn: entry.total,
+				turnNumber: entryIdx + 1,
 				cumulativeUsage: cumulativeByEntry[entryIdx] ?? entry.total.usage,
 				prevTurnUsage: prevUsageByEntry[entryIdx] ?? null,
 			});
