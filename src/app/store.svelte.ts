@@ -18,6 +18,7 @@ import type {
 	SetCompactPercentRequest,
 	SetCwdRequest,
 	SetReasoningEffortRequest,
+	SetTitleRequest,
 	WarmRequest,
 	WarmResponse,
 } from "@dispatch/transport-contract";
@@ -114,6 +115,7 @@ export interface AppStore {
 	newDraft(): void;
 	selectTab(conversationId: string): void;
 	closeTab(conversationId: string): void;
+	renameTab(conversationId: string, title: string): void;
 	invoke(surfaceId: string, actionId: string, payload?: unknown): void;
 	/**
 	 * Manually warm the focused conversation's prompt cache (`POST /chat/warm`).
@@ -867,6 +869,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			// its cache-warming, server-side (POST /close sets status → "closed").
 			closeConversation(conversationId);
 			removeTabLocally(conversationId);
+		},
+
+		renameTab(conversationId: string, title: string): void {
+			tabsStore.setTitle(conversationId, title);
+			void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/title`, {
+				method: "PUT",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ title } satisfies SetTitleRequest),
+			}).catch(() => {
+				// Best-effort — the local tab is already renamed.
+			});
 		},
 
 		invoke(surfaceId: string, actionId: string, payload?: unknown): void {
