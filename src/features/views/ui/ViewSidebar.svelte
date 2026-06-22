@@ -17,6 +17,7 @@
 		kinds,
 		content,
 		initial,
+		onChange,
 	}: {
 		/** The view kinds offered in every panel's dropdown. */
 		kinds: readonly ViewKind[];
@@ -24,6 +25,8 @@
 		content: Snippet<[string]>;
 		/** Optional seed of panel kinds; defaults to one panel of the first kind. */
 		initial?: readonly (string | null)[];
+		/** Called whenever the panel layout changes (add/remove/select). */
+		onChange?: (kinds: readonly (string | null)[]) => void;
 	} = $props();
 
 	// Local UI composition state, owned by this unit and folded through the pure
@@ -32,6 +35,10 @@
 	let state = $state<PanelsState>(
 		untrack(() => initialPanels(initial ?? [kinds[0]?.id ?? null])),
 	);
+
+	function notify(): void {
+		onChange?.(state.panels.map((p) => p.kind));
+	}
 </script>
 
 <div class="flex min-h-0 flex-col gap-2">
@@ -45,6 +52,7 @@
 					onchange={(e) => {
 						const v = e.currentTarget.value;
 						state = selectKind(state, panel.id, v === "" ? null : v);
+						notify();
 					}}
 				>
 					<option value="" disabled>Select a view</option>
@@ -59,6 +67,7 @@
 						aria-label="Remove view"
 						onclick={() => {
 							state = removePanel(state, panel.id);
+							notify();
 						}}
 					>
 						✕
@@ -80,6 +89,7 @@
 		aria-label="Add view"
 		onclick={() => {
 			state = addPanel(state);
+			notify();
 		}}
 	>
 		+

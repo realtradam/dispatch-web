@@ -98,6 +98,12 @@ function createFakeStorage(): Storage {
 	};
 }
 
+function createFakeStorageWithViews(views: readonly string[] = ["extensions"]): Storage {
+	const storage = createFakeStorage();
+	storage.setItem("dispatch.sidebar.views", JSON.stringify(views));
+	return storage;
+}
+
 function sentMessages(ws: FakeSocket) {
 	return ws.sent.map((s) => JSON.parse(s));
 }
@@ -161,7 +167,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
+			localStorage: createFakeStorageWithViews(),
 		});
 		ws.resolveOpen();
 
@@ -225,7 +231,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
+			localStorage: createFakeStorageWithViews(),
 		});
 		ws.resolveOpen();
 
@@ -345,7 +351,7 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
+			localStorage: createFakeStorageWithViews(),
 		});
 		ws.resolveOpen();
 
@@ -388,13 +394,13 @@ describe("App component interaction tests", () => {
 		const store = createAppStore({
 			socketFactory: () => ws,
 			fetchImpl: fakeFetchImpl(),
-			localStorage: createFakeStorage(),
+			localStorage: createFakeStorageWithViews(),
 		});
 		ws.resolveOpen();
 
 		render(App, { props: { store } });
 
-		// Extensions is the default view, so the modules table renders immediately.
+		// Extensions view is pre-populated in the fake storage, so the modules table renders immediately.
 		expect(screen.getByRole("columnheader", { name: "Module" })).toBeInTheDocument();
 		for (const name of [
 			"chat",
