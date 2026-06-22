@@ -374,7 +374,7 @@ describe("ChatView", () => {
 		expect(screen.getByText("Hello!")).toBeInTheDocument();
 		expect(screen.getByText(/step 1/)).toBeInTheDocument();
 		expect(screen.getAllByText(/150 tok/)).toHaveLength(2);
-		expect(screen.getByText(/turn · 150 tok \(100 in \/ 50 out\)/)).toBeInTheDocument();
+		expect(screen.getByText(/turn 1 · 150 tok \(100 in \/ 50 out\)/)).toBeInTheDocument();
 		expect(screen.getByText(/1\.2s/)).toBeInTheDocument();
 	});
 
@@ -478,11 +478,11 @@ describe("ChatView", () => {
 
 		// Both step-metrics and turn-metrics render
 		expect(screen.getByText(/step 1/)).toBeInTheDocument();
-		expect(screen.getByText(/turn · 100 tok/)).toBeInTheDocument();
+		expect(screen.getByText(/turn 1 · 100 tok/)).toBeInTheDocument();
 
 		// They are in separate elements (different rows)
 		const stepEl = screen.getByText(/step 1 · 100 tok/).closest("div");
-		const turnEl = screen.getByText(/turn · 100 tok/).closest("div");
+		const turnEl = screen.getByText(/turn 1 · 100 tok/).closest("div");
 		expect(stepEl).not.toBe(turnEl);
 	});
 
@@ -556,7 +556,7 @@ describe("ChatView", () => {
 		expect(screen.getByText(/step 1/)).toBeInTheDocument();
 		expect(screen.getAllByText(/15 tok/)).toHaveLength(2);
 		// Turn metrics rendered
-		expect(screen.getByText(/turn · 15 tok \(10 in \/ 5 out\)/)).toBeInTheDocument();
+		expect(screen.getByText(/turn 1 · 15 tok \(10 in \/ 5 out\)/)).toBeInTheDocument();
 		// No "null" or "undefined" in the DOM
 		expect(screen.queryByText("null")).toBeNull();
 		expect(screen.queryByText("undefined")).toBeNull();

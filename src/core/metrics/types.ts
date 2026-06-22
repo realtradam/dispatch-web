@@ -56,6 +56,8 @@ export type MetricsRow =
 	| {
 			readonly kind: "turn-metrics";
 			readonly turn: TurnMetrics;
+			/** 1-based turn number (the entry's position in the metrics array + 1). */
+			readonly turnNumber: number;
 			/** Cumulative usage across all finalized turns up to and including this one. */
 			readonly cumulativeUsage: Usage;
 			/**
@@ -87,6 +89,7 @@ export interface StepMetricsView {
 
 /** Formatted per-turn view for display. */
 export interface TurnMetricsView {
+	readonly label: string;
 	readonly tokensLabel: string;
 	readonly breakdown: string;
 	readonly tps: string | null;

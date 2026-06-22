@@ -185,7 +185,7 @@
 				</div>
 			</div>
 		{:else if row.kind === "turn-metrics"}
-			{@const turnView = viewTurnMetrics(row.turn)}
+			{@const turnView = viewTurnMetrics(row.turn, row.turnNumber)}
 			{@const lastCache = viewCacheRate(row.turn.usage)}
 			{@const chatCache = viewCacheRate(row.cumulativeUsage)}
 			{@const retention = viewExpectedCache(row.turn.usage, row.prevTurnUsage)}
@@ -193,7 +193,7 @@
 				<div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
 					<div class="flex flex-col gap-1 text-xs">
 						<div class="opacity-70">
-							turn · {turnView.tokensLabel} ({turnView.breakdown})
+							{turnView.label} · {turnView.tokensLabel} ({turnView.breakdown})
 							{#if turnView.tps} · {turnView.tps}{/if}
 							{#if turnView.duration} · {turnView.duration}{/if}
 						</div>

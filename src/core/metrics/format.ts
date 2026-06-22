@@ -155,7 +155,7 @@ export function viewExpectedCache(current: Usage, prev: Usage | null): CacheRate
 }
 
 /** Build a formatted view of a turn's aggregate metrics. */
-export function viewTurnMetrics(turn: TurnMetrics): TurnMetricsView {
+export function viewTurnMetrics(turn: TurnMetrics, turnNumber?: number): TurnMetricsView {
 	const total = totalTokens(turn.usage);
 	let totalGenMs: number | undefined;
 	for (const step of turn.steps) {
@@ -166,6 +166,7 @@ export function viewTurnMetrics(turn: TurnMetrics): TurnMetricsView {
 	}
 	const tps = computeTps(turn.usage.outputTokens, totalGenMs);
 	return {
+		label: turnNumber !== undefined ? `turn ${turnNumber}` : "turn",
 		tokensLabel: `${formatTokens(total)} tok`,
 		breakdown: formatBreakdown(turn.usage),
 		tps: formatTps(tps),
