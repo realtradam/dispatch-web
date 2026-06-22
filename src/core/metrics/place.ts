@@ -111,8 +111,11 @@ export function interleaveTurnMetrics(
 		}
 		if (bestEntry >= 0) {
 			usedEntries.add(bestEntry);
-			segmentEntry.set(seg, entries[bestEntry]!);
-			segmentEntryIndex.set(seg, bestEntry);
+			const e = entries[bestEntry];
+			if (e !== undefined) {
+				segmentEntry.set(seg, e);
+				segmentEntryIndex.set(seg, bestEntry);
+			}
 		}
 	}
 
@@ -123,8 +126,11 @@ export function interleaveTurnMetrics(
 		while (nextUnused < K && usedEntries.has(nextUnused)) nextUnused++;
 		if (nextUnused < K) {
 			usedEntries.add(nextUnused);
-			segmentEntry.set(seg, entries[nextUnused]!);
-			segmentEntryIndex.set(seg, nextUnused);
+			const e = entries[nextUnused];
+			if (e !== undefined) {
+				segmentEntry.set(seg, e);
+				segmentEntryIndex.set(seg, nextUnused);
+			}
 			nextUnused++;
 		}
 	}
