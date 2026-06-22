@@ -54,8 +54,10 @@ export function applyHistory(
 ): TranscriptState {
 	const seqMap = new Map<number, StoredChunk>();
 	for (const c of state.committed) seqMap.set(c.seq, c);
+	let addedNew = false;
 	for (const c of chunks) {
 		if (c.seq < state.hiddenBeforeSeq) continue;
+		if (!seqMap.has(c.seq)) addedNew = true;
 		seqMap.set(c.seq, c);
 	}
 	const committed = Array.from(seqMap.values()).sort((a, b) => a.seq - b.seq);
@@ -68,6 +70,26 @@ export function applyHistory(
 			accumulating: null,
 			sealedTurnId: null,
 		};
+	}
+
+	// During generation: if new committed chunks arrived, the provisional
+	// array may contain duplicates — the optimistic echo from `appendUserMessage`
+	// is now backed by a committed chunk (CR-6: user message persisted at turn
+	// start). Remove provisional chunks that match the last committed chunk
+	// (role + chunk content), keeping only the accumulating (streaming) chunk.
+	if (addedNew && state.generating && state.provisional.length > 0) {
+		const lastCommitted = committed[committed.length - 1];
+		if (lastCommitted !== undefined) {
+			const provisional = state.provisional.filter((p) => {
+				if (p.role !== lastCommitted.role) return true;
+				if (p.chunk.type !== lastCommitted.chunk.type) return true;
+				if (p.chunk.type === "text" && lastCommitted.chunk.type === "text") {
+					return p.chunk.text !== lastCommitted.chunk.text;
+				}
+				return true;
+			});
+			return { ...state, committed, provisional, accumulating: state.accumulating };
+		}
 	}
 
 	return { ...state, committed };
