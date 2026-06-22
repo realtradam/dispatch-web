@@ -551,6 +551,26 @@ describe("applyHistory", () => {
 		expect(s.committed).toHaveLength(2);
 		expect(s.committed.map((c) => c.seq)).toEqual([1, 2]);
 	});
+
+	it("removes provisional duplicate when committed user message arrives during generation", () => {
+		// Simulate: send() appends provisional user message, then syncTail
+		// fetches the same message as committed (CR-6: persisted at turn start).
+		let s = initialState();
+		s = appendUserMessage(s, "hello");
+		s = foldEvent(s, turnStart("t1"));
+		expect(s.provisional).toHaveLength(1);
+		expect(s.provisional[0]?.role).toBe("user");
+		expect(s.generating).toBe(true);
+
+		// syncTail fetches the persisted user message as committed
+		s = applyHistory(s, [storedChunk(1, "user", { type: "text", text: "hello" })]);
+
+		// The provisional duplicate is removed — no double render
+		expect(s.provisional).toEqual([]);
+		expect(s.committed).toHaveLength(1);
+		expect(s.committed[0]?.role).toBe("user");
+		expect(s.committed[0]?.chunk).toEqual({ type: "text", text: "hello" });
+	});
 });
 
 describe("selectChunks", () => {
