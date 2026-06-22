@@ -5,10 +5,10 @@
 > **From:** dispatch-web orchestrator · **To:** arch-rewrite orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-22 (CR-6 resolved by backend — incremental seq at step boundaries).
+_Last updated: 2026-06-22 (context window + percentage-based compact consumed).
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.15.0` / `wire@0.11.0`.** 686 tests green.
-**Open asks: NONE.** All CRs resolved (CR-1 through CR-6). CR-6 not yet consumed by the FE —
-see §2 for the adoption plan._
+**Open asks: NONE.** All CRs resolved (CR-1 through CR-6) + context-window + compact-percent
+handoff consumed._
 
 ---
 
@@ -93,11 +93,12 @@ the turn seals and `syncTail` fetches everything.
 
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
-- **Model max context-window LIMIT** (the denominator for context size) — the FE renders
-  `contextSize / limit · pct%` + a fill bar in the composer status bar, but the limit is currently
-  HARDCODED to `1,000,000` as a placeholder (`MAX_CONTEXT` in `features/chat/ui/Composer.svelte`).
-  When a per-model `contextWindow` (max token capacity) ships, wire the real value through so the
-  bar/percent are accurate.
+- **Model max context-window LIMIT** → **CONSUMED ✅** — `GET /models` now returns
+  `modelInfo[model].contextWindow`. The Composer uses the real value (falls back to
+  1,000,000 when absent). The hardcoded `MAX_CONTEXT` is gone.
+- **Percentage-based auto-compact** → **CONSUMED ✅** — `compact-threshold` endpoint
+  renamed to `compact-percent`; field is now `percent` (0-100, default 85, 0 = manual).
+  CompactionView UI updated from token count to percent input (0-100).
 - **`GET /conversations`** — conversation list / sidebar (history explorer / switcher); could also
   expose a per-conversation "last model" so a reopened tab seeds its model from the server.
 - **LSP status over WS** (push) — today the FE HTTP-polls `GET /conversations/:id/lsp` on panel mount

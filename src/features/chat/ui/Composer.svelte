@@ -1,9 +1,7 @@
 <script lang="ts">
 	import { computeContextUsage, formatCompactTokens } from "../../../core/metrics";
 
-	// Placeholder context-window limit until the backend reports a real
-	// per-model max (see backend-handoff §3). Hardcoded to 1,000,000 tokens.
-	const MAX_CONTEXT = 1_000_000;
+	const FALLBACK_CONTEXT_WINDOW = 1_000_000;
 	const MAX_LINES = 7;
 
 	let {
@@ -11,6 +9,7 @@
 		onQueue,
 		onStop,
 		contextSize = undefined,
+		contextWindow = undefined,
 		status = "idle",
 	}: {
 		onSend: (text: string) => void;
@@ -26,6 +25,8 @@
 		// Current context occupancy (latest turn's contextSize), or `undefined`
 		// when unknown — the status bar then shows "— tokens", never 0%.
 		contextSize?: number | undefined;
+		/** Per-model context window (max tokens) from `GET /models` modelInfo. */
+		contextWindow?: number | undefined;
 		// Coarse agent status for the status-bar icon.
 		status?: "idle" | "running" | "error";
 	} = $props();
@@ -34,7 +35,8 @@
 	let inputEl: HTMLTextAreaElement | undefined;
 
 	const hasText = $derived(text.trim().length > 0);
-	const usage = $derived(computeContextUsage(contextSize, MAX_CONTEXT));
+	const effectiveMax = $derived(contextWindow ?? FALLBACK_CONTEXT_WINDOW);
+	const usage = $derived(computeContextUsage(contextSize, effectiveMax));
 	const hasUsage = $derived(contextSize !== undefined);
 
 	// One button, three modes:

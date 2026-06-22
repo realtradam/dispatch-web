@@ -1,228 +1,22 @@
-# `@dispatch/transport-contract` — in-repo reference (read THIS, not node_modules)
-
-> MIRRORS the backend's `@dispatch/transport-contract` package source so headless FE agents can read
-> the HTTP + WebSocket wire shapes WITHOUT following the `file:` dep symlink out of this repo (which
-> hangs on a permission prompt). Your CODE still imports `@dispatch/transport-contract` normally —
-> this file is for READING only.
->
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.15.0` (compaction).
-> Depends on `@dispatch/wire@0.11.0` (see `wire.reference.md`) + `@dispatch/ui-contract@0.2.0` (see
-> `ui-contract.reference.md`).
->
-> **2026-06-22 delta (compaction handoff — package bumped `0.14.0` → `0.15.0`, ADDITIVE):**
-> adds conversation compaction — summarize old history + retain recent N messages. Manual:
-> `POST /conversations/:id/compact` (optional `{ keepLastN, modelName }`) → `CompactResponse`.
-> Automatic: after each turn settles, if the last turn's input tokens exceeded the per-conversation
-> `compactThreshold`, compaction runs automatically. `GET`/`PUT /conversations/:id/compact-threshold`
-> (`CompactThresholdResponse`/`SetCompactThresholdRequest`) — `threshold: 0` = disabled; default
-> 350000 when not stored. Re-exports `CompactionResult` from `wire@0.11.0`.
->
-> **2026-06-22 delta (conversation lifecycle handoff — package bumped `0.13.0` → `0.14.0`, ADDITIVE):**
-> adds conversation lifecycle **status** (`active`/`idle`/`closed`) for cross-device tab
-> persistence. `ConversationMeta` (re-exported from `wire@0.10.0`) gains a `status` field. New
-> WS message `ConversationStatusChangedMessage` (`{ type: "conversation.statusChanged";
-> conversationId; status }`) is broadcast to ALL clients on every status change. `GET
-> /conversations` gains an optional `?status=active,idle` filter (comma-separated; default = all).
-> `POST /conversations/:id/close` now also sets status to `closed` (persists across restarts).
-> The FE fetches `?status=active,idle` on connect to restore the tab bar across devices.
->
-> **2026-06-21 delta (conversation.open handoff — package bumped `0.12.0` → `0.13.0`, ADDITIVE):**
-> adds the `conversation.open` WS broadcast — when the CLI's `--open` flag fires
-> (`POST /conversations/:id/open`), the backend broadcasts a `ConversationOpenMessage`
-> (`{ type: "conversation.open"; conversationId }`) to ALL connected WS clients. Additive to
-> `WsServerMessage`. The FE handles it by opening/focusing a tab for the `conversationId`. Also
-> adds conversation metadata endpoints (not yet consumed by the FE): `GET /conversations` (list,
-> `ConversationListResponse`/`ConversationMeta`), `GET /conversations/:id/last` (blocking last
-> message, `LastMessageResponse`), `GET`/`PUT /conversations/:id/title` (`TitleResponse`/
-> `SetTitleRequest`), and `POST /conversations/:id/open` (`OpenConversationResponse`). Re-exports
-> `ConversationMeta` from `wire@0.9.0`.
->
-> **2026-06-21 delta (message-queue + steering handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):**
-> adds the enqueue surface for the per-conversation message queue (the wire types `QueuedMessage` /
-> `QueuePayload` + the new `steering` `AgentEvent` live in `wire@0.8.0`, re-exported here). Two
-> additive shapes:
-> 1. **WS `chat.queue` op** — `ChatQueueMessage { type: "chat.queue"; conversationId; text }` (a
->    new `WsClientMessage` union member). Fire-and-forget: on success the server emits NOTHING back
->    — the message-queue SURFACE updates (the new message appears in the snapshot). On failure (empty
->    `text`, unknown conversation) the server replies `chat.error`. **Auto-start when idle
->    (server-owned):** if no turn is active, `chat.queue` does NOT queue — it STARTS A NEW TURN with
->    the message as its opening prompt (equivalent to `chat.send`). So a single op works for both
->    "steer during generation" and "send"; the client doesn't pick. `text` must be non-empty after trim.
-> 2. **HTTP `POST /conversations/:id/queue`** — body `QueueRequest { text }` → `QueueResponse
->    { conversationId; startedTurn: boolean; queue: QueuedMessage[] }`. `startedTurn: true` = was
->    idle, a new turn started (the message is the turn's opening prompt, NOT a queued steering
->    message); `startedTurn: false` = a turn was active, the message was queued (the `queue`
->    snapshot includes it). Empty/whitespace `text` → HTTP 400 `{ error }`. The FE uses the WS op.
->
-> The queue is read via a per-conversation SURFACE (`message-queue`, scope `conversation`; one
-> `custom` field, `rendererId: "message-queue"`, `payload: QueuePayload`) — NOT via the chat stream.
-> See the handoff for the full flow (steering event, carry-to-new-turn, move-vs-duplicate).
->
-> **2026-06-12 delta (reasoning-effort handoff — package bumped `0.10.0` → `0.11.0`, ADDITIVE):**
-> the thinking-depth knob (`ReasoningEffort`, re-exported from `wire@0.7.0`) lands in TWO scopes,
-> resolved server-side per turn (per-turn override → persisted conversation value → default
-> `"high"`; do NOT re-implement the chain client-side):
-> 1. **Per-turn override** — optional `reasoningEffort?: ReasoningEffort` on `ChatRequest` (and
->    therefore on WS `chat.send`, which extends it). Applies to THAT turn only; never persists.
->    OMIT the key for "no override" (never send `null`/`""`).
-> 2. **Persisted per-conversation setting** — `GET /conversations/:id/reasoning-effort` →
->    `ReasoningEffortResponse { conversationId, reasoningEffort: ReasoningEffort | null }`
->    (`null` = never set ⇒ the default `"high"` applies, NOT "off") and
->    `PUT /conversations/:id/reasoning-effort` body `SetReasoningEffortRequest
->    { reasoningEffort }`. Takes effect from the NEXT turn.
-> Validation: an unrecognized level → HTTP 400 `{ error }` listing the valid levels (same for the
-> WS path via the standard `chat.send` error reply). Cache note: CHANGING the level changes the
-> provider request shape and can bust the prompt cache for the next turn (one-time re-prefill);
-> a stable setting stays cache-safe (warming uses the same resolved effort).
->
-> **2026-06-12 delta (CR-5 history windowing — package bumped `0.9.0` → `0.10.0`):** NO type-shape
-> change — `GET /conversations/:id` gains two OPTIONAL query params alongside `sinceSeq`:
-> **`limit=<k>`** (the NEWEST `k` chunks of the selection, still ASCENDING; a selection with ≤ `k`
-> chunks is returned whole; omitted = full selection, byte-identical to the old behavior) and
-> **`beforeSeq=<s>`** (exclusive upper bound `seq < s`; combined: `sinceSeq < seq < beforeSeq`).
-> `limit`/`beforeSeq` must be POSITIVE integers (`sinceSeq` may still be 0); malformed/zero/negative
-> → HTTP 400 `{ error }` naming the param. Seq numbering is now a WRITTEN CONTRACT: 1-based,
-> monotonic, gap-free (see `wire@0.6.1` `StoredChunk`), so `hasOlder = oldestLoaded.seq > 1` — there
-> is deliberately NO `earliestSeq`/`hasOlder` field. CAVEAT: on a windowed read, `latestSeq`
-> describes the returned WINDOW; never regress a tail cursor from a `beforeSeq` backfill page.
-> Intended flows: fresh load `?sinceSeq=0&limit=<k>` · tail sync `?sinceSeq=<cursor>` (no limit) ·
-> page older in `?beforeSeq=<oldestLoadedSeq>&limit=<k>`.
->
-> **2026-06-12 delta (CR-4 cache-warming lifecycle — package bumped `0.8.0` → `0.9.0`):** adds
-> `POST /conversations/:id/close` (`CloseConversationResponse`) — the EXPLICIT "user closed this
-> conversation's tab" affordance, distinct from a socket disconnect / `chat.unsubscribe` (which
-> still NEVER touch the turn or the warming schedule). Closing (1) aborts any in-flight turn — the
-> kernel stops at the next event boundary, partial messages are PERSISTED, and the turn SEALS
-> normally with `finishReason: "aborted"` (watchers receive `done` then `turn-sealed`, so a
-> stream-derived "generating" flag clears with no special-casing) — and (2) stops + DISABLES
-> cache-warming for the conversation (persisted OFF; reopening does not resume warming). Idempotent:
-> closing an idle/unknown conversation is `200` with `abortedTurn: false`. Backend behavior fixes
-> riding EXISTING shapes (no other contract change): warming now defaults OFF for a new conversation
-> (240s interval default kept; re-enable restores the persisted interval); post-warm surface updates
-> now carry the FUTURE `nextWarmAt` (notify-before-reschedule fixed); `nextWarmAt: null` is pushed on
-> `turn-start` (nothing scheduled while generating) and when warming is/became disabled. Caveat: the
-> warming opt-in is NOT yet re-hydrated across a backend restart (reads disabled until toggled again).
->
-> **2026-06-12 delta (CR-3 user-message handoff — package bumped `0.7.0` → `0.8.0`):** NO transport
-> shape change — it re-exports `AgentEvent` (which `chat.delta` / `/chat` NDJSON carry), and that union
-> gained the additive `TurnInputEvent` (`{ type: "user-message"; conversationId; turnId; text }`), the
-> turn's user prompt, emitted as the FIRST event of every turn (before `turn-start`) and replayed to
-> watchers/late-joiners. See the `wire.reference.md` CR-3 delta + `TurnInputEvent` for the definition.
->
-> **2026-06-12 delta (turn-continuity handoff — package bumped `0.6.0` → `0.7.0`, ADDITIVE):** a turn
-> is no longer bound to the WS connection — it runs to completion server-side regardless of any
-> client, and any number of connections can watch the same conversation (incl. a late-joiner that
-> connects mid-turn). Two new client→server WS messages: `ChatSubscribeMessage`
-> (`{ type: "chat.subscribe"; conversationId }`) and `ChatUnsubscribeMessage`
-> (`{ type: "chat.unsubscribe"; conversationId }`); `WsClientMessage` now unions both. Server→client
-> is UNCHANGED (turn events still arrive as `chat.delta`, replayed AND live). Semantics: `chat.subscribe`
-> registers the connection + immediately REPLAYS the in-flight turn's events so far (from its
-> `turn-start`) then streams live (nothing replayed if idle); `chat.send` AUTO-subscribes the sending
-> connection (a 2nd send while generating ⇒ `chat.error` + you stay subscribed to watch the running
-> turn); `chat.unsubscribe`/socket-close drops the subscription but NEVER stops the turn; subscriptions
-> persist across turns. FE consumes via the `chat` feature + app store (re-subscribe every open
-> conversation on (re)connect + page load; derive a "running" state structurally from
-> `turn-start`…no-`done`/`turn-sealed`-yet). OUT of scope: per-step crash-resume, concurrent-send
-> arbitration.
->
-> **2026-06-12 delta (context-size handoff — package bumped `0.5.0` → `0.6.0`, depends on
-> `wire@0.5.0`):** no NEW transport shape — the optional `contextSize?: number` rides the
-> re-exported `TurnMetrics` (so `ConversationMetricsResponse.turns[].contextSize`) and, live, the
-> `TurnDoneEvent.contextSize` on the `done` AgentEvent (`chat.delta` WS / `/chat` NDJSON). On
-> (re)hydrate take the LAST `turns[]` element with a defined `contextSize`; live, update on `done`.
-> See the `wire.reference.md` context-size delta for the definition.
->
-> **2026-06 delta (cache-warming handoff, additive — package still `0.4.0`):** adds
-> `POST /chat/warm` (`WarmRequest` → `WarmResponse`) for an on-demand prompt-cache warm, and the
-> throughput axis `GET /metrics/throughput` (`ThroughputResponse`/`ThroughputModelStat`/
-> `ThroughputPeriod`). The warm is NEVER persisted/streamed and NEVER folded into a conversation's
-> real usage. Pairs with the `cache-warming` conversation-scoped surface + `NumberField` in
-> `ui-contract.reference.md`.
->
-> **2026-06-11 delta (cache-rate fix handoff, additive — package still `0.4.0`):** `WarmResponse`
-> gains `expectedCacheRate` (the warming HEALTH/retention signal,
-> `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)`). Consumed FE-side: headlined
-> on the "Warm now" result. (No `ui-contract` change — the `cache-warming` surface's new
-> `cache-warming-timer` payload + second "cache retention" `stat` ride the EXISTING `custom`/`stat`
-> kinds; the FE cache-warming feature parses them.)
->
-> **2026-06-11 delta (LSP + cwd handoff — package bumped to `0.5.0`):** adds per-conversation working
-> directory `GET /conversations/:id/cwd` + `PUT /conversations/:id/cwd` (`CwdResponse`/`SetCwdRequest`,
-> CORS now allows `PUT`) and per-conversation LSP status `GET /conversations/:id/lsp`
-> (`LspStatusResponse`/`LspServerInfo`/`LspServerState`). The LSP GET LAZILY spawns+initializes the
-> configured servers (can take a moment the first time per cwd; cached after) and returns once each
-> server settles to `connected`/`error`. `servers` is `[]` when `cwd` is null. A `/chat`(`/warm`)
-> request that omits `cwd` now defaults to the conversation's persisted cwd; one that sends `cwd`
-> persists it. Consumed FE-side by the `workspace` feature (cwd field in the Model view + a
-> "Language Servers" view).
->
-> **0.3.0 change (token + timing metrics):** adds the durable metrics READ endpoint
-> `GET /conversations/:id/metrics` → `ConversationMetricsResponse` (`{ turns: TurnMetrics[] }`), and
-> re-exports `StepMetrics` / `TurnMetrics` from `@dispatch/wire`. This is a SEPARATE read axis from
-> the seq-cursor history (`GET /conversations/:id`): metrics are keyed PER TURN (not per chunk), so
-> they get their own route. `turns` is every SEALED turn's `TurnMetrics` in turn order (an in-flight
-> turn is absent until its metrics persist post-seal). The live `usage`/`step-complete`/`done`
-> packets it mirrors are transient (NOT persisted) and ride the `chat.delta`/NDJSON `AgentEvent`
-> stream you already consume — see `wire.reference.md`. The contract's OWN chat/history shapes are
-> otherwise unchanged from 0.2.0.
-
-## Endpoints (backend — CORS wildcard `*`, HTTP port 24203, WS port 24205)
-
-- `POST /chat` — body `ChatRequest` (JSON); response NDJSON stream, one `AgentEvent` per line;
-  resolved id also in `X-Conversation-Id` header.
-- `GET /models` — `ModelsResponse`.
-- `GET /conversations/:id?sinceSeq=<n>&beforeSeq=<s>&limit=<k>` — `ConversationHistoryResponse`:
-  RAW, append-order, seq-ordered slice with `n < seq < s`, windowed to the NEWEST `k` (all params
-  optional; NOT reconciled — dangling tool-calls returned as-is). `latestSeq` = last chunk's `seq`,
-  or the requested `sinceSeq` when caught up (empty `chunks`) — a TAIL cursor only; do not regress
-  a cursor from a windowed/backfill read. `limit`/`beforeSeq` must be positive ints → else 400.
-- `GET /conversations/:id/metrics` — `ConversationMetricsResponse`: every SEALED turn's `TurnMetrics`
-  in turn order (per-turn token + timing; NOT seq-filtered). IMPLEMENTED + LIVE-VERIFIED (probe 17/17).
-- `POST /chat/warm` — body `WarmRequest` (JSON) → `200 WarmResponse` (cache-warm usage incl.
-  `cachePct`); `409 { error }` when the conversation is currently generating; `400 { error }` on a
-  missing/invalid `conversationId`. The warm is NEVER persisted/streamed/folded into real usage.
-- `POST /conversations/:id/close` — no body → `200 CloseConversationResponse`. The EXPLICIT tab-close
-  affordance: aborts any in-flight turn (persists the partial; seals with `finishReason: "aborted"`)
-  AND stops + disables cache-warming (persisted OFF). Idempotent (`abortedTurn: false` when idle/unknown).
-- `POST /conversations/:id/queue` — body `QueueRequest { text }` → `200 QueueResponse`. Enqueue a user
-  message for mid-turn steering delivery (the WS `chat.queue` op is the FE's path). When a turn is
-  active, the message is queued + delivered at the next tool-result boundary (a `steering` `AgentEvent`
-  fires; the message-queue SURFACE updates). When idle, the enqueue STARTS a new turn with the message
-  as its opening prompt (`startedTurn: true`). Empty/whitespace `text` → `400 { error }`.
-- `GET /metrics/throughput?period=day|week|month&date=<...>` — `ThroughputResponse` (token-weighted
-  tokens/sec per model over the window). Not part of cache-warming; listed for completeness.
-- `GET /conversations/:id/cwd` — `CwdResponse` (`cwd` is `null` until set).
-- `PUT /conversations/:id/cwd` — body `SetCwdRequest` → `200 CwdResponse`; `400 { error }` if `cwd`
-  missing/empty. CORS allows `PUT`.
-- `GET /conversations/:id/lsp` — `LspStatusResponse`. LAZILY spawns+initializes the configured servers
-  on the first call per cwd (can take a moment; cached after); returns once each settles to
-  `connected`/`error`. `servers` is `[]` when `cwd` is null.
-- `GET /conversations/:id/reasoning-effort` — `ReasoningEffortResponse` (`reasoningEffort` is `null`
-  when never set ⇒ default `"high"` applies). Works for an unseen/draft id.
-- `PUT /conversations/:id/reasoning-effort` — body `SetReasoningEffortRequest` →
-  `200 ReasoningEffortResponse`; `400 { error }` on an unrecognized level (the message lists the
-  valid levels). Persists the conversation's sticky level; effective from the NEXT turn.
-- WebSocket on :24205 — ONE path-agnostic socket multiplexes surface ops
-  (`@dispatch/ui-contract`) + chat ops (below). Open once, send `WsClientMessage`, receive
-  `WsServerMessage`. Live `AgentEvent` deltas carry `conversationId`+`turnId` but **no `seq`**
-  (seq lives only on `StoredChunk`, obtained via the `sinceSeq` sync after `turn-sealed`).
-- DEFERRED (not built; do not depend on): `GET /conversations` (list). (The former deferred
-  `POST /conversations/:id/cancel` is superseded by `POST /conversations/:id/close`.)
-
-```ts
 /**
  * Transport contract — the typed description of Dispatch's client–server API
  * (HTTP + WebSocket).
  *
  * This package is types-only (zero runtime). It is the single shared surface
- * every client imports to know how to talk to the backend. Each side owns its
- * OWN (de)serialization: the contract is the SHAPES, not the codec. The
- * streaming response payload is the kernel's `AgentEvent` union, re-exported
- * here so a client has one import for the whole wire.
+ * every client imports to know how to talk to the backend — the CLI, the web
+ * frontend (in its own repo), any third-party client — and the transport-http /
+ * transport-ws servers import to know what they must accept and emit.
+ *
+ * Each side owns its OWN (de)serialization: there is deliberately no shared
+ * parse/serialize helper here (isolation-over-DRY). The contract is the SHAPES,
+ * not the codec. The streaming response payload is the kernel's `AgentEvent`
+ * union, re-exported here so a client has one import for the whole wire.
  *
  * The WebSocket carries BOTH chat ops (defined here) and surface ops (defined in
  * `@dispatch/ui-contract`) over one connection; the unified `WsClientMessage` /
- * `WsServerMessage` unions below compose them.
+ * `WsServerMessage` unions below compose them. Chat ops are new, non-colliding
+ * `type` variants — there is no channel wrapper, so the shipped surface protocol
+ * is unchanged.
  */
 
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -238,6 +32,7 @@ import type {
 
 export type {
 	AgentEvent,
+	CompactionResult,
 	ConversationMeta,
 	ConversationStatus,
 	QueuedMessage,
@@ -290,11 +85,20 @@ export interface ChatRequest {
 /**
  * Response body for `GET /models` — the model catalog.
  *
- * Each entry is a model name in `<credentialName>/<model>` form: exactly the
- * string a client passes back as `ChatRequest.model`.
+ * Each entry in `models` is a model name in `<credentialName>/<model>` form:
+ * exactly the string a client passes back as `ChatRequest.model`.
+ * `modelInfo` is an optional map from the same `<credentialName>/<model>` key
+ * to model metadata (e.g. `contextWindow`). Additive — clients that only
+ * read `models` are unaffected.
  */
 export interface ModelsResponse {
 	readonly models: readonly string[];
+	readonly modelInfo?: Readonly<Record<string, ModelMetadata>>;
+}
+
+/** Per-model metadata returned alongside the model catalog. */
+export interface ModelMetadata {
+	readonly contextWindow?: number;
 }
 
 /**
@@ -351,6 +155,12 @@ export interface ConversationHistoryResponse {
  * Response body for `GET /conversations/:id/metrics` — the persisted per-turn
  * (and per-step) token + timing metrics for a conversation, for a client
  * reopening a past conversation to render historical usage/latency.
+ *
+ * This is a SEPARATE axis from the two other read concerns and is deliberately
+ * its own endpoint: the live `usage`/`step-complete`/`done` events are transient
+ * (not persisted), and `ConversationHistoryResponse` carries seq-cursor chunk
+ * CONTENT. Metrics are keyed per TURN (not per chunk) and so are not seq-filtered
+ * — hence a sibling route rather than a field on the history response.
  *
  * `turns` is every SEALED turn's `TurnMetrics` in turn order. A turn appears only
  * after its metrics were persisted (post-seal); an in-flight or unsealed turn is
@@ -703,8 +513,8 @@ export interface ConversationOpenMessage {
 
 /**
  * Broadcast to all connected WS clients when a conversation's lifecycle status
- * changes (`active`/`idle`/`closed`). The FE uses this for cross-device tab
- * sync: `closed` → remove the tab; `active` → show a generating indicator.
+ * changes (active/idle/closed). The frontend uses this to sync tab state across
+ * devices in real time.
  */
 export interface ConversationStatusChangedMessage {
 	readonly type: "conversation.statusChanged";
@@ -770,8 +580,6 @@ export interface TitleResponse {
 	readonly title: string;
 }
 
-// ─── Compaction ──────────────────────────────────────────────────────────────
-
 /**
  * Response for `POST /conversations/:id/compact` — confirms the conversation
  * history was compacted (old messages summarized, recent messages retained).
@@ -784,19 +592,17 @@ export interface CompactResponse {
 }
 
 /**
- * Response for `GET /conversations/:id/compact-threshold` — the token count
- * at which automatic compaction triggers (0 = manual only; default 350000
- * when not stored).
+ * Response for `GET /conversations/:id/compact-percent` — the token count
+ * at which automatic compaction triggers (0 = manual only).
  */
-export interface CompactThresholdResponse {
+export interface CompactPercentResponse {
 	readonly conversationId: string;
 	readonly threshold: number;
 }
 
 /**
- * Request body for `PUT /conversations/:id/compact-threshold`.
+ * Request body for `PUT /conversations/:id/compact-percent`.
  */
-export interface SetCompactThresholdRequest {
+export interface SetCompactPercentRequest {
 	readonly threshold: number;
 }
-```

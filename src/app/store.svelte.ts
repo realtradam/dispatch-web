@@ -1,8 +1,8 @@
 import type {
 	ChatDeltaMessage,
 	ChatErrorMessage,
+	CompactPercentResponse,
 	CompactResponse,
-	CompactThresholdResponse,
 	ConversationCompactedMessage,
 	ConversationHistoryResponse,
 	ConversationListResponse,
@@ -11,10 +11,11 @@ import type {
 	ConversationStatusChangedMessage,
 	CwdResponse,
 	LspStatusResponse,
+	ModelMetadata,
 	ModelsResponse,
 	ReasoningEffort,
 	ReasoningEffortResponse,
-	SetCompactThresholdRequest,
+	SetCompactPercentRequest,
 	SetCwdRequest,
 	SetReasoningEffortRequest,
 	WarmRequest,
@@ -73,9 +74,9 @@ export type CompactResult =
 	| { readonly ok: true; readonly response: CompactResponse }
 	| { readonly ok: false; readonly error: string };
 
-/** Outcome of `PUT /conversations/:id/compact-threshold`. */
-export type CompactThresholdResult =
-	| { readonly ok: true; readonly threshold: number }
+/** Outcome of `PUT /conversations/:id/compact-percent`. */
+export type CompactPercentResult =
+	| { readonly ok: true; readonly percent: number }
 	| { readonly ok: false; readonly error: string };
 
 /** Outcome of persisting a chat-limit setting (localStorage; FE-local). */
@@ -88,6 +89,8 @@ export interface AppStore {
 	readonly activeConversationId: string | null;
 	readonly activeChat: ChatStore;
 	readonly models: readonly string[];
+	/** Per-model metadata (contextWindow, etc.) from `GET /models`. */
+	readonly modelInfo: Readonly<Record<string, ModelMetadata>>;
 	readonly activeModel: string;
 	readonly catalog: ProtocolState["catalog"];
 	/** Every received surface spec, in catalog order — all auto-subscribed + expanded. */
@@ -152,17 +155,18 @@ export interface AppStore {
 	 */
 	stopGeneration(): void;
 	/**
-	 * The workspace conversation's auto-compact threshold (tokens). `0` = disabled
+	 * The workspace conversation's auto-compact percent (0-100). `0` = disabled
 	 * (manual only); a positive number = auto-compact triggers when the last
 	 * turn's input tokens exceed it. Seeded from the backend on focus change.
 	 */
-	readonly compactThreshold: number | null;
+	readonly compactPercent: number | null;
 	/**
-	 * Persist the workspace conversation's auto-compact threshold
-	 * (`PUT /conversations/:id/compact-threshold`). `0` disables; any positive
+	 * Persist the workspace conversation's auto-compact percent
+	 * (`PUT /conversations/:id/compact-percent`). `0` disables; 1-100 sets the
+	 * trigger percentage of the model's context window. Default (null) is 85.
 	 * number enables. Works for a draft too (its id survives promotion).
 	 */
-	setCompactThreshold(threshold: number): Promise<CompactThresholdResult | null>;
+	setCompactPercent(percent: number): Promise<CompactPercentResult | null>;
 	/**
 	 * Fetch the workspace conversation's language-server status (`GET /conversations/:id/lsp`).
 	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
@@ -233,6 +237,7 @@ function createMetricsSync(httpBase: string, fetchImpl: typeof fetch): MetricsSy
 export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let protocol = $state<ProtocolState>(protocolInitialState());
 	let models = $state<readonly string[]>([]);
+	let modelInfo = $state<Readonly<Record<string, ModelMetadata>>>({});
 	let activeModel = $state(DEFAULT_MODEL);
 
 	const wsLocation = typeof location !== "undefined" ? location : undefined;
@@ -358,23 +363,23 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		}
 	}
 
-	// The workspace conversation's auto-compact threshold. Seeded from the
+	// The workspace conversation's auto-compact percent. Seeded from the
 	// backend on focus change; null = not yet fetched. 0 = disabled.
-	let compactThreshold = $state<number | null>(null);
+	let compactPercent = $state<number | null>(null);
 
-	/** Refetch the workspace conversation's compact threshold (works for a draft too). */
-	async function refreshCompactThreshold(): Promise<void> {
+	/** Refetch the workspace conversation's compact percent (works for a draft too). */
+	async function refreshCompactPercent(): Promise<void> {
 		const id = workspaceConversationId();
-		compactThreshold = null;
+		compactPercent = null;
 		try {
 			const res = await fetchImpl(
-				`${httpBase}/conversations/${encodeURIComponent(id)}/compact-threshold`,
+				`${httpBase}/conversations/${encodeURIComponent(id)}/compact-percent`,
 			);
 			if (!res.ok) return;
-			const data = (await res.json()) as CompactThresholdResponse;
-			if (workspaceConversationId() === id) compactThreshold = data.threshold;
+			const data = (await res.json()) as CompactPercentResponse;
+			if (workspaceConversationId() === id) compactPercent = data.threshold;
 		} catch {
-			// Non-fatal: a threshold fetch failure just leaves null.
+			// Non-fatal: a percent fetch failure just leaves null.
 		}
 	}
 
@@ -542,7 +547,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		syncSubscriptions();
 		void refreshCwd();
 		void refreshReasoningEffort();
-		void refreshCompactThreshold();
+		void refreshCompactPercent();
 	}
 
 	// Conversation lifecycle status (backend-owned, pushed via WS +
@@ -676,6 +681,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		.then((data) => {
 			if (data === undefined) return;
 			models = data.models;
+			modelInfo = data.modelInfo ?? {};
 			if (data.models.length > 0 && !data.models.includes(activeModel)) {
 				const first = data.models[0];
 				if (first !== undefined) {
@@ -713,7 +719,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	refreshActiveChat();
 	void refreshCwd();
 	void refreshReasoningEffort();
-	void refreshCompactThreshold();
+	void refreshCompactPercent();
 
 	// Fetch the authoritative open-conversation list from the backend (cross-
 	// device tab sync). Merges with the localStorage-restored tabs: opens new
@@ -732,6 +738,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		},
 		get models(): readonly string[] {
 			return models;
+		},
+		get modelInfo(): Readonly<Record<string, ModelMetadata>> {
+			return modelInfo;
 		},
 		get activeModel(): string {
 			return activeModel;
@@ -759,8 +768,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		get reasoningEffort(): ReasoningEffort | null {
 			return reasoningEffort;
 		},
-		get compactThreshold(): number | null {
-			return compactThreshold;
+		get compactPercent(): number | null {
+			return compactPercent;
 		},
 		get chatLimit(): number {
 			return chatLimit;
@@ -800,7 +809,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				syncSubscriptions();
 				void refreshCwd();
 				void refreshReasoningEffort();
-				void refreshCompactThreshold();
+				void refreshCompactPercent();
 				// Now send on the promoted store
 				chatStores.get(conversationId)?.send(text);
 			} else {
@@ -837,7 +846,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			syncSubscriptions();
 			void refreshCwd();
 			void refreshReasoningEffort();
-			void refreshCompactThreshold();
+			void refreshCompactPercent();
 		},
 
 		selectTab(conversationId: string): void {
@@ -850,7 +859,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			syncSubscriptions();
 			void refreshCwd();
 			void refreshReasoningEffort();
-			void refreshCompactThreshold();
+			void refreshCompactPercent();
 		},
 
 		closeTab(conversationId: string): void {
@@ -988,12 +997,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			}
 		},
 
-		async setCompactThreshold(threshold: number): Promise<CompactThresholdResult | null> {
+		async setCompactPercent(percent: number): Promise<CompactPercentResult | null> {
 			const id = workspaceConversationId();
-			const body: SetCompactThresholdRequest = { threshold };
+			const body: SetCompactPercentRequest = { threshold: percent };
 			try {
 				const res = await fetchImpl(
-					`${httpBase}/conversations/${encodeURIComponent(id)}/compact-threshold`,
+					`${httpBase}/conversations/${encodeURIComponent(id)}/compact-percent`,
 					{
 						method: "PUT",
 						headers: { "content-type": "application/json" },
@@ -1004,16 +1013,16 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
 					return {
 						ok: false,
-						error: errBody?.error ?? `Set compact threshold failed (HTTP ${res.status})`,
+						error: errBody?.error ?? `Set compact percent failed (HTTP ${res.status})`,
 					};
 				}
-				const data = (await res.json()) as CompactThresholdResponse;
-				if (workspaceConversationId() === id) compactThreshold = data.threshold;
-				return { ok: true, threshold: data.threshold };
+				const data = (await res.json()) as CompactPercentResponse;
+				if (workspaceConversationId() === id) compactPercent = data.threshold;
+				return { ok: true, percent: data.threshold };
 			} catch (err) {
 				return {
 					ok: false,
-					error: err instanceof Error ? err.message : "Set compact threshold request failed",
+					error: err instanceof Error ? err.message : "Set compact percent request failed",
 				};
 			}
 		},

@@ -17,7 +17,7 @@ export {
 export type { ChatStore, ChatStoreDependencies } from "./store.svelte";
 export { createChatStore } from "./store.svelte";
 export { default as ChatView } from "./ui/ChatView.svelte";
-export type { CompactNowResult, SaveCompactThresholdResult } from "./ui/CompactionView.svelte";
+export type { CompactNowResult, SaveCompactPercentResult } from "./ui/CompactionView.svelte";
 export { default as CompactionView } from "./ui/CompactionView.svelte";
 export { default as Composer } from "./ui/Composer.svelte";
 export { default as ModelSelector } from "./ui/ModelSelector.svelte";
