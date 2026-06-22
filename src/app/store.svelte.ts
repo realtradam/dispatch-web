@@ -93,6 +93,9 @@ export interface AppStore {
 	/** Every received surface spec, in catalog order — all auto-subscribed + expanded. */
 	readonly surfaces: readonly SurfaceSpec[];
 	readonly lastError: ProtocolState["lastError"];
+	/** The localStorage instance the store uses for persistence (tabs, chatLimit).
+	 *  Exposed so the shell can persist sidebar layout via the same adapter. */
+	readonly storage: Storage | undefined;
 	/** The current spec for one surface by id (discovery-by-id), or null if absent. */
 	surface(surfaceId: string): SurfaceSpec | null;
 	send(text: string): void;
@@ -746,6 +749,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		},
 		get lastError() {
 			return protocol.lastError;
+		},
+		get storage() {
+			return localStorageOpt;
 		},
 		get cwd(): string | null {
 			return cwd;

@@ -45,6 +45,8 @@
 		manifest as workspaceManifest,
 	} from "../features/workspace";
 	import type { AppStore } from "./store.svelte";
+	import { createLocalStore } from "../adapters/local-storage";
+	import { untrack } from "svelte";
 
 	let { store }: { store: AppStore } = $props();
 
@@ -72,16 +74,16 @@
 		{ id: "settings", label: "Settings" },
 	] as const;
 
-	// Default sidebar layout: Model, Language Servers, Extensions, Cache Warming, Tasks, Compaction, Settings.
-	const initialViews = [
-		"model",
-		"lsp",
-		"extensions",
-		"cache-warming",
-		"tasks",
-		"compaction",
-		"settings",
-	] as const;
+	// Default sidebar layout: just the Model view.
+	const DEFAULT_VIEWS: readonly string[] = ["model"];
+	const sidebarStore = createLocalStore<readonly string[]>("dispatch.sidebar.views", {
+		storage: untrack(() => store.storage),
+	});
+	const sidebarPanels = sidebarStore.load() ?? DEFAULT_VIEWS;
+
+	function handleSidebarChange(kinds: readonly (string | null)[]): void {
+		sidebarStore.save(kinds.filter((k): k is string => k !== null));
+	}
 
 	// Frontend module list for the "Loaded Modules" view, AGGREGATED from each
 	// feature's public `manifest` export so it can't drift from what's actually
@@ -177,11 +179,18 @@
 		smartScroll.reset();
 	});
 
-	// Right sidebar: open by default on wide screens (pushes the chat aside),
-	// closed by default on narrow screens (overlays the chat). Initial state is
-	// derived from the viewport width once; the hamburger toggles it thereafter.
+	// Right sidebar: persisted open/closed state. Defaults to open on wide
+	// screens (first visit), then remembers the user's toggle thereafter.
 	const WIDE_BREAKPOINT = 1024; // Tailwind `lg`
-	let sidebarOpen = $state(typeof window !== "undefined" ? window.innerWidth >= WIDE_BREAKPOINT : true);
+	const sidebarOpenStore = createLocalStore<boolean>("dispatch.sidebar.open", {
+		storage: untrack(() => store.storage),
+	});
+	const storedSidebarOpen = sidebarOpenStore.load();
+	let sidebarOpen = $state(storedSidebarOpen ?? (typeof window !== "undefined" ? window.innerWidth >= WIDE_BREAKPOINT : true));
+
+	$effect(() => {
+		sidebarOpenStore.save(sidebarOpen);
+	});
 
 	function handleInvoke(msg: InvokeMessage) {
 		store.invoke(msg.surfaceId, msg.actionId, msg.payload);
@@ -404,7 +413,7 @@
 			class="flex h-full w-80 flex-col gap-2 overflow-y-auto border-l border-base-300 bg-base-100 p-3 transition-transform duration-300 ease-out"
 			style="transform: translateX({sidebarOpen ? '0' : '100%'})"
 		>
-			<ViewSidebar kinds={viewKinds} initial={initialViews} content={viewContent} />
+			<ViewSidebar kinds={viewKinds} initial={sidebarPanels} onChange={handleSidebarChange} content={viewContent} />
 		</div>
 	</aside>
 
