@@ -4,98 +4,13 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.11.0` (compaction). Regenerate
-> whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces). Regenerate whenever `@dispatch/wire` changes.
 >
-> **2026-06-22 delta (compaction handoff — package bumped `0.10.0` → `0.11.0`, ADDITIVE):**
-> adds `CompactionResult` — the result of a compaction operation (`summary`, `messagesSummarized`,
-> `messagesKept`). The summary text is the model's output; the FE doesn't render it directly (it
-> becomes the conversation's first system message after compaction).
->
-> **2026-06-22 delta (conversation lifecycle handoff — package bumped `0.9.0` → `0.10.0`, ADDITIVE):**
-> adds `ConversationStatus` (`"active" | "idle" | "closed"`) — the per-conversation lifecycle
-> status. `ConversationMeta` gains a `status` field. `active` = a turn is generating; `idle` =
-> exists, not generating; `closed` = dismissed (hidden from the tab bar). Transitions are
-> backend-owned: `idle → active` on turn start, `active → idle` on turn settle, `→ closed` on
-> `POST /conversations/:id/close`. Pushed to all WS clients via `conversation.statusChanged`
-> (see `transport-contract@0.14.0`).
->
-> **2026-06-21 delta (conversation.open handoff — package bumped `0.8.0` → `0.9.0`, ADDITIVE):**
-> adds `ConversationMeta` — metadata for a conversation (id, title, createdAt, lastActivityAt),
-> returned by `GET /conversations` (the list endpoint, see `transport-contract@0.13.0`).
->
-> **2026-06-21 delta (message-queue + steering handoff — package bumped `0.7.0` → `0.8.0`, ADDITIVE):**
-> adds the per-conversation **message queue** + **steering** feature. While a turn is GENERATING,
-> a client enqueues a user message (via the `chat.queue` WS op or `POST /conversations/:id/queue`,
-> see `transport-contract@0.12.0`); it is delivered mid-turn as **steering** — injected at the next
-> tool-result boundary so the model sees it alongside the tool results and can adjust course. If the
-> turn ends with a non-empty queue (no tool call fired), the queue is carried into a NEW turn as its
-> opening prompt (no `steering` event — the new turn's `user-message` covers it).
->
-> Adds:
-> - **`QueuedMessage`** (`{ id, text, queuedAt }`) — a message held in the queue (stable id for UI
->   keying + dedup).
-> - **`QueuePayload`** (`{ messages: QueuedMessage[] }`) — the payload of the message-queue
->   extension's per-conversation `custom` surface field (`rendererId: "message-queue"`). Carried on
->   the SURFACE channel (NOT the chat stream) — the queue is control/state. Empty `messages` = empty
->   queue. See `transport-contract.reference.md` for the surface + the enqueue op.
-> - **`TurnSteeringEvent`** (`{ type: "steering"; conversationId; turnId; text }`) — a NEW
->   `AgentEvent` union member, emitted on the chat stream when the kernel drains a non-empty queue
->   at a tool-result boundary. Render `text` as a USER bubble in the transcript (positioned after
->   the tool-result it followed); the queue surface separately clears on drain. One event per drain;
->   `text` is the combined text of all drained messages. Late-join safe (buffered into the in-flight
->   turn's event buffer, mirroring `user-message`). Carry-to-new-turn does NOT emit `steering`.
->   ADDITIVE to the union — if you have an exhaustive `AgentEvent` switch, add a `steering` case.
->
-> **2026-06-12 delta (reasoning-effort handoff — package bumped `0.6.1` → `0.7.0`, ADDITIVE):**
-> adds the **`ReasoningEffort`** type — the per-request thinking-depth ladder
-> `"low" | "medium" | "high" | "xhigh" | "max"`. Provider-agnostic; the Anthropic provider maps
-> levels to extended-thinking token budgets (low 4096 · medium 10240 · high 16384 · xhigh 32768 ·
-> max 65536); providers without a thinking knob ignore it. Resolution is SERVER-owned (do not
-> re-implement): per-turn `ChatRequest.reasoningEffort` override → persisted per-conversation value
-> (`GET`/`PUT /conversations/:id/reasoning-effort`, see `transport-contract@0.11.0`) → default
-> `"high"`. Higher levels mean longer runs of `reasoning-delta` events before the first text delta.
-> See the `ReasoningEffort` definition below.
->
-> **2026-06-12 delta (CR-5 history windowing — package bumped `0.6.0` → `0.6.1`, DOC-ONLY):** the
-> per-conversation `seq` numbering is now a WRITTEN CONTRACTUAL GUARANTEE on `StoredChunk`:
-> **1-based, monotonic, gap-free** — a conversation's first chunk is always `seq === 1` and
-> numbering never skips. A client holding only a windowed suffix of the log derives "older chunks
-> exist server-side" purely from `oldestLoaded.seq > 1` (no `earliestSeq`/`hasOlder` field exists).
->
-> **2026-06-12 delta (CR-3 user-message handoff — package bumped `0.5.0` → `0.6.0`, ADDITIVE):** adds a
-> new `AgentEvent` union member `TurnInputEvent` (`{ type: "user-message"; conversationId; turnId; text }`)
-> that surfaces the turn's USER prompt INTO the outward event stream. Emitted ONCE as the FIRST event of
-> every turn (before `turn-start`), so it is buffered + replayed to every subscriber — live AND late-join
-> — and rides `chat.delta`/NDJSON like any other event. Fixes CR-3 (a pure watcher couldn't see the prompt
-> until seal). The sender still echoes its own prompt optimistically, so consumers DE-DUP against that
-> (by text); a pure watcher renders it directly. Persistence/metrics unchanged. See `TurnInputEvent` below.
->
-> **2026-06-12 delta (context-size handoff — package bumped `0.4.0` → `0.5.0`):** adds an OPTIONAL
-> `contextSize?: number` to BOTH `TurnDoneEvent` (live `done`) and `TurnMetrics` (persisted) — the
-> turn's FINAL step `inputTokens + outputTokens` (current context occupancy), NOT the aggregate
-> `usage` (which overcounts multi-step turns). The two carriers are equal for the same turn. Current
-> value = the LATEST turn's `contextSize`; `undefined` ⇒ render "unknown", never `0`. See the field
-> doc-comments on `TurnMetrics`/`TurnDoneEvent` below.
->
-> **0.3.0 changes (token + timing metrics):**
-> - **Live per-step/per-turn telemetry on the event stream** (transient — NOT persisted):
->   `TurnUsageEvent` gained an OPTIONAL `stepId?` (attribute tokens per step). A NEW
->   `TurnStepCompleteEvent` (`type: "step-complete"`, REQUIRED `stepId`) carries the per-step
->   generation timing `ttftMs?` / `decodeMs?` / `genTotalMs?` (all optional — present only when the
->   runtime had a clock; `ttftMs`/`decodeMs` additionally require a first content token). `TurnDoneEvent`
->   gained an OPTIONAL `durationMs?` (total turn wall-clock) + OPTIONAL `usage?` (aggregate across
->   steps). `TurnToolResultEvent` gained an OPTIONAL `durationMs?` (tool execution time).
-> - **Durable, replayable metrics** (persisted, keyed per turn): NEW `StepMetrics` + `TurnMetrics`
->   — the persisted counterparts of the live `usage` + `step-complete` + `done` packets. Served by
->   `GET /conversations/:id/metrics` (see `transport-contract.reference.md`). Build the SAME
->   `TurnMetrics` shape from the live events for the in-flight turn; the durable endpoint supplies it
->   for sealed turns. TPS is derived (`usage.outputTokens / (genTotalMs / 1000)`), not on the wire.
-> - **0.2.0 (still current — step grouping):** `ToolCallChunk`/`ToolResultChunk` carry an OPTIONAL
->   `stepId?: StepId`; `TurnToolCallEvent`/`TurnToolResultEvent` carry a REQUIRED `stepId: StepId`.
->   Group batched/parallel tool calls by `stepId` equality. Live: read `event.stepId`. Replay: read
->   `storedChunk.chunk.stepId` (NOT the envelope; tolerate absence). `StoredChunk` envelope is
->   UNCHANGED (`{ seq, role, chunk }` — carries NO `turnId`).
+> **2026-06-23 delta (workspaces handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):** adds
+> `Workspace` + `WorkspaceEntry` (a list entry with a conversation count) and a required
+> `workspaceId: string` on `ConversationMeta` (`"default"` for legacy/unspecified conversations). A
+> workspace is a URL-driven grouping of conversations that owns a default cwd; conversations that
+> haven't set their own cwd inherit `workspace.defaultCwd`. See `backend-handoff-workspaces-reply.md`.
 
 ```ts
 /**
@@ -299,8 +214,8 @@ export interface StepMetrics {
  * Durable per-turn metrics for a completed (sealed) turn — the persisted,
  * replayable counterpart of the live `done` event's aggregate `usage` +
  * `durationMs`, plus the per-step breakdown. `usage` is the aggregate across all
- * steps; `steps` carries each step's `StepMetrics` in step order. Stored by
- * `conversation-store` keyed by `turnId` and served by
+ * steps; `steps` carries each step's `StepMetrics` in step order. Persisted per
+ * turn by `conversation-store` (returned in turn-append order) and served by
  * `GET /conversations/:id/metrics`. (`turnId` is the plain wire string carried
  * on every `AgentEvent`, the join key to the live stream.)
  */
@@ -373,6 +288,7 @@ export type AgentEvent =
 	| TurnUsageEvent
 	| TurnStepCompleteEvent
 	| TurnErrorEvent
+	| TurnProviderRetryEvent
 	| TurnDoneEvent
 	| TurnSealedEvent
 	| TurnSteeringEvent;
@@ -393,13 +309,15 @@ export interface TurnStartEvent {
 
 /**
  * The user prompt that opened this turn, surfaced INTO the turn's outward event
- * stream so a WATCHER (subscribed but not the sender) can render the prompt
- * mid-turn — the user message is otherwise persisted only at seal. Emitted ONCE
- * as the FIRST event of the turn (before `turn-start`); buffered + replayed to
- * every subscriber (live + late-join). The sender echoes its own prompt
- * optimistically, so DE-DUP against that (by text); a pure watcher renders it
- * directly. Carries the raw `text` passed to the provider. (Turn-scoped: it
- * carries `turnId`, so a multi-turn transcript attributes each prompt to its turn.)
+ * stream. The user message is persisted only when the turn seals (atomically with
+ * the assistant reply), so without this event a client that is merely WATCHING a
+ * conversation (subscribed but not the sender) has no source for the prompt text
+ * mid-turn — it would see the streaming reply with no preceding user bubble until
+ * seal. Emitted once, as the FIRST event of the turn (before `turn-start`), so it
+ * is buffered and replayed to every subscriber — live and late-join — exactly like
+ * the rest of the turn. The sender already echoes its own prompt optimistically, so
+ * a consumer should de-dup against that (e.g. by text); a pure watcher renders it
+ * directly. Carries the raw prompt `text` (the same text passed to the provider).
  */
 export interface TurnInputEvent {
 	readonly type: "user-message";
@@ -527,6 +445,31 @@ export interface TurnErrorEvent {
 	readonly code?: string;
 }
 
+/**
+ * A retryable provider error is being retried with backoff. Emitted once per
+ * scheduled retry, BEFORE the sleep, so the UI can show "⚠ Server overloaded —
+ * retrying in 5s…" immediately. TRANSIENT: emitted to the frontend but NOT
+ * persisted into the model's message history (it never pollutes the prompt).
+ *
+ * When the retry budget is exhausted, the existing `error` event is emitted and
+ * the turn seals — so the final failure is still a persisted error. `attempt` is
+ * 0-based (the Nth retry about to happen); `delayMs` is the scheduled sleep
+ * before that retry fires.
+ */
+export interface TurnProviderRetryEvent {
+	readonly type: "provider-retry";
+	readonly conversationId: string;
+	readonly turnId: string;
+	/** 0-based: this is the Nth retry about to happen. */
+	readonly attempt: number;
+	/** ms the client should expect to wait before the retry fires. */
+	readonly delayMs: number;
+	/** The endpoint's error verbatim (e.g. "HTTP 429: {…overloaded_error…}"). */
+	readonly message: string;
+	/** The HTTP code when known (e.g. "429"). */
+	readonly code?: string;
+}
+
 /** The turn has completed (model finished generating). */
 export interface TurnDoneEvent {
 	readonly type: "done";
@@ -545,11 +488,11 @@ export interface TurnDoneEvent {
 	 */
 	readonly usage?: Usage;
 	/**
-	 * **Context size** — tokens the conversation occupies right now: the turn's
-	 * FINAL step `inputTokens + outputTokens` (the prompt sent into the last LLM
-	 * round-trip plus that round-trip's output). This is the "tokens in context"
-	 * figure a client renders as the chat's current context usage, and a client
-	 * treats the LATEST turn's value as the live total.
+	 * **Context size** — the number of tokens the conversation now occupies: this
+	 * (the most recent) turn's FINAL step `inputTokens + outputTokens` (the full
+	 * prompt sent into the last LLM round-trip plus that round-trip's output). This
+	 * is the "tokens in context" figure a client renders as the chat's current
+	 * context usage, and a client treats the LATEST turn's value as the live total.
 	 *
 	 * Deliberately NOT the aggregate `usage` above: `usage` SUMS each step's
 	 * `inputTokens`, which overcounts a multi-step / tool-calling turn because every
@@ -598,10 +541,11 @@ export interface TurnSteeringEvent {
 // ─── Conversation metadata ───────────────────────────────────────────────────
 
 /**
- * The per-conversation lifecycle status. `active` = a turn is generating;
- * `idle` = exists, not generating; `closed` = dismissed (hidden from the tab
- * bar, not deleted). Transitions are backend-owned and pushed via the
- * `conversation.statusChanged` WS message (see `transport-contract`).
+ * The lifecycle status of a conversation, used for tab persistence across
+ * devices. `active` = an agent is currently generating; `idle` = exists but not
+ * generating; `closed` = user dismissed the tab (hidden from the tab bar, not
+ * deleted). New conversations start as `idle`; transitions to `active` on
+ * turn-start, back to `idle` on turn done/error, and to `closed` on user close.
  */
 export type ConversationStatus = "active" | "idle" | "closed";
 
@@ -609,7 +553,8 @@ export type ConversationStatus = "active" | "idle" | "closed";
  * Metadata for a conversation, returned by `GET /conversations` (the list
  * endpoint). The title defaults to the first user message (truncated) and can
  * be set via `PUT /conversations/:id/title`. `createdAt` is set on first write;
- * `lastActivityAt` is updated on every append.
+ * `lastActivityAt` is updated on every append. `status` tracks the tab lifecycle
+ * for cross-device persistence.
  */
 export interface ConversationMeta {
 	readonly id: string;
@@ -617,7 +562,17 @@ export interface ConversationMeta {
 	readonly lastActivityAt: number;
 	readonly title: string;
 	readonly status: ConversationStatus;
-	/** Points to the archive conversation with full pre-compaction history. */
+	/**
+	 * The workspace this conversation belongs to. Always present; reads as
+	 * `"default"` for legacy conversations that were never explicitly assigned.
+	 * Conversations created with no `workspaceId` default to `"default"`.
+	 */
+	readonly workspaceId: string;
+	/**
+	 * Set on a compacted conversation: points to the archive conversation ID
+	 * that holds the full pre-compaction history. Absent on conversations
+	 * that have never been compacted.
+	 */
 	readonly compactedFrom?: string;
 }
 
@@ -627,11 +582,47 @@ export interface ConversationMeta {
  * Result of a compaction operation. `summary` is the text the model produced;
  * `messagesKept` is how many recent messages were retained after the summary;
  * `messagesSummarized` is how many old messages were replaced by the summary.
+ * `newConversationId` is the ID of the new conversation that holds the full
+ * pre-compaction history (non-destructive — the original history is preserved).
  */
 export interface CompactionResult {
 	readonly summary: string;
 	readonly newConversationId: string;
 	readonly messagesSummarized: number;
 	readonly messagesKept: number;
+}
+
+// ─── Workspaces ──────────────────────────────────────────────────────────────
+
+/**
+ * A named, URL-driven grouping of conversations that owns a default cwd.
+ * Every conversation belongs to exactly one workspace; conversations that
+ * haven't set their own per-conversation cwd inherit `defaultCwd`.
+ *
+ * Workspaces are backend-owned (so cross-device just works): the workspace
+ * entity and each conversation's `workspaceId` live server-side. The
+ * `"default"` workspace is always present and non-deletable; conversations
+ * created with no `workspaceId` are assigned to `"default"`.
+ */
+export interface Workspace {
+	/** The URL slug (immutable). Lowercase `[a-z0-9-]`, 1–40 chars. */
+	readonly id: string;
+	/** Display title (editable). Defaults to `id` on creation. */
+	readonly title: string;
+	/** The workspace's default cwd, or `null` (fall through to server default). */
+	readonly defaultCwd: string | null;
+	/** Epoch-ms when the workspace was first created. */
+	readonly createdAt: number;
+	/** Epoch-ms of the most recent conversation activity in this workspace. */
+	readonly lastActivityAt: number;
+}
+
+/**
+ * A workspace entry in the list response (`GET /workspaces`) — a `Workspace`
+ * plus a conversation count.
+ */
+export interface WorkspaceEntry extends Workspace {
+	/** Number of conversations assigned to this workspace. */
+	readonly conversationCount: number;
 }
 ```

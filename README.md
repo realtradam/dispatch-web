@@ -1,6 +1,6 @@
 # Dispatch Web
 
-The **web frontend** for [Dispatch](../arch-rewrite) — a separate repo built to the same
+The **web frontend** for [Dispatch](../dispatch-backend) — a separate repo built to the same
 methodology (thin shell + pure feature libraries + a backend-driven *surface* host). It consumes
 the backend's typed contracts over HTTP + a WebSocket and ships no business logic the backend
 doesn't expose.
@@ -17,17 +17,17 @@ doesn't expose.
 
 - [Bun](https://bun.sh) (v1.3+).
 - **The backend repo as a sibling directory** — this repo links `@dispatch/ui-contract` from
-  `../arch-rewrite` via a `file:` dependency:
+  `../dispatch-backend` via a `file:` dependency:
   ```
   dispatch/
-    arch-rewrite/    # the backend (Dispatch server)
+    dispatch-backend/    # the backend (Dispatch server)
     dispatch-web/    # this repo
   ```
-- The **backend server running** for surfaces to appear (see `../arch-rewrite/README.md`).
+- The **backend server running** for surfaces to appear (see `../dispatch-backend/README.md`).
 
 ```sh
 cd dispatch-web
-bun install          # links @dispatch/ui-contract from ../arch-rewrite
+bun install          # links @dispatch/ui-contract from ../dispatch-backend
 ```
 
 ---
@@ -36,7 +36,7 @@ bun install          # links @dispatch/ui-contract from ../arch-rewrite
 
 ```sh
 # 1) start the backend (sibling repo) — HTTP :24203 + surface WS :24205
-cd ../arch-rewrite && bun run dev
+cd ../dispatch-backend && bun run dev
 
 # 2) start this dev server — Vite on :24204
 cd ../dispatch-web && bun run dev
@@ -46,7 +46,7 @@ Open **http://localhost:24204**. You'll see the surface catalog (e.g. "Loaded Ex
 frontend connects to the backend's surface WebSocket at `ws://localhost:24205` (override with
 `VITE_WS_URL`).
 
-> **Tip — run both at once with live reload:** the backend repo ships `../arch-rewrite/bin/up`
+> **Tip — run both at once with live reload:** the backend repo ships `../dispatch-backend/bin/up`
 > (also `bun run dev:all` there) which starts the backend (`bun --watch`) + this dev server
 > (Vite HMR) together; **Ctrl-C stops both**.
 
@@ -99,5 +99,5 @@ bun run check        # biome (.ts/.js; .svelte correctness is svelte-check's job
 
 ## Documentation
 
-- **Design + plan:** `../arch-rewrite/notes/frontend-design.md`
+- **Design + plan:** `../dispatch-backend/notes/frontend-design.md`
 - **Build rules + workflow:** `AGENTS.md` · **Vocabulary:** `GLOSSARY.md`

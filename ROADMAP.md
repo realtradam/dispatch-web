@@ -19,6 +19,7 @@
 - **Conversation.open broadcast** — `conversation.open` WS message handler, opens a tab (without auto-switching) from CLI `--open` flag.
 - **Conversation lifecycle (cross-device tab sync)** — `GET /conversations?status=active,idle` on connect restores tabs across devices; `conversation.statusChanged` WS handler updates tab status + removes closed tabs; TabBar shows a spinner on `active` conversations.
 - **Conversation compaction** — "Compaction" sidebar view with manual "Compact now" button (`POST /conversations/:id/compact`) + auto-compact threshold input (`GET`/`PUT /conversations/:id/compact-threshold`); `conversation.compacted` WS handler reloads history.
+- **Workspaces** — URL-driven conversation grouping with a backend-owned default cwd (`wire@0.12.0`/`transport-contract@0.16.0`). Routing: `/` lists workspaces (create-on-visit + delete); `/<id>` opens one (tabs scoped to it, existing tabs migrate to `"default"`). New conversations are stamped with the active workspace on `chat.send`/`chat.queue`. Workspace CRUD via `GET`/`PUT`/`DELETE /workspaces`. *Pending: CwdField explicit-vs-inherited display + clear-to-inherit (`DELETE /conversations/:id/cwd`).*
 
 ## Next up
 
