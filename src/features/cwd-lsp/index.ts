@@ -9,6 +9,6 @@ export { default as LspStatusView } from "./ui/LspStatusView.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */
 export const manifest = {
-	name: "workspace",
+	name: "cwd-lsp",
 	description: "Per-conversation working directory + language-server status",
 } as const;

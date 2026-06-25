@@ -103,6 +103,7 @@ function reconnectableSocket(): ReconnectableSocket {
 interface FakeFetchOptions {
 	models?: readonly string[];
 	history?: Record<string, ConversationHistoryResponse>;
+	model?: string | null;
 }
 
 function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
@@ -112,6 +113,15 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
 		const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
 		if (url.endsWith("/models")) {
 			return new Response(JSON.stringify({ models }), { status: 200 });
+		}
+		if (url.endsWith("/model")) {
+			return new Response(
+				JSON.stringify({
+					conversationId: "ignored",
+					model: opts?.model ?? null,
+				}),
+				{ status: 200 },
+			);
 		}
 		const body =
 			history[url] ?? ({ chunks: [], latestSeq: 0 } satisfies ConversationHistoryResponse);
@@ -583,20 +593,64 @@ describe("createAppStore", () => {
 		store.dispose();
 	});
 
-	it("selecting a model updates the active tab", () => {
+	it("selecting a model persists it to the backend", () => {
 		const ws = fakeSocket();
+		const fetchImpl = fakeFetchImpl();
 		const store = createAppStore({
 			socketFactory: () => ws,
-			fetchImpl: fakeFetchImpl(),
+			fetchImpl,
 			localStorage: createFakeStorage(),
 		});
 		ws.resolveOpen();
 
 		store.send("hello");
-
 		store.selectModel("openai/gpt-4o");
 
-		expect(store.activeModel).toBe("openai/gpt-4o");
+		const put = vi.fn().mockResolvedValue(
+			new Response(JSON.stringify({ conversationId: "ignored", model: "openai/gpt-4o" }), {
+				status: 200,
+			}),
+		);
+		const capturingStore = createAppStore({
+			socketFactory: () => fakeSocket(),
+			fetchImpl: async (input, init) => {
+				const url =
+					typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+				if (init?.method === "PUT" && url.endsWith("/model")) {
+					put(url, init);
+				}
+				return fetchImpl(input, init);
+			},
+			localStorage: createFakeStorage(),
+		});
+		capturingStore.send("hello");
+		capturingStore.selectModel("openai/gpt-4o");
+
+		expect(put).toHaveBeenCalledOnce();
+		const [callUrl, callInit] = put.mock.calls[0] as [string, RequestInit];
+		expect(callUrl.endsWith("/model")).toBe(true);
+		expect(JSON.parse(callInit.body as string)).toEqual({ model: "openai/gpt-4o" });
+
+		store.dispose();
+		capturingStore.dispose();
+	});
+
+	it("focuses a conversation with a persisted model", async () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl({ model: "openai/gpt-4o" }),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		store.send("first message");
+
+		// New tab opens with the default model until the persisted-model fetch resolves.
+		expect(store.activeModel).toBe("opencode/deepseek-v4-flash");
+
+		// Wait for the persisted model fetch to resolve.
+		await vi.waitFor(() => expect(store.activeModel).toBe("openai/gpt-4o"));
 		expect(store.tabs[0]?.model).toBe("openai/gpt-4o");
 
 		store.dispose();

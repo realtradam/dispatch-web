@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { groupRenderedChunks, type RenderedChunk } from "../index";
+	import type { TurnProviderRetryEvent } from "@dispatch/wire";
+	import { groupRenderedChunks, type RenderedChunk, viewProviderRetry } from "../index";
 	import {
 		interleaveTurnMetrics,
 		viewCacheRate,
@@ -22,6 +23,7 @@
 		hasEarlier = false,
 		onShowEarlier,
 		thinkingKeyBase = 0,
+		providerRetry = null,
 	}: {
 		chunks: readonly RenderedChunk[];
 		turnMetrics?: readonly TurnMetricsEntry[];
@@ -35,6 +37,13 @@
 		 * swap collapse state) when a trim removes older thinking blocks.
 		 */
 		thinkingKeyBase?: number;
+		/**
+		 * The latest `provider-retry` event for the current turn, or `null` when
+		 * no retry is pending → renders the transient yellow "retrying…" banner.
+		 * Never persisted (never part of the message history); coalesces to the
+		 * newest attempt + delay, and is cleared when content resumes / turn ends.
+		 */
+		providerRetry?: TurnProviderRetryEvent | null;
 	} = $props();
 
 	// True while a show-earlier page-in is awaited (disables the button).
@@ -261,4 +270,25 @@
 			</div>
 		{/if}
 	{/each}
+	{#if providerRetry}
+		{@const rv = viewProviderRetry(providerRetry)}
+		<!-- Transient yellow warning: a provider error is being retried with backoff.
+		     NOT a message chunk (never persisted/replayed) — a live UI notification only,
+		     shown where the reply would appear. Coalesces to the newest attempt + delay,
+		     and is cleared (foldEvent) when content resumes or the turn ends. -->
+		<div class="chat chat-start [&>.chat-bubble]:max-w-5xl">
+			<div class="chat-bubble w-full bg-transparent">
+				<div class="alert alert-warning flex-wrap items-start gap-2 py-2 text-sm" role="status">
+					<div class="flex flex-wrap items-center gap-2 font-medium">
+						<span aria-hidden="true">⚠</span>
+						<span>{rv.attemptLabel} — retrying in {rv.delayLabel}…</span>
+						{#if rv.code}
+							<span class="badge badge-warning badge-sm font-mono">{rv.code}</span>
+						{/if}
+					</div>
+					<div class="w-full font-mono text-xs opacity-70">{rv.message}</div>
+				</div>
+			</div>
+		</div>
+	{/if}
 </div>

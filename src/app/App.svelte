@@ -22,6 +22,11 @@
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
 	import {
+		McpStatusView,
+		manifest as mcpManifest,
+		type McpStatusResult,
+	} from "../features/mcp";
+	import {
 		ChatLimitField,
 		manifest as settingsManifest,
 		type ChatLimitSaveResult,
@@ -42,9 +47,17 @@
 		type CwdSaveResult,
 		LspStatusView,
 		type LspStatusResult,
-		manifest as workspaceManifest,
-	} from "../features/workspace";
+		manifest as cwdLspManifest,
+	} from "../features/cwd-lsp";
+	import {
+		SystemPromptBuilder,
+		type LoadSystemPrompt as LoadSystemPromptAlias,
+		type LoadSystemPromptVariables as LoadSystemPromptVariablesAlias,
+		type SaveSystemPrompt as SaveSystemPromptAlias,
+		manifest as systemPromptManifest,
+	} from "../features/system-prompt";
 	import type { AppStore } from "./store.svelte";
+	import ErrorModal from "./ErrorModal.svelte";
 	import { createLocalStore } from "../adapters/local-storage";
 	import { untrack } from "svelte";
 
@@ -67,10 +80,12 @@
 	const viewKinds = [
 		{ id: "model", label: "Model" },
 		{ id: "lsp", label: "Language Servers" },
+		{ id: "mcp", label: "MCP Servers" },
 		{ id: "extensions", label: "Extensions" },
 		{ id: "cache-warming", label: "Cache Warming" },
 		{ id: "tasks", label: "Tasks" },
 		{ id: "compaction", label: "Compaction" },
+		{ id: "system-prompt", label: "System Prompt" },
 		{ id: "settings", label: "Settings" },
 	] as const;
 
@@ -99,9 +114,11 @@
 		conversationCacheManifest,
 		markdownManifest,
 		cacheWarmingManifest,
-		workspaceManifest,
+		cwdLspManifest,
+		mcpManifest,
 		smartScrollManifest,
 		settingsManifest,
+		systemPromptManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -187,6 +204,7 @@
 	});
 	const storedSidebarOpen = sidebarOpenStore.load();
 	let sidebarOpen = $state(storedSidebarOpen ?? (typeof window !== "undefined" ? window.innerWidth >= WIDE_BREAKPOINT : true));
+	let systemPromptModalOpen = $state(false);
 
 	$effect(() => {
 		sidebarOpenStore.save(sidebarOpen);
@@ -278,7 +296,7 @@
 			: { ok: false, error: result.error };
 	}
 
-	// Adapt the store's cwd/LSP results to the workspace feature's ports.
+	// Adapt the store's cwd/LSP results to the cwd-lsp feature's ports.
 	async function saveCwd(cwd: string): Promise<CwdSaveResult | null> {
 		const result = await store.setCwd(cwd);
 		if (result === null) return null;
@@ -292,6 +310,22 @@
 			? { ok: true, cwd: result.response.cwd, servers: result.response.servers }
 			: { ok: false, error: result.error };
 	}
+
+	async function loadMcpStatus(): Promise<McpStatusResult | null> {
+		const result = await store.mcpStatus();
+		if (result === null) return null;
+		return result.ok
+			? { ok: true, cwd: result.response.cwd, servers: result.response.servers }
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's system prompt results to the system-prompt feature's ports.
+	const loadSystemPromptPrompt: LoadSystemPromptAlias = () => store.loadSystemPrompt();
+
+	const loadSystemPromptVariablesPrompt: LoadSystemPromptVariablesAlias = () =>
+		store.loadSystemPromptVariables();
+
+	const saveSystemPromptPrompt: SaveSystemPromptAlias = (template) => store.setSystemPrompt(template);
 </script>
 
 <main class="relative flex h-screen overflow-hidden">
@@ -365,6 +399,7 @@
 							hasEarlier={store.activeChat.hasEarlier}
 							onShowEarlier={handleShowEarlier}
 							thinkingKeyBase={store.activeChat.thinkingKeyBase}
+							providerRetry={store.activeChat.providerRetry}
 						/>
 					{/key}
 				</div>
@@ -435,6 +470,19 @@
 	{/if}
 </main>
 
+{#if store.fatalError}
+	<ErrorModal error={store.fatalError} onDismiss={() => store.clearFatalError()} />
+{/if}
+
+{#if systemPromptModalOpen}
+	<SystemPromptBuilder
+		loadPrompt={loadSystemPromptPrompt}
+		savePrompt={saveSystemPromptPrompt}
+		loadVariables={loadSystemPromptVariablesPrompt}
+		onClose={() => (systemPromptModalOpen = false)}
+	/>
+{/if}
+
 {#snippet viewContent(kind: string)}
 	{#if kind === "model"}
 		<div class="flex flex-col gap-3">
@@ -451,6 +499,11 @@
 		<!-- Re-mount per conversation (incl. draft) so the loaded server list is isolated. -->
 		{#key store.currentConversationId}
 			<LspStatusView cwd={store.cwd} canView={true} load={loadLspStatus} />
+		{/key}
+	{:else if kind === "mcp"}
+		<!-- Re-mount per conversation (incl. draft) so the loaded server list is isolated. -->
+		{#key store.currentConversationId}
+			<McpStatusView cwd={store.cwd} canView={true} load={loadMcpStatus} />
 		{/key}
 	{:else if kind === "extensions"}
 		<section>
@@ -493,6 +546,21 @@
 				savePercent={saveCompactPercent}
 			/>
 		{/key}
+	{:else if kind === "system-prompt"}
+		<!-- Global system prompt template. Opens a full-page modal editor (half
+		     template / half variable palette). Not conversation-scoped (no {#key}). -->
+		<div class="flex flex-col gap-2">
+			<p class="text-xs opacity-60">
+				Edit the global system prompt template with variable placeholders. Opens a full-page editor.
+			</p>
+			<button
+				type="button"
+				class="btn btn-primary btn-sm"
+				onclick={() => (systemPromptModalOpen = true)}
+			>
+				Open builder
+			</button>
+		</div>
 	{:else if kind === "settings"}
 		<!-- FE-local settings. Not conversation-scoped (no {#key}: the chat limit is
 		     global), so the field stays mounted across tab switches. -->

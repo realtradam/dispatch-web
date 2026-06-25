@@ -2,6 +2,8 @@ export interface Tab {
 	readonly conversationId: string;
 	readonly model: string;
 	readonly title: string;
+	/** The workspace this tab belongs to (the workspace's URL slug). */
+	readonly workspaceId: string;
 }
 
 export interface TabsState {
@@ -13,7 +15,15 @@ const DEFAULT_TITLE = "New chat";
 const DEFAULT_MAX_TITLE_LENGTH = 40;
 
 export function initialState(persisted?: TabsState): TabsState {
-	if (persisted !== undefined) return persisted;
+	if (persisted !== undefined) {
+		// Migrate tabs persisted before workspaces: assign them to the "default"
+		// workspace (the fallback for conversations with no workspace).
+		const tabs = persisted.tabs.map((t) => {
+			const wid = (t as { workspaceId?: string }).workspaceId;
+			return { ...t, workspaceId: wid ?? "default" };
+		});
+		return { tabs, activeConversationId: persisted.activeConversationId };
+	}
 	return { tabs: [], activeConversationId: null };
 }
 

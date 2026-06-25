@@ -19,6 +19,7 @@ const tab = (conversationId: string, model = "default", title = "Chat"): Tab => 
 	conversationId,
 	model,
 	title,
+	workspaceId: "default",
 });
 
 describe("initialState", () => {

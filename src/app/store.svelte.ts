@@ -11,19 +11,27 @@ import type {
 	ConversationStatusChangedMessage,
 	CwdResponse,
 	LspStatusResponse,
+	McpStatusResponse,
 	ModelMetadata,
+	ModelResponse,
 	ModelsResponse,
 	ReasoningEffort,
 	ReasoningEffortResponse,
 	SetCompactPercentRequest,
 	SetCwdRequest,
+	SetModelRequest,
 	SetReasoningEffortRequest,
+	SetSystemPromptTemplateRequest,
 	SetTitleRequest,
+	SystemPromptTemplateResponse,
+	SystemPromptVariable,
+	SystemPromptVariablesResponse,
 	WarmRequest,
 	WarmResponse,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
 import type { ConversationStatus } from "@dispatch/wire";
+import { untrack } from "svelte";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
 import type { WebSocketLike } from "../adapters/ws";
@@ -65,6 +73,11 @@ export type LspResult =
 	| { readonly ok: true; readonly response: LspStatusResponse }
 	| { readonly ok: false; readonly error: string };
 
+/** Outcome of `GET /conversations/:id/mcp`. */
+export type McpResult =
+	| { readonly ok: true; readonly response: McpStatusResponse }
+	| { readonly ok: false; readonly error: string };
+
 /** Outcome of `PUT /conversations/:id/reasoning-effort`. */
 export type ReasoningEffortResult =
 	| { readonly ok: true; readonly reasoningEffort: ReasoningEffort }
@@ -80,6 +93,19 @@ export type CompactPercentResult =
 	| { readonly ok: true; readonly percent: number }
 	| { readonly ok: false; readonly error: string };
 
+/** Outcome of `GET /system-prompt` (global template load). */
+export type SystemPromptLoadResult =
+	| { readonly ok: true; readonly template: string }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `PUT /system-prompt` (global template save). */
+export type SystemPromptSaveResult = SystemPromptLoadResult;
+
+/** Outcome of `GET /system-prompt/variables` (variable catalog). */
+export type SystemPromptVariablesResult =
+	| { readonly ok: true; readonly variables: readonly SystemPromptVariable[] }
+	| { readonly ok: false; readonly error: string };
+
 /** Outcome of persisting a chat-limit setting (localStorage; FE-local). */
 export type ChatLimitResult =
 	| { readonly ok: true; readonly chatLimit: number }
@@ -88,6 +114,8 @@ export type ChatLimitResult =
 export interface AppStore {
 	readonly tabs: readonly Tab[];
 	readonly activeConversationId: string | null;
+	/** The workspace currently in view (URL slug); tabs are filtered to it. */
+	readonly activeWorkspaceId: string;
 	readonly activeChat: ChatStore;
 	readonly models: readonly string[];
 	/** Per-model metadata (contextWindow, etc.) from `GET /models`. */
@@ -113,6 +141,8 @@ export interface AppStore {
 	queueMessage(text: string): void;
 	selectModel(model: string): void;
 	newDraft(): void;
+	/** Switch the active workspace (on route change) + reset to a fresh draft in it. */
+	setActiveWorkspace(workspaceId: string): void;
 	selectTab(conversationId: string): void;
 	closeTab(conversationId: string): void;
 	renameTab(conversationId: string, title: string): void;
@@ -174,6 +204,30 @@ export interface AppStore {
 	 * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
 	 */
 	lspStatus(): Promise<LspResult | null>;
+	/**
+	 * Fetch the workspace conversation's MCP server status (`GET /conversations/:id/mcp`).
+	 * Mirrors the LSP status endpoint: returns `{cwd, servers}` with empty `servers`
+	 * when no cwd is set; the backend lazily connects servers, so this may take a
+	 * moment on the first call for a cwd.
+	 */
+	mcpStatus(): Promise<McpResult | null>;
+	/**
+	 * Load the global system prompt template (`GET /system-prompt`). The template is
+	 * conversation-agnostic; it is resolved once per conversation on first turn and
+	 * persisted for prompt-cache safety.
+	 */
+	loadSystemPrompt(): Promise<SystemPromptLoadResult>;
+	/**
+	 * Persist the global system prompt template (`PUT /system-prompt`). Changes apply
+	 * to new conversations on their first turn; existing conversations keep their
+	 * resolved system prompt until compaction.
+	 */
+	setSystemPrompt(template: string): Promise<SystemPromptSaveResult>;
+	/**
+	 * Load the static catalog of available system prompt variables (`GET /system-prompt/variables`).
+	 * Used by the builder to render the variable selector buttons.
+	 */
+	loadSystemPromptVariables(): Promise<SystemPromptVariablesResult>;
 	/** The persisted chat limit (max loaded chunks per conversation). */
 	readonly chatLimit: number;
 	/**
@@ -199,6 +253,14 @@ export interface AppStore {
 	 * bottom).
 	 */
 	attachUnloadGate(gate: () => boolean): void;
+	/**
+	 * A critical error that blocks normal operation (e.g. the cross-device tab
+	 * restore fetch failed). When non-null, a full-screen modal is shown with the
+	 * error details. Cleared by `clearFatalError` (the modal's dismiss button).
+	 */
+	readonly fatalError: string | null;
+	/** Dismiss the fatal error (called by the error modal's X button). */
+	clearFatalError(): void;
 	dispose(): void;
 }
 
@@ -210,6 +272,8 @@ export interface CreateAppStoreOptions {
 	indexedDB?: IDBFactory;
 	conversationId?: string;
 	localStorage?: Storage;
+	/** The workspace to scope to at boot (its URL slug); "default" if absent. */
+	workspaceId?: string;
 }
 
 function createHistorySync(httpBase: string, fetchImpl: typeof fetch): HistorySync {
@@ -241,6 +305,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let models = $state<readonly string[]>([]);
 	let modelInfo = $state<Readonly<Record<string, ModelMetadata>>>({});
 	let activeModel = $state(DEFAULT_MODEL);
+	let fatalError = $state<string | null>(null);
+
+	// The workspace currently in view (its URL slug); "default" until routing
+	// sets it. Tabs are filtered to this workspace; a new conversation is stamped
+	// with it on `chat.send`.
+	let activeWorkspaceId = $state<string>(opts?.workspaceId ?? "default");
 
 	const wsLocation = typeof location !== "undefined" ? location : undefined;
 	const wsUrl =
@@ -297,10 +367,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	const chatStores = new Map<string, ChatStore>();
 
-	function createChatFor(conversationId: string, model: string): ChatStore {
+	function createChatFor(conversationId: string, model: string, workspaceId: string): ChatStore {
 		return createChatStore({
 			conversationId,
 			model,
+			workspaceId,
 			transport: {
 				send(msg) {
 					socket?.send(msg);
@@ -315,11 +386,22 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			// `setChatLimit`.
 			chatLimit: normalizeChatLimit(chatLimitStore.load()),
 			canUnload: () => (unloadGate === null ? true : unloadGate()),
+			onError: (context, err) => {
+				reportError(`${context} (conversation: ${conversationId})`, err);
+			},
 		});
 	}
 
 	const initialDraftId = randomId();
-	let draftStore: ChatStore = createChatFor(initialDraftId, DEFAULT_MODEL);
+	// Read `activeWorkspaceId` with untrack to suppress Svelte's
+	// `state_referenced_locally` warning — this intentionally captures the
+	// INITIAL workspace for the boot draft. When the workspace changes later,
+	// `setActiveWorkspace` creates a fresh draft store with the new id.
+	let draftStore: ChatStore = createChatFor(
+		initialDraftId,
+		DEFAULT_MODEL,
+		untrack(() => activeWorkspaceId),
+	);
 	let draftConversationId: string = initialDraftId;
 
 	let activeChat = $state<ChatStore>(draftStore as ChatStore);
@@ -337,8 +419,31 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			const data = (await res.json()) as CwdResponse;
 			// Guard a slow response losing a race with a conversation switch.
 			if (workspaceConversationId() === id) cwd = data.cwd ?? null;
-		} catch {
-			// Non-fatal: a cwd fetch failure just leaves the prior value.
+		} catch (err) {
+			reportError("Failed to load working directory", err);
+		}
+	}
+
+	/** Refetch the workspace conversation's persisted model (works for a draft too). */
+	async function refreshModel(): Promise<void> {
+		const id = workspaceConversationId();
+		try {
+			const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/model`);
+			if (!res.ok) return;
+			const data = (await res.json()) as ModelResponse;
+			if (workspaceConversationId() !== id) return;
+			if (typeof data.model === "string" && data.model.length > 0) {
+				activeModel = data.model;
+				const activeId = tabsStore.activeConversationId;
+				if (activeId !== null) {
+					tabsStore.setModel(activeId, data.model);
+					chatStores.get(activeId)?.setModel(data.model);
+				} else {
+					draftStore.setModel(data.model);
+				}
+			}
+		} catch (err) {
+			reportError("Failed to load model", err);
 		}
 	}
 
@@ -360,8 +465,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			const data = (await res.json()) as ReasoningEffortResponse;
 			// Guard a slow response losing a race with a conversation switch.
 			if (workspaceConversationId() === id) reasoningEffort = data.reasoningEffort ?? null;
-		} catch {
-			// Non-fatal: an effort fetch failure just leaves the default rendering.
+		} catch (err) {
+			reportError("Failed to load reasoning effort", err);
 		}
 	}
 
@@ -380,8 +485,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			if (!res.ok) return;
 			const data = (await res.json()) as CompactPercentResponse;
 			if (workspaceConversationId() === id) compactPercent = data.threshold;
-		} catch {
-			// Non-fatal: a percent fetch failure just leaves null.
+		} catch (err) {
+			reportError("Failed to load compact percent", err);
 		}
 	}
 
@@ -448,8 +553,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	function closeConversation(conversationId: string): void {
 		void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/close`, {
 			method: "POST",
-		}).catch(() => {
-			// Non-fatal — see doc comment.
+		}).catch((err) => {
+			reportError("Failed to close conversation", err);
 		});
 	}
 
@@ -513,14 +618,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	/**
 	 * Open a conversation tab — used by the `conversation.open` WS broadcast
-	 * (CLI `--open` flag). If the conversation is already open, this is a no-op;
-	 * otherwise create a chat store, load its history, subscribe to its live
+	 * (CLI `--open` flag) and by `conversation.statusChanged` when a new active
+	 * conversation is discovered. If the conversation is already open, this is a
+	 * no-op; otherwise create a chat store, load its history, subscribe to its live
 	 * turns, and add the tab WITHOUT switching the active conversation (the user
-	 * stays on their current tab; the new tab appears in the strip).
+	 * stays on their current tab; the new tab appears in the strip). The tab is
+	 * stamped with the conversation's actual `workspaceId`, NOT the viewer's
+	 * currently active workspace.
 	 */
-	function openConversation(conversationId: string): void {
+	function openConversation(conversationId: string, workspaceId: string): void {
 		if (chatStores.has(conversationId)) return;
-		const store = createChatFor(conversationId, activeModel);
+		const store = createChatFor(conversationId, activeModel, workspaceId);
 		chatStores.set(conversationId, store);
 		void store.load();
 		subscribeChat(conversationId);
@@ -528,6 +636,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			conversationId,
 			model: activeModel,
 			title: "Conversation",
+			workspaceId,
 		});
 	}
 
@@ -550,6 +659,20 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		void refreshCwd();
 		void refreshReasoningEffort();
 		void refreshCompactPercent();
+	}
+
+	/**
+	 * Surface a swallowed error to the user via the full-screen error modal
+	 * (`fatalError` → `ErrorModal`). Logs to `console.error` too so the stack is
+	 * in devtools. Called from catch blocks that previously swallowed errors silently.
+	 */
+	function reportError(context: string, err: unknown): void {
+		console.error(`[reportError] ${context}`, err);
+		const detail =
+			err instanceof Error
+				? `${err.name}: ${err.message}\n\n${err.stack ?? "(no stack trace available)"}`
+				: String(err);
+		fatalError = `${context}\n\n${detail}`;
 	}
 
 	// Conversation lifecycle status (backend-owned, pushed via WS +
@@ -580,7 +703,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			const existingIds = new Set(chatStores.keys());
 			for (const conv of data.conversations) {
 				if (!existingIds.has(conv.id)) {
-					const store = createChatFor(conv.id, activeModel);
+					const store = createChatFor(conv.id, activeModel, conv.workspaceId);
 					chatStores.set(conv.id, store);
 					void store.load();
 					subscribeChat(conv.id);
@@ -588,6 +711,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 						conversationId: conv.id,
 						model: activeModel,
 						title: conv.title,
+						workspaceId: conv.workspaceId,
 					});
 				} else {
 					// Already open — update the title from the backend if it differs.
@@ -602,8 +726,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 					removeTabLocally(tab.conversationId);
 				}
 			}
-		} catch {
-			// Non-fatal: fall back to the localStorage-restored tabs.
+		} catch (err) {
+			reportError(
+				`Failed to load conversations from the backend.\n\nURL: ${httpBase}/conversations?status=active,idle`,
+				err,
+			);
 		}
 	}
 
@@ -612,10 +739,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		onMessage: handleServerMessage,
 		onChat: handleChatMessage,
 		onConversationOpen(msg: ConversationOpenMessage): void {
-			openConversation(msg.conversationId);
+			openConversation(msg.conversationId, msg.workspaceId);
 		},
 		onConversationStatusChanged(msg: ConversationStatusChangedMessage): void {
-			const { conversationId, status } = msg;
+			const { conversationId, status, workspaceId } = msg;
 			if (status === "closed") {
 				// Closed on another device (or the backend) — remove the tab locally.
 				if (chatStores.has(conversationId)) {
@@ -627,7 +754,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			conversationStatuses = new Map(conversationStatuses).set(conversationId, status);
 			// If this is a new active conversation we don't have a tab for, open one.
 			if (status === "active" && !chatStores.has(conversationId)) {
-				openConversation(conversationId);
+				openConversation(conversationId, workspaceId);
 			}
 		},
 		onConversationCompacted(msg: ConversationCompactedMessage): void {
@@ -641,7 +768,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				store.dispose();
 			}
 			void cache.delete(cid);
-			const fresh = createChatFor(cid, activeModel);
+			const fresh = createChatFor(cid, activeModel, activeWorkspaceId);
 			chatStores.set(cid, fresh);
 			void fresh.load();
 			if (wasActive) {
@@ -692,15 +819,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				}
 			}
 		})
-		.catch(() => {
-			// Model fetch failure is non-fatal; use defaults.
+		.catch((err) => {
+			reportError("Failed to load model list", err);
 		});
 
 	// Restore persisted tabs
 	const persistedState = storageAdapter.load();
 	if (persistedState !== null && persistedState.tabs.length > 0) {
 		for (const tab of persistedState.tabs) {
-			const store = createChatFor(tab.conversationId, tab.model);
+			const store = createChatFor(tab.conversationId, tab.model, tab.workspaceId);
 			chatStores.set(tab.conversationId, store);
 			void store.load();
 			// Watch each restored conversation's live turns: after a reload mid-turn the
@@ -720,6 +847,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	refreshActiveChat();
 	void refreshCwd();
+	void refreshModel();
 	void refreshReasoningEffort();
 	void refreshCompactPercent();
 
@@ -730,10 +858,28 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	return {
 		get tabs(): readonly Tab[] {
-			return tabsStore.tabs;
+			return tabsStore.tabs.filter((t) => t.workspaceId === activeWorkspaceId);
 		},
 		get activeConversationId(): string | null {
 			return tabsStore.activeConversationId;
+		},
+		get activeWorkspaceId(): string {
+			return activeWorkspaceId;
+		},
+		setActiveWorkspace(workspaceId: string): void {
+			activeWorkspaceId = workspaceId;
+			// Reset to a fresh draft scoped to the new workspace so a new chat is
+			// stamped with the right `workspaceId` on `chat.send`.
+			const nextDraftId = randomId();
+			draftStore = createChatFor(nextDraftId, activeModel, workspaceId);
+			draftConversationId = nextDraftId;
+			tabsStore.newDraft();
+			refreshActiveChat();
+			syncSubscriptions();
+			void refreshCwd();
+			void refreshModel();
+			void refreshReasoningEffort();
+			void refreshCompactPercent();
 		},
 		get activeChat(): ChatStore {
 			return activeChat;
@@ -796,13 +942,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 					conversationId,
 					model,
 					title: deriveTitle(text),
+					workspaceId: activeWorkspaceId,
 				});
 				chatStores.set(conversationId, draftStore);
 				void draftStore.load();
 
 				// Prepare next draft
 				const nextDraftId = randomId();
-				draftStore = createChatFor(nextDraftId, activeModel);
+				draftStore = createChatFor(nextDraftId, activeModel, activeWorkspaceId);
 				draftConversationId = nextDraftId;
 
 				refreshActiveChat();
@@ -834,6 +981,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			if (activeId !== null) {
 				tabsStore.setModel(activeId, model);
 				chatStores.get(activeId)?.setModel(model);
+				void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(activeId)}/model`, {
+					method: "PUT",
+					headers: { "Content-Type": "application/json" },
+					body: JSON.stringify({ model } satisfies SetModelRequest),
+				}).catch((err) => {
+					reportError("Failed to persist model", err);
+				});
 			} else {
 				draftStore.setModel(model);
 			}
@@ -842,11 +996,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		newDraft(): void {
 			tabsStore.newDraft();
 			const nextDraftId = randomId();
-			draftStore = createChatFor(nextDraftId, activeModel);
+			draftStore = createChatFor(nextDraftId, activeModel, activeWorkspaceId);
 			draftConversationId = nextDraftId;
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshModel();
 			void refreshReasoningEffort();
 			void refreshCompactPercent();
 		},
@@ -860,6 +1015,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshModel();
 			void refreshReasoningEffort();
 			void refreshCompactPercent();
 		},
@@ -877,8 +1033,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				method: "PUT",
 				headers: { "Content-Type": "application/json" },
 				body: JSON.stringify({ title } satisfies SetTitleRequest),
-			}).catch(() => {
-				// Best-effort — the local tab is already renamed.
+			}).catch((err) => {
+				reportError("Failed to rename conversation", err);
 			});
 		},
 
@@ -918,7 +1074,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 		async setCwd(value: string): Promise<CwdResult | null> {
 			const id = workspaceConversationId();
-			const body: SetCwdRequest = { cwd: value };
+			const body: SetCwdRequest = {
+				cwd: value,
+				workspaceId: untrack(() => activeWorkspaceId),
+			};
 			try {
 				const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/cwd`, {
 					method: "PUT",
@@ -974,8 +1133,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			if (conversationId === null) return;
 			void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/stop`, {
 				method: "POST",
-			}).catch(() => {
-				// Non-fatal — the existing event flow handles the turn settle.
+			}).catch((err) => {
+				reportError("Failed to stop generation", err);
 			});
 		},
 
@@ -1082,8 +1241,106 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				};
 			}
 		},
+
+		async mcpStatus(): Promise<McpResult | null> {
+			const id = workspaceConversationId();
+			try {
+				const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/mcp`);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return { ok: false, error: errBody?.error ?? `MCP status failed (HTTP ${res.status})` };
+				}
+				// Normalize the untyped body at this network seam so a malformed/partial
+				// response can never crash the renderer (servers is guaranteed an array).
+				const data = (await res.json()) as Partial<McpStatusResponse>;
+				const response: McpStatusResponse = {
+					conversationId: data.conversationId ?? id,
+					cwd: data.cwd ?? null,
+					servers: Array.isArray(data.servers) ? data.servers : [],
+				};
+				return { ok: true, response };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "MCP status request failed",
+				};
+			}
+		},
+
+		async loadSystemPrompt(): Promise<SystemPromptLoadResult> {
+			try {
+				const res = await fetchImpl(`${httpBase}/system-prompt`);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Load system prompt failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as SystemPromptTemplateResponse;
+				return { ok: true, template: data.template ?? "" };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Load system prompt request failed",
+				};
+			}
+		},
+
+		async setSystemPrompt(template: string): Promise<SystemPromptSaveResult> {
+			try {
+				const body: SetSystemPromptTemplateRequest = { template };
+				const res = await fetchImpl(`${httpBase}/system-prompt`, {
+					method: "PUT",
+					headers: { "content-type": "application/json" },
+					body: JSON.stringify(body),
+				});
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Set system prompt failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as SystemPromptTemplateResponse;
+				return { ok: true, template: data.template };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Set system prompt request failed",
+				};
+			}
+		},
+
+		async loadSystemPromptVariables(): Promise<SystemPromptVariablesResult> {
+			try {
+				const res = await fetchImpl(`${httpBase}/system-prompt/variables`);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Load system prompt variables failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as Partial<SystemPromptVariablesResponse>;
+				return { ok: true, variables: Array.isArray(data.variables) ? data.variables : [] };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Load system prompt variables request failed",
+				};
+			}
+		},
+
 		attachUnloadGate(gate: () => boolean): void {
 			unloadGate = gate;
+		},
+
+		get fatalError(): string | null {
+			return fatalError;
+		},
+		clearFatalError(): void {
+			fatalError = null;
 		},
 
 		dispose(): void {

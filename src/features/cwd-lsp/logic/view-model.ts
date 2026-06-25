@@ -1,9 +1,9 @@
 import type { LspServerInfo, LspServerState } from "@dispatch/transport-contract";
 
 /**
- * Pure core for the workspace feature — zero DOM, zero effects, zero Svelte.
+ * Pure core for the cwd-lsp feature — zero DOM, zero effects, zero Svelte.
  *
- * The workspace feature exposes a conversation's per-tab working directory (cwd)
+ * The cwd-lsp feature exposes a conversation's per-tab working directory (cwd)
  * and the live status of the language servers configured for that cwd. This
  * module holds the pure logic: cwd normalization/validation, the mapping of a
  * backend `LspServerState` to a display badge, and a one-line server summary.
