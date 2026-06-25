@@ -5,16 +5,19 @@
 > **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-24 (`transport-contract` re-pinned 0.20.0 → 0.22.0; `file:` dep paths
-fixed `../arch-rewrite` → `../dispatch-backend`; MCP server-status endpoint/types consumed + backend shipped
-`GET /conversations/:id/mcp` (CR-12 resolved); transient `provider-retry` AgentEvent consumed (additive to
-`wire@0.12.0`, no version bump))._
+_Last updated: 2026-06-25 (SSH handoff #2 — full computer HTTP API consumed: `computer` feature folder + `ComputerField`
+per-conversation selector + connection-status badge + Test-connection + workspace default-computer selector; store
+`computerId`/`refreshComputer`/`setComputer` + `computers` catalog + `computerStatus`/`testComputer`. transport-contract
+computer types re-mirrored. ⚠️ The handoff #1 `provider-retry` divergence (§2d) is STILL OPEN — backend `feature/ssh-support`
+still lacks `TurnProviderRetryEvent` (not merged from `dev`); FE typecheck stays at 11 errors, all that seam. The computer
+feature itself is typecheck-clean (0 errors) + 795 tests green. See §2e)._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
-(`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump).
+(`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump), and **SSH-divergence**
+(§2d — backend `feature/ssh-support` must merge `dev` so `provider-retry` is present alongside the new SSH types).
 Backend shipped CR-10 (workspace id on `conversation.open` / `conversation.statusChanged`), CR-11
 (per-conversation model persistence), and CR-12 (`GET /conversations/:id/mcp`); FE has consumed all three.
 The backend also added the transient `provider-retry` `AgentEvent` (retry-with-backoff warning) to
-`wire@0.12.0` (additive — no version bump); FE consumed + re-mirrored `.dispatch/wire.reference.md` — see §2c.
+`wire@0.12.0` on `dev` (additive — no version bump); FE consumed + re-mirrored `.dispatch/wire.reference.md` — see §2c.
 FE re-pinned + re-mirrored `transport-contract`; `selectModel` persists to
 `PUT /conversations/:id/model` and conversation focus recalls the persisted model via `GET /conversations/:id/model`.
 FE consumes the MCP status slice (`GET /conversations/:id/mcp`, mirroring `/lsp`) — see §2b.
@@ -28,7 +31,7 @@ Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.12.0`; `transport-contrac
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`TurnProviderRetryEvent`(transient retry-warning)/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, `done.contextSize`/`TurnMetrics.contextSize`, `ReasoningEffort`, `QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`, `ConversationMeta`/`ConversationStatus` |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`TurnProviderRetryEvent`(transient retry-warning)/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, `done.contextSize`/`TurnMetrics.contextSize`, `ReasoningEffort`, `QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`, `ConversationMeta`/`ConversationStatus`, `Workspace`/`WorkspaceEntry`(+`defaultComputerId`)/`Computer`/`ComputerEntry` (SSH handoff #1) |
 | `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + `QueueRequest`/`QueueResponse`/`ChatQueueMessage` + `ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + MCP (`McpStatusResponse`/`McpServerInfo`/`McpServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
@@ -343,6 +346,112 @@ effect + re-render churn). A live ticking countdown (5,4,3,2,1…) could be adde
   data path (wire parse → reducer → state) IS verified live; only the Svelte render of the yellow bubble
   remains a human-confirm (open the chat, trigger an overloaded provider, confirm the yellow "⚠ Retry #N —
   retrying in 5s…" banner appears, updates per attempt, and clears when the reply streams).
+
+---
+
+## 2d. SSH support — handoff #1 (wire types) → **PARTIALLY CONSUMED ✅ ⚠️ BLOCKED on a cross-repo divergence**
+
+The first of a few incremental SSH handoffs. The backend's `@dispatch/wire` (pinned `file:` dep) gained SSH-computer
+types — **additive to `wire@0.12.0`, NO version bump** (same pattern as `provider-retry`). The full HTTP API surface
+(computer endpoints, `chat.send computerId`) comes in a LATER handoff; this one is wire-types only.
+
+**New wire types (consumed + re-mirrored):**
+- `Workspace` gained a REQUIRED `defaultComputerId: string | null` (null = local / no SSH; the computer analog of
+  `defaultCwd`). Resolution is SERVER-owned (per-conv `computerId` → `workspace.defaultComputerId` → `null`/local).
+- `Computer` — a read-only view of a discovered `~/.ssh/config` `Host` target:
+  `{ alias, hostName, port, user, identityFile, knownHost }`. `alias` IS the `computerId` users select. NOT an
+  editable entity (no CRUD store — the user edits `~/.ssh/config` to add one).
+- `ComputerEntry extends Computer` — adds `usageCount` (for `GET /computers`).
+
+**FE (DONE):**
+- Re-synced the `@dispatch/wire` `file:` dep (worktree layout note below) so the new types resolve.
+- Re-mirrored `.dispatch/wire.reference.md`: added `Workspace.defaultComputerId`, the `Computer`/`ComputerEntry`
+  section, and a header delta note.
+- Fixed the 2 `Workspace`/`WorkspaceEntry` test literals that broke (the handoff's expected break):
+  `src/features/workspaces/ui/WorkspaceCard.test.ts` (`fakeEntry`) and
+  `src/features/workspaces/logic/view-model.test.ts` (`ws` factory) — both now supply `defaultComputerId: null`.
+  (The conformance test's `provider-retry` case is the unrelated divergence below — NOT a `defaultComputerId` site.)
+- Added `computer` / `computerId` to `GLOSSARY.md` (backend-canonical, adopted verbatim).
+
+**NOT started (correctly deferred):** the `computer` feature folder, the per-conversation + workspace-default
+selectors, the connection-status badge, and `chat.send computerId` — all wait on the later HTTP-API handoff.
+
+### ⚠️ BLOCKING — `provider-retry` missing on the backend `feature/ssh-support` branch
+
+Picking up the SSH wire types surfaced a **cross-repo divergence**: the FE does NOT typecheck. The backend
+`feature/ssh-support` branch (where the SSH types landed) was cut from `8a74335` and is MISSING the
+`TurnProviderRetryEvent` / `provider-retry` `AgentEvent` addition that lives on `dev` (confirmed: present in the main
+backend repo's `dev` `packages/wire/src/index.ts` lines 276/444; ABSENT from the worktree `feature/ssh-support`
+branch source + `dist`). The FE branch already consumes `provider-retry` (commit `17ce479`, §2c) — so against the
+pinned `feature/ssh-support` wire it now fails with **11 typecheck errors**, all the missing `provider-retry` seam:
+`Module '"@dispatch/wire"' has no exported member 'TurnProviderRetryEvent'` (7 sites:
+`core/chunks/types.ts`, `retry-banner.ts`, `selectors.ts`, `features/chat/store.svelte.ts`,
+`features/chat/ui/ChatView.svelte`, `core/chunks/reducer.test.ts`, `retry-banner.test.ts`) +
+`Type '"provider-retry"' is not comparable/assignable to the AgentEvent.type union` (4 sites:
+`core/chunks/reducer.ts`, `core/wire/conformance.ts`, `core/wire/conformance.test.ts`).
+
+**This is backend-side.** The FE will NOT revert its shipped, tested `provider-retry` feature (that would regress
+§2c), and per the constitution the FE cannot edit the backend repo. **Ask for the backend:** merge `dev` into
+`feature/ssh-support` (or rebase the SSH waves 0–2 onto current `dev`) so `provider-retry` is present alongside the
+new SSH types. Once merged + the wire `dist` rebuilt, the FE re-syncs the `file:` dep and the 11 errors clear with
+ZERO further FE code changes (the `provider-retry` consumption is already complete + tested on the FE side).
+
+**FE status:** `defaultComputerId` break fully resolved (0 remaining); the ONLY thing blocking `bun run typecheck`
+green is the backend `provider-retry` merge. `bun run test` / `build` are likewise blocked on the same compile seam.
+
+### Worktree environment note (not a contract change)
+This worktree lays the repos out as `…/worktrees/ssh-support/{backend,frontend}`, but `package.json`'s canonical
+`file:` paths point at `../dispatch-backend` (correct for the main `dispatch/{dispatch-backend,dispatch-web}` layout).
+To keep `package.json` canonical (no worktree-specific hack committed), a symlink `../dispatch-backend → ../backend`
+was created in the worktree parent (untracked, outside the repo), then `bun install` re-synced `node_modules/@dispatch/*`.
+The backend wire `dist/` was already built + current (has the new types); no backend edit was made.
+
+---
+
+## 2e. SSH support — handoff #2 (full computer HTTP API) → **CONSUMED ✅ (FE built; typecheck blocked only by §2d)**
+
+The backend shipped the full SSH computer HTTP/WS API (transport-contract types stable; the `ssh` extension that
+provides the ComputerService is the last backend wave — until it lands, `GET /computers` returns `[]` and statuses
+return `disconnected`, which the FE renders gracefully). The FE mirrors the existing `cwd`/`workspaces` UI.
+
+**New transport-contract types consumed (additive to `transport-contract@0.22.0`, NO version bump):** `ComputerListResponse`
+(`GET /computers`), `ComputerResponse`, `ComputerStatusResponse` (`GET /computers/:alias/status`), `TestComputerResponse`
+(`POST /computers/:alias/test`), `SetConversationComputerRequest` + `ConversationComputerResponse`
+(`GET`/`PUT`/`DELETE /conversations/:id/computer`), `SetWorkspaceDefaultComputerRequest`
+(`PUT /workspaces/:id/default-computer`), and `computerId?: string` on `ChatRequest`/`ChatSendMessage`/`QueueRequest`.
+`Computer`/`ComputerEntry` are `@dispatch/wire` (handoff #1). Re-mirrored `.dispatch/transport-contract.reference.md`
+(added the Computers section + `ChatRequest.computerId`).
+
+**FE (DONE — mirrors cwd-lsp's consumer-defines-port pattern):**
+- New feature library `src/features/computer/`: pure `logic/view-model.ts` (`viewComputer`/`viewComputerStatus`/
+  `viewTestResult`/`summarizeComputers`/`formatHost`/`knownHostLabel` + state→badge mapping for the 4
+  `ComputerStatusResponse.state`s + the `SaveComputer`/`LoadComputerStatus`/`TestComputer`/`LoadComputers` ports) — 20
+  view-model tests green; `ui/ComputerField.svelte` (per-conversation selector: dropdown + connection-status badge +
+  Test-connection, polling the selected alias) + `ui/ComputerSelect.svelte` (a reusable Local/computers dropdown, shared
+  with the workspace default-computer control); `index.ts` (`ComputerField`/`ComputerSelect`/`manifest`/types).
+- `AppStore` (`src/app/store.svelte.ts`): `computerId` reactive state + `refreshComputer()` (parallel to `refreshCwd`,
+  called at every focus site: boot, workspace switch, draft→tab, newDraft, selectTab, removeTabLocally) +
+  `setComputer(computerId: string | null)` (`PUT /conversations/:id/computer`, null = clear) + a global `computers`
+  catalog (`GET /computers` on boot, like `models`) + `computerStatus(alias)` + `testComputer(alias)`. New result types
+  `ComputerResult`/`ComputerStatusResult`/`TestComputerResult`. `chat.send` UNCHANGED (computer resolved server-side
+  from the persisted per-conversation value, exactly like cwd).
+- `src/app/App.svelte`: `ComputerField` mounted in the "Model" sidebar view next to `CwdField`, keyed on
+  `currentConversationId`; adapted ports (`saveComputer`/`loadComputerStatus`/`testComputer`) wrap the store.
+- Workspaces: `setDefaultComputer` added to `WorkspaceHttp` + `WorkspaceStore` (`PUT /workspaces/:id/default-computer`);
+  a default-computer selector (reusing `ComputerSelect`) added to `WorkspaceCard.svelte` next to the default-cwd control;
+  the router (`src/App.svelte`) passes `store.computers` through `WorkspacesHome` → `WorkspaceCard`.
+
+**Transparency invariant (held):** the computer is USER-facing only — it is a tool-execution target forwarded to tools
+and NEVER part of the model prompt (so it does not affect prompt caching); the agent never sees it. Documented in the
+feature's pure core + surfaced in the `ComputerField` helper text.
+
+**NOT done (correctly deferred):** a per-send `computerId` override (the MVP UI doesn't expose it; persisted per-conversation
+suffices). No `chat.send` change.
+
+**Verification:** 795/795 tests green (50 files; +20 computer view-model); biome clean; `vite build` succeeds. `svelte-check`
+reports **0 errors from the computer feature** — the only 11 errors are the pre-existing §2d `provider-retry` divergence.
+Live probe NOT run (the backend `ssh` extension isn't live yet → `GET /computers` returns `[]` end-to-end; a live probe +
+human confirm of the dropdown/badge/test should run once `ssh` is wired + the `provider-retry` divergence is merged).
 
 ---
 

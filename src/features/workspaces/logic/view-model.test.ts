@@ -36,6 +36,7 @@ describe("pageTitle", () => {
 		id,
 		title,
 		defaultCwd: null,
+		defaultComputerId: null,
 		createdAt: 0,
 		lastActivityAt: 0,
 		conversationCount: 0,

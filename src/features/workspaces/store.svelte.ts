@@ -21,6 +21,8 @@ export interface WorkspaceStore {
 	rename(id: string, title: string): Promise<WorkspaceResult<Workspace>>;
 	/** Set/clear a workspace's default cwd. */
 	setDefaultCwd(id: string, defaultCwd: string | null): Promise<WorkspaceResult<Workspace>>;
+	/** Set/clear a workspace's default computer (SSH `Host` alias; null = local). */
+	setDefaultComputer(id: string, computerId: string | null): Promise<WorkspaceResult<Workspace>>;
 	/** Delete a workspace (closes its conversations, reassigns to "default"). */
 	remove(id: string): Promise<WorkspaceResult<{ closedCount: number }>>;
 }
@@ -67,6 +69,12 @@ export function createWorkspaceStore(http: WorkspaceHttp): WorkspaceStore {
 
 		async setDefaultCwd(id, defaultCwd): Promise<WorkspaceResult<Workspace>> {
 			const result = await http.setDefaultCwd(id, defaultCwd);
+			if (result.ok) void this.refresh();
+			return result;
+		},
+
+		async setDefaultComputer(id, computerId): Promise<WorkspaceResult<Workspace>> {
+			const result = await http.setDefaultComputer(id, computerId);
 			if (result.ok) void this.refresh();
 			return result;
 		},
