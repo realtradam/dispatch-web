@@ -78,7 +78,7 @@
 		{:else}
 			<ul class="flex flex-col gap-2">
 				{#each store.list as ws (ws.id)}
-					<WorkspaceCard {ws} {store} {onNavigate} />
+					<WorkspaceCard {ws} {store} />
 				{/each}
 			</ul>
 		{/if}
