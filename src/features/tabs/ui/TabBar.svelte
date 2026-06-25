@@ -135,7 +135,7 @@
 						class="min-w-0 flex-1 cursor-pointer truncate text-left"
 						role="button"
 						tabindex="-1"
-						title="Double-click to rename"
+						title={tab.title}
 						ondblclick={(e) => {
 							e.stopPropagation();
 							startRename(tab);
