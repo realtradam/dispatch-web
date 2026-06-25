@@ -5,15 +5,14 @@
 > **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-25 (SSH handoff #2 — full computer HTTP API consumed: `computer` feature folder + `ComputerField`
-per-conversation selector + connection-status badge + Test-connection + workspace default-computer selector; store
-`computerId`/`refreshComputer`/`setComputer` + `computers` catalog + `computerStatus`/`testComputer`. transport-contract
-computer types re-mirrored. ⚠️ The handoff #1 `provider-retry` divergence (§2d) is STILL OPEN — backend `feature/ssh-support`
-still lacks `TurnProviderRetryEvent` (not merged from `dev`); FE typecheck stays at 11 errors, all that seam. The computer
-feature itself is typecheck-clean (0 errors) + 795 tests green. See §2e)._
+_Last updated: 2026-06-25 (§2d RESOLVED — backend merged `dev` into `feature/ssh-support`, merge `de022ce`;
+`TurnProviderRetryEvent`/`provider-retry` is now present alongside the SSH types; FE re-synced both `file:` deps +
+`bun run typecheck` is GREEN — 0 errors — with ZERO further FE code changes, exactly as predicted. The full SSH
+computer feature (handoff #2, §2e) + the wire-type break (handoff #1) are unchanged; the merge only added
+`provider-retry` on top. FE is now fully green: typecheck 0/0, 795/795 tests, biome clean, build OK)._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
-(`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump), and **SSH-divergence**
-(§2d — backend `feature/ssh-support` must merge `dev` so `provider-retry` is present alongside the new SSH types).
+(`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
+(§2d) is RESOLVED.
 Backend shipped CR-10 (workspace id on `conversation.open` / `conversation.statusChanged`), CR-11
 (per-conversation model persistence), and CR-12 (`GET /conversations/:id/mcp`); FE has consumed all three.
 The backend also added the transient `provider-retry` `AgentEvent` (retry-with-backoff warning) to
@@ -349,7 +348,7 @@ effect + re-render churn). A live ticking countdown (5,4,3,2,1…) could be adde
 
 ---
 
-## 2d. SSH support — handoff #1 (wire types) → **PARTIALLY CONSUMED ✅ ⚠️ BLOCKED on a cross-repo divergence**
+## 2d. SSH support — handoff #1 (wire types) → **CONSUMED ✅ (provider-retry divergence RESOLVED)**
 
 The first of a few incremental SSH handoffs. The backend's `@dispatch/wire` (pinned `file:` dep) gained SSH-computer
 types — **additive to `wire@0.12.0`, NO version bump** (same pattern as `provider-retry`). The full HTTP API surface
@@ -376,28 +375,19 @@ types — **additive to `wire@0.12.0`, NO version bump** (same pattern as `provi
 **NOT started (correctly deferred):** the `computer` feature folder, the per-conversation + workspace-default
 selectors, the connection-status badge, and `chat.send computerId` — all wait on the later HTTP-API handoff.
 
-### ⚠️ BLOCKING — `provider-retry` missing on the backend `feature/ssh-support` branch
+### `provider-retry` divergence → **RESOLVED ✅ (backend merge `de022ce`)**
 
-Picking up the SSH wire types surfaced a **cross-repo divergence**: the FE does NOT typecheck. The backend
-`feature/ssh-support` branch (where the SSH types landed) was cut from `8a74335` and is MISSING the
-`TurnProviderRetryEvent` / `provider-retry` `AgentEvent` addition that lives on `dev` (confirmed: present in the main
-backend repo's `dev` `packages/wire/src/index.ts` lines 276/444; ABSENT from the worktree `feature/ssh-support`
-branch source + `dist`). The FE branch already consumes `provider-retry` (commit `17ce479`, §2c) — so against the
-pinned `feature/ssh-support` wire it now fails with **11 typecheck errors**, all the missing `provider-retry` seam:
-`Module '"@dispatch/wire"' has no exported member 'TurnProviderRetryEvent'` (7 sites:
-`core/chunks/types.ts`, `retry-banner.ts`, `selectors.ts`, `features/chat/store.svelte.ts`,
-`features/chat/ui/ChatView.svelte`, `core/chunks/reducer.test.ts`, `retry-banner.test.ts`) +
-`Type '"provider-retry"' is not comparable/assignable to the AgentEvent.type union` (4 sites:
-`core/chunks/reducer.ts`, `core/wire/conformance.ts`, `core/wire/conformance.test.ts`).
+**Was:** the backend `feature/ssh-support` branch (cut from `8a74335`) was MISSING `TurnProviderRetryEvent` /
+`provider-retry` (on `dev`), causing 11 FE typecheck errors. **Resolved:** backend merged `dev` into
+`feature/ssh-support` (merge commit `de022ce`, in the shared `../backend` worktree); `packages/wire/dist/index.d.ts`
+now exports `TurnProviderRetryEvent` (AgentEvent union line 231 + interface line 384) ALONGSIDE the SSH types
+(`Workspace.defaultComputerId`, `Computer`). Backend post-merge: `tsc -b` EXIT 0, biome clean, 1730 vitest pass.
+The auto-merge was clean — `computerId` threading + retry-with-backoff coexist.
 
-**This is backend-side.** The FE will NOT revert its shipped, tested `provider-retry` feature (that would regress
-§2c), and per the constitution the FE cannot edit the backend repo. **Ask for the backend:** merge `dev` into
-`feature/ssh-support` (or rebase the SSH waves 0–2 onto current `dev`) so `provider-retry` is present alongside the
-new SSH types. Once merged + the wire `dist` rebuilt, the FE re-syncs the `file:` dep and the 11 errors clear with
-ZERO further FE code changes (the `provider-retry` consumption is already complete + tested on the FE side).
-
-**FE status:** `defaultComputerId` break fully resolved (0 remaining); the ONLY thing blocking `bun run typecheck`
-green is the backend `provider-retry` merge. `bun run test` / `build` are likewise blocked on the same compile seam.
+**FE (DONE, zero code changes):** re-synced both `file:` deps (`bun install`); `node_modules/@dispatch/wire` +
+`@dispatch/transport-contract` both resolve `TurnProviderRetryEvent` (the transport-contract re-export confirmed).
+`bun run typecheck` is now **GREEN — 0 errors, 0 warnings** (the 11 cleared with NO FE code changes; the
+`provider-retry` consumption was already complete + tested). Full suite: 795/795 tests, biome clean, build OK.
 
 ### Worktree environment note (not a contract change)
 This worktree lays the repos out as `…/worktrees/ssh-support/{backend,frontend}`, but `package.json`'s canonical
@@ -408,7 +398,7 @@ The backend wire `dist/` was already built + current (has the new types); no bac
 
 ---
 
-## 2e. SSH support — handoff #2 (full computer HTTP API) → **CONSUMED ✅ (FE built; typecheck blocked only by §2d)**
+## 2e. SSH support — handoff #2 (full computer HTTP API) → **CONSUMED ✅ (FE built; fully green post §2d merge)**
 
 The backend shipped the full SSH computer HTTP/WS API (transport-contract types stable; the `ssh` extension that
 provides the ComputerService is the last backend wave — until it lands, `GET /computers` returns `[]` and statuses
@@ -449,7 +439,8 @@ feature's pure core + surfaced in the `ComputerField` helper text.
 suffices). No `chat.send` change.
 
 **Verification:** 795/795 tests green (50 files; +20 computer view-model); biome clean; `vite build` succeeds. `svelte-check`
-reports **0 errors from the computer feature** — the only 11 errors are the pre-existing §2d `provider-retry` divergence.
+reports **0 errors from the computer feature**. (The pre-existing §2d `provider-retry` divergence — 11 errors — is
+now RESOLVED via the backend `dev`→`feature/ssh-support` merge `de022ce`; `bun run typecheck` is fully GREEN.)
 Live probe NOT run (the backend `ssh` extension isn't live yet → `GET /computers` returns `[]` end-to-end; a live probe +
 human confirm of the dropdown/badge/test should run once `ssh` is wired + the `provider-retry` divergence is merged).
 
