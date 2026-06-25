@@ -4,13 +4,30 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces). Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers). Regenerate whenever `@dispatch/wire` changes.
 >
 > **2026-06-23 delta (workspaces handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):** adds
 > `Workspace` + `WorkspaceEntry` (a list entry with a conversation count) and a required
 > `workspaceId: string` on `ConversationMeta` (`"default"` for legacy/unspecified conversations). A
 > workspace is a URL-driven grouping of conversations that owns a default cwd; conversations that
 > haven't set their own cwd inherit `workspace.defaultCwd`. See `backend-handoff-workspaces-reply.md`.
+>
+> **2026-06-25 delta (SSH handoff #1 — ADDITIVE to `wire@0.12.0`, NO version bump):** adds a REQUIRED
+> `defaultComputerId: string | null` on `Workspace` (null = local / no SSH; the computer analog of
+> `defaultCwd`) and two new read-only view types: `Computer` (a discovered `~/.ssh/config` `Host` alias)
+> and `ComputerEntry extends Computer` (a list entry with a `usageCount`). `alias` IS the `computerId`
+> users select (persisted per-conversation/per-workspace like cwd). The full HTTP API surface
+> (`GET /computers`, `PUT /conversations/:id/computer`, `PUT /workspaces/:id/default-computer`,
+> `GET /computers/:alias/status`, `chat.send computerId`) comes in a LATER handoff — NOT consumed yet.
+>
+> **⚠️ CROSS-REPO DIVERGENCE (2026-06-25, BLOCKING FE typecheck):** the backend `feature/ssh-support`
+> branch (where the SSH types landed) was cut from `8a74335` and is MISSING the `TurnProviderRetryEvent` /
+> `provider-retry` `AgentEvent` addition that is on `dev` (and which the FE already consumes — see §2c of
+> `backend-handoff.md`). The mirror below KEEPS `TurnProviderRetryEvent` (it is the FE's expected contract
+> and matches `dev`); it is marked where it appears. Until the backend merges `dev` into
+> `feature/ssh-support`, the FE pinned to the `feature/ssh-support` wire will NOT typecheck (11 errors,
+> all the missing `provider-retry` seam). The SSH `Computer`/`defaultComputerId` types ARE present on
+> `feature/ssh-support` and are consumed below.
 
 ```ts
 /**
@@ -288,7 +305,7 @@ export type AgentEvent =
 	| TurnUsageEvent
 	| TurnStepCompleteEvent
 	| TurnErrorEvent
-	| TurnProviderRetryEvent
+	| TurnProviderRetryEvent // ⚠️ divergent: present on `dev`, MISSING on the pinned `feature/ssh-support` wire (see header + backend-handoff.md §2c)
 	| TurnDoneEvent
 	| TurnSealedEvent
 	| TurnSteeringEvent;
@@ -611,6 +628,14 @@ export interface Workspace {
 	readonly title: string;
 	/** The workspace's default cwd, or `null` (fall through to server default). */
 	readonly defaultCwd: string | null;
+	/**
+	 * The workspace's default computer — an SSH config `Host` alias that
+	 * conversations in this workspace inherit when they set no `computerId` of
+	 * their own. `null` means local (no SSH; today's behavior). The computer
+	 * analog of `defaultCwd`. Resolved per-conversation by `getEffectiveComputer`
+	 * (per-conv `computerId` → this → `null`/local).
+	 */
+	readonly defaultComputerId: string | null;
 	/** Epoch-ms when the workspace was first created. */
 	readonly createdAt: number;
 	/** Epoch-ms of the most recent conversation activity in this workspace. */
@@ -624,5 +649,46 @@ export interface Workspace {
 export interface WorkspaceEntry extends Workspace {
 	/** Number of conversations assigned to this workspace. */
 	readonly conversationCount: number;
+}
+
+// ─── Computers ───────────────────────────────────────────────────────────────
+
+/**
+ * A read-only view of a remote computer discovered from the system's
+ * `~/.ssh/config` — a "computer" is a `Host` alias, NOT an editable entity
+ * (there is no Computer CRUD store). To add a computer, the user adds a `Host`
+ * block to `~/.ssh/config`; Dispatch discovers it on the next `listComputers()`
+ * read. Every field below is resolved from the config (first-match-wins for
+ * `HostName`/`User`/`Port`/`IdentityFile`).
+ *
+ * `alias` is the `computerId` users select — the string persisted per
+ * conversation and per workspace (the computer analog of `cwd`). `knownHost`
+ * drives the frontend "known/new" indicator and is read-only.
+ */
+export interface Computer {
+	/** The SSH config `Host` alias — also the `computerId` users select. */
+	readonly alias: string;
+	/** Resolved `HostName`/IP from the config (falls back to the alias itself). */
+	readonly hostName: string;
+	/** Resolved port (config `Port`, default 22). */
+	readonly port: number;
+	/** Resolved user (config `User`, default the current user). */
+	readonly user: string;
+	/** Resolved `IdentityFile` path (from the config, or `null` = default `~/.ssh/id_*`). */
+	readonly identityFile: string | null;
+	/**
+	 * Whether the host's key is already in `~/.ssh/known_hosts` (i.e. previously
+	 * connected). Drives the frontend "known/new" indicator. Read-only.
+	 */
+	readonly knownHost: boolean;
+}
+
+/**
+ * A computer entry in the list response (`GET /computers`) — a `Computer` plus
+ * a usage count. Parallel to `WorkspaceEntry`.
+ */
+export interface ComputerEntry extends Computer {
+	/** Number of conversations/workspaces whose `computerId` resolves to this alias. */
+	readonly usageCount: number;
 }
 ```

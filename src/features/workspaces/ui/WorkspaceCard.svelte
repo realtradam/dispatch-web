@@ -1,18 +1,22 @@
 <script lang="ts">
-	import type { WorkspaceEntry } from "@dispatch/wire";
+	import type { ComputerEntry, WorkspaceEntry } from "@dispatch/wire";
 	import { untrack } from "svelte";
 	import type { WorkspaceStore } from "../store.svelte";
 	import { relativeTime } from "../logic/view-model";
 	import { workspacePath } from "../logic/route";
+	import ComputerSelect from "../../computer/ui/ComputerSelect.svelte";
 
 	let {
 		ws,
 		store,
 		onNavigate,
+		computers,
 	}: {
 		ws: WorkspaceEntry;
 		store: WorkspaceStore;
 		onNavigate: (path: string) => void;
+		/** Discovered computers (`GET /computers`), for the default-computer dropdown. */
+		computers: readonly ComputerEntry[];
 	} = $props();
 
 	// ── Title: double-click to rename inline ──────────────────────────────────
@@ -62,6 +66,21 @@
 		const result = await store.setDefaultCwd(ws.id, cwd === "" ? null : cwd);
 		savingCwd = false;
 		if (!result.ok) cwdError = result.error;
+	}
+
+	// ── Default computer: dropdown (Local / discovered SSH aliases) ────────────
+	let savingComputer = $state(false);
+	let computerError = $state<string | null>(null);
+
+	async function saveComputer(computerId: string | null): Promise<void> {
+		if (savingComputer) return;
+		// No-op when unchanged (the select only fires on a real change, but guard).
+		if (computerId === (ws.defaultComputerId ?? null)) return;
+		savingComputer = true;
+		computerError = null;
+		const result = await store.setDefaultComputer(ws.id, computerId);
+		savingComputer = false;
+		if (!result.ok) computerError = result.error;
 	}
 
 	// ── Delete ─────────────────────────────────────────────────────────────────
@@ -159,6 +178,19 @@
 		</button>
 	</div>
 
+	<div class="flex items-center gap-2">
+		<span class="w-8 shrink-0 text-xs opacity-60">ssh</span>
+		<ComputerSelect
+			value={ws.defaultComputerId}
+			{computers}
+			disabled={savingComputer}
+			onSelect={saveComputer}
+		/>
+		{#if savingComputer}
+			<span class="loading loading-spinner loading-xs shrink-0"></span>
+		{/if}
+	</div>
+
 	<div class="flex justify-start">
 		<a
 			class="btn"
@@ -176,5 +208,11 @@
 		<p class="text-xs text-error">{cwdError}</p>
 	{:else if !cwdDirty && !ws.defaultCwd}
 		<p class="text-xs opacity-50">No default cwd set — conversations inherit the server default.</p>
+	{/if}
+
+	{#if computerError}
+		<p class="text-xs text-error">{computerError}</p>
+	{:else if !ws.defaultComputerId}
+		<p class="text-xs opacity-50">No default computer — conversations run locally (no SSH).</p>
 	{/if}
 </li>
