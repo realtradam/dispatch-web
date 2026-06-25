@@ -1,3 +1,29 @@
+# `@dispatch/transport-contract` — in-repo reference (read THIS, not node_modules)
+
+> MIRRORS the backend's `@dispatch/transport-contract` package source so headless FE agents can read
+> the transport types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a
+> permission prompt). Your CODE still imports `@dispatch/transport-contract` normally — this file is for
+> READING only.
+>
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.22.0` (MCP status). Regenerate whenever
+> it changes.
+>
+> **2026-06-24 delta (MCP status handoff — package bumped `0.18.0` → `0.22.0`, ADDITIVE):** adds
+> `McpServerState`, `McpServerInfo`, and `McpStatusResponse`; endpoint
+> `GET /conversations/:id/mcp`. Mirrors the existing `GET /conversations/:id/lsp` shape (returns
+> `{cwd, servers}`, empty `servers` when no cwd is set). Each `McpServerInfo` reports an `id`,
+> `state` (`connecting` | `connected` | `error` | `disconnected`), optional `error`, `toolCount`,
+> and optional `configSource`. Also adds the previously-missing `configSource` field to
+> `LspServerInfo`. See `frontend-mcp-status-handoff.md`.
+>
+> **2026-06-24 delta (system prompt handoff — package bumped `0.17.0` → `0.18.0`, ADDITIVE):** adds
+> `SystemPromptTemplateResponse`, `SetSystemPromptTemplateRequest`, `SystemPromptVariable`, and
+> `SystemPromptVariablesResponse`; endpoints `GET /system-prompt`, `PUT /system-prompt`, and
+> `GET /system-prompt/variables`. The system prompt template is global (resolved once per conversation
+> at construction time, persisted for cache safety). Variables include `system:*`, `prompt:*`, `git:*`,
+> and dynamic `file:<path>`; conditional blocks use `[if]`, `[else]`, `[endif]`. See
+> `frontend-system-prompt-handoff.md`.
+
 /**
  * Transport contract — the typed description of Dispatch's client–server API
  * (HTTP + WebSocket).
@@ -28,6 +54,8 @@ import type {
 	ReasoningEffort,
 	StoredChunk,
 	TurnMetrics,
+	Workspace,
+	WorkspaceEntry,
 } from "@dispatch/wire";
 
 export type {
@@ -40,6 +68,8 @@ export type {
 	StepMetrics,
 	StoredChunk,
 	TurnMetrics,
+	Workspace,
+	WorkspaceEntry,
 } from "@dispatch/wire";
 
 /**
@@ -80,6 +110,13 @@ export interface ChatRequest {
 	 * unrecognized value → HTTP 400 `{ error }`.
 	 */
 	readonly reasoningEffort?: ReasoningEffort;
+
+	/**
+	 * The workspace to assign this conversation to. Omit for `"default"`.
+	 * If the workspace doesn't exist yet, it is auto-created (title = id,
+	 * defaultCwd = null).
+	 */
+	readonly workspaceId?: string;
 }
 
 /**
@@ -170,6 +207,14 @@ export interface ConversationMetricsResponse {
 	readonly turns: readonly TurnMetrics[];
 }
 
+export interface ConversationStatusResponse {
+	readonly conversationId: string;
+	/** True if the orchestrator has an in-memory active turn for this conversation. */
+	readonly isActive: boolean;
+	/** The persisted lifecycle status from the conversation store. */
+	readonly status: ConversationStatus;
+}
+
 /** The aggregation window for `GET /metrics/throughput`. */
 export type ThroughputPeriod = "day" | "week" | "month";
 
@@ -221,9 +266,19 @@ export interface CwdResponse {
 	readonly cwd: string | null;
 }
 
-/** Body of `PUT /conversations/:id/cwd`. */
+/**
+ * Body of `PUT /conversations/:id/cwd`.
+ *
+ * When `workspaceId` is provided, the conversation is assigned to that
+ * workspace BEFORE the cwd is persisted — so a subsequent
+ * `GET /conversations/:id/lsp` resolves a relative cwd against the
+ * workspace's `defaultCwd` (not the server default). Omit for unchanged
+ * workspace assignment (the conversation keeps its current workspace, or
+ * `"default"` if none).
+ */
 export interface SetCwdRequest {
 	readonly cwd: string;
+	readonly workspaceId?: string;
 }
 
 // ─── Per-conversation reasoning effort ────────────────────────────────────────
@@ -248,6 +303,29 @@ export interface SetReasoningEffortRequest {
 	readonly reasoningEffort: ReasoningEffort;
 }
 
+// ─── Per-conversation model persistence ───────────────────────────────────────
+
+/**
+ * Response of `GET /conversations/:id/model`. `model` is the persisted model
+ * name in `<credentialName>/<model>` form, or null when never set (the server
+ * then resolves turns using the default provider + model).
+ */
+export interface ModelResponse {
+	readonly conversationId: string;
+	readonly model: string | null;
+}
+
+/**
+ * Body of `PUT /conversations/:id/model` — persists the conversation's sticky
+ * model selection (used for every later turn that does not carry a per-turn
+ * `ChatRequest.model` override). Pass `null` to clear the persisted selection.
+ * An unrecognized model name is not validated here (the provider resolves it
+ * at turn time; an unknown model → turn error, not a 400).
+ */
+export interface SetModelRequest {
+	readonly model: string | null;
+}
+
 // ─── Conversation close (explicit tab close) ──────────────────────────────────
 
 /**
@@ -270,6 +348,57 @@ export interface CloseConversationResponse {
 	readonly abortedTurn: boolean;
 }
 
+// ─── System prompt template ───────────────────────────────────────────────────
+
+/**
+ * Response of `GET /system-prompt` — the current global system prompt template.
+ *
+ * The template is a text string with variable placeholders (`[type:name]`) and
+ * conditional blocks (`[if]`/`[else]`/`[endif]`). At construction time (first
+ * turn or compaction), variables are resolved against the conversation's cwd
+ * and system state. The resolved system prompt is persisted per conversation
+ * and reused on all subsequent turns (cache-safe — no per-turn reconstruction).
+ */
+export interface SystemPromptTemplateResponse {
+	/** The template text (may be empty — then no system prompt is sent). */
+	readonly template: string;
+}
+
+/**
+ * Body of `PUT /system-prompt` — set the global system prompt template.
+ *
+ * Changing the template does NOT affect existing conversations until they are
+ * compacted (the persisted resolved system prompt is stable). New
+ * conversations use the new template on their first turn.
+ */
+export interface SetSystemPromptTemplateRequest {
+	readonly template: string;
+}
+
+/**
+ * One available variable for the system prompt template, as reported by
+ * `GET /system-prompt/variables` so the frontend can render the variable
+ * selector buttons.
+ */
+export interface SystemPromptVariable {
+	/** The variable type/source: `"system"`, `"file"`, `"prompt"`, `"git"`. */
+	readonly type: string;
+	/** The variable name (e.g. `"time"`, `"date"`, `"os"`). For dynamic types, a description. */
+	readonly name: string;
+	/** Human-readable description of what the variable resolves to. */
+	readonly description: string;
+	/**
+	 * When `true`, any name is valid for this type (e.g. `file:<path>` accepts
+	 * any file path). The frontend should allow free-text input for the name.
+	 */
+	readonly dynamic?: boolean;
+}
+
+/** Response of `GET /system-prompt/variables`. */
+export interface SystemPromptVariablesResponse {
+	readonly variables: readonly SystemPromptVariable[];
+}
+
 // ─── Message queue (steering) ─────────────────────────────────────────────────
 
 /**
@@ -289,6 +418,11 @@ export interface CloseConversationResponse {
  */
 export interface QueueRequest {
 	readonly text: string;
+	/**
+	 * The workspace to assign the conversation to (if a new conversation is
+	 * started). Omit for `"default"`. Auto-creates if missing.
+	 */
+	readonly workspaceId?: string;
 }
 
 /**
@@ -324,15 +458,58 @@ export interface LspServerInfo {
 	readonly state: LspServerState;
 	/** Present only when `state === "error"`: a short human-readable reason. */
 	readonly error?: string;
+	/**
+	 * Which config source this server was resolved from: `".dispatch/lsp.json"`,
+	 * `"opencode.json"`, or `"built-in"` (the built-in TypeScript default). Omitted
+	 * when not yet resolved. Surfaces config-shadow debugging to the status caller
+	 * (a broken `.dispatch/lsp.json` silently shadowing `opencode.json`).
+	 */
+	readonly configSource?: string;
 }
 
 /** Response of `GET /conversations/:id/lsp`. */
 export interface LspStatusResponse {
 	readonly conversationId: string;
-	/** The conversation's persisted cwd, or null if unset (then `servers` is empty). */
+	/**
+	 * The resolved working directory the LSP connects on, or `null` when no
+	 * cwd has been set for the conversation (then `servers` is empty). When
+	 * non-null, this is the effective cwd — a relative persisted cwd resolved
+	 * against the conversation's workspace `defaultCwd`.
+	 */
 	readonly cwd: string | null;
 	/** The language servers configured for `cwd` and their live state. */
 	readonly servers: readonly LspServerInfo[];
+}
+
+// ─── MCP status ──────────────────────────────────────────────────────
+
+export type McpServerState = "connecting" | "connected" | "error" | "disconnected";
+
+/** One MCP server's status as reported to the frontend. */
+export interface McpServerInfo {
+	/** Stable server id (the config key from `.dispatch/mcp.json`), e.g. "freecad". */
+	readonly id: string;
+	/** Current connection state. */
+	readonly state: McpServerState;
+	/** Present only when `state === "error"`: a short human-readable reason. */
+	readonly error?: string;
+	/** Number of tools discovered from this server. */
+	readonly toolCount: number;
+	/** Which config source this server was resolved from. */
+	readonly configSource?: string;
+}
+
+/** Response of `GET /conversations/:id/mcp`. */
+export interface McpStatusResponse {
+	readonly conversationId: string;
+	/**
+	 * The resolved working directory the MCP servers are configured for, or
+	 * `null` when no cwd has been set for the conversation (then `servers` is
+	 * empty). Mirrors the LSP status endpoint behavior.
+	 */
+	readonly cwd: string | null;
+	/** The MCP servers configured for `cwd` and their live state. */
+	readonly servers: readonly McpServerInfo[];
 }
 
 /**
@@ -474,6 +651,11 @@ export interface ChatQueueMessage {
 	readonly type: "chat.queue";
 	readonly conversationId: string;
 	readonly text: string;
+	/**
+	 * The workspace to assign the conversation to (if a new conversation is
+	 * started). Omit for `"default"`. Auto-creates if missing.
+	 */
+	readonly workspaceId?: string;
 }
 
 /**
@@ -509,6 +691,12 @@ export type WsServerMessage =
 export interface ConversationOpenMessage {
 	readonly type: "conversation.open";
 	readonly conversationId: string;
+	/**
+	 * The conversation's actual workspace id, so a frontend can open/focus it
+	 * in the correct workspace instead of stamping it with the viewer's current
+	 * workspace.
+	 */
+	readonly workspaceId: string;
 }
 
 /**
@@ -520,6 +708,12 @@ export interface ConversationStatusChangedMessage {
 	readonly type: "conversation.statusChanged";
 	readonly conversationId: string;
 	readonly status: ConversationStatus;
+	/**
+	 * The conversation's actual workspace id, so a frontend can open/focus it
+	 * in the correct workspace instead of stamping it with the viewer's current
+	 * workspace.
+	 */
+	readonly workspaceId: string;
 }
 
 /**
@@ -606,3 +800,48 @@ export interface CompactPercentResponse {
 export interface SetCompactPercentRequest {
 	readonly threshold: number;
 }
+
+// ─── Workspaces ───────────────────────────────────────────────────────────────
+
+/**
+ * Body of `PUT /workspaces/:id` — the idempotent create-on-miss call. All
+ * fields are optional and only applied when the workspace is first created;
+ * an existing workspace is returned as-is.
+ */
+export interface EnsureWorkspaceRequest {
+	/** Display title. Default: the workspace id. Only used on create. */
+	readonly title?: string;
+	/** Default cwd. Default: null (inherit server default). Only used on create. */
+	readonly defaultCwd?: string | null;
+}
+
+/** Response of `GET`/`PUT /workspaces/:id` — the workspace itself. */
+export interface WorkspaceResponse extends Workspace {}
+
+/** Response of `GET /workspaces` — all workspaces sorted by `lastActivityAt` desc. */
+export interface WorkspaceListResponse {
+	readonly workspaces: readonly WorkspaceEntry[];
+}
+
+/** Body of `PUT /workspaces/:id/title` — rename (display only; id unchanged). */
+export interface SetWorkspaceTitleRequest {
+	readonly title: string;
+}
+
+/** Body of `PUT /workspaces/:id/default-cwd` — set or clear the default cwd. */
+export interface SetWorkspaceDefaultCwdRequest {
+	readonly defaultCwd: string | null;
+}
+
+/**
+ * Response of `DELETE /workspaces/:id`. All conversations in the workspace
+ * are closed (status → "closed") and reassigned to "default", then the
+ * workspace entity is deleted. `"default"` is non-deletable (HTTP 409).
+ */
+export interface DeleteWorkspaceResponse {
+	readonly workspaceId: string;
+	/** Conversations that were closed (status → "closed") by this delete. */
+	readonly closedCount: number;
+}
+```
+
