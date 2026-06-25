@@ -76,8 +76,10 @@
 	}
 
 	// Re-fetch on mount + whenever the selected alias changes (incl. after a save).
+	// Clear the test result so a stale ✓ from alias A doesn't persist for alias B.
 	$effect(() => {
 		void computerId;
+		testResult = null;
 		void refreshStatus();
 	});
 
@@ -106,6 +108,9 @@
 		testResult = result.ok
 			? { ok: true, error: null }
 			: { ok: false, error: result.error };
+		// Refresh the connection-status badge so it reflects the post-test state
+		// (clears a stale "connecting" spinner caught by the poll mid-test).
+		void refreshStatus();
 	}
 
 	const badgeClass = $derived.by(() => {
@@ -160,9 +165,18 @@
 				class="btn btn-ghost btn-xs"
 				disabled={testing}
 				onclick={runTest}
+				title={testResult
+					? testResult.ok
+						? "Connection OK"
+						: testResult.error ?? "Failed"
+					: "Test connection"}
 			>
 				{#if testing}
 					<span class="loading loading-spinner loading-[10px]"></span>
+				{:else if testResult?.ok}
+					<span class="text-success">✓</span>
+				{:else if testResult}
+					<span class="text-error">✗</span>
 				{:else}
 					Test
 				{/if}
@@ -170,7 +184,7 @@
 
 			{#if testResult}
 				<span class="text-xs {testResult.ok ? 'text-success' : 'text-error'}">
-					{testResult.ok ? "Connection OK" : testResult.error ?? "Failed"}
+					{testResult.ok ? "OK" : testResult.error ?? "Failed"}
 				</span>
 			{/if}
 		</div>
