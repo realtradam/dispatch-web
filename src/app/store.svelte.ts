@@ -3,7 +3,10 @@ import type {
 	ChatErrorMessage,
 	CompactPercentResponse,
 	CompactResponse,
+	ComputerListResponse,
+	ComputerStatusResponse,
 	ConversationCompactedMessage,
+	ConversationComputerResponse,
 	ConversationHistoryResponse,
 	ConversationListResponse,
 	ConversationMetricsResponse,
@@ -18,6 +21,7 @@ import type {
 	ReasoningEffort,
 	ReasoningEffortResponse,
 	SetCompactPercentRequest,
+	SetConversationComputerRequest,
 	SetCwdRequest,
 	SetModelRequest,
 	SetReasoningEffortRequest,
@@ -26,11 +30,12 @@ import type {
 	SystemPromptTemplateResponse,
 	SystemPromptVariable,
 	SystemPromptVariablesResponse,
+	TestComputerResponse,
 	WarmRequest,
 	WarmResponse,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
-import type { ConversationStatus } from "@dispatch/wire";
+import type { ComputerEntry, ConversationStatus } from "@dispatch/wire";
 import { untrack } from "svelte";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
@@ -66,6 +71,21 @@ export type WarmResult =
 /** Outcome of `PUT /conversations/:id/cwd`. */
 export type CwdResult =
 	| { readonly ok: true; readonly cwd: string | null }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `PUT /conversations/:id/computer` (set/clear the per-conversation computer). */
+export type ComputerResult =
+	| { readonly ok: true; readonly computerId: string | null }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `GET /computers/:alias/status` (the live connection state). */
+export type ComputerStatusResult =
+	| { readonly ok: true; readonly response: ComputerStatusResponse }
+	| { readonly ok: false; readonly error: string };
+
+/** Outcome of `POST /computers/:alias/test` (one-shot connectivity probe). */
+export type TestComputerResult =
+	| { readonly ok: true; readonly response: TestComputerResponse }
 	| { readonly ok: false; readonly error: string };
 
 /** Outcome of `GET /conversations/:id/lsp`. */
@@ -161,6 +181,38 @@ export interface AppStore {
 	 * Works for a draft too (its id survives promotion), so the first turn runs in it.
 	 */
 	setCwd(cwd: string): Promise<CwdResult | null>;
+	/**
+	 * The workspace conversation's persisted computer (an SSH `Host` alias), or
+	 * null when never set / local. Seeded from the backend on focus change.
+	 */
+	readonly computerId: string | null;
+	/**
+	 * Persist the workspace conversation's computer (`PUT /conversations/:id/computer`).
+	 * Pass null to clear → the conversation inherits the workspace default → local.
+	 * Works for a draft too (its id survives promotion). Not seen by the agent — a
+	 * user-facing tool-execution target only.
+	 */
+	setComputer(computerId: string | null): Promise<ComputerResult | null>;
+	/**
+	 * Every remote computer discovered from the user's `~/.ssh/config`
+	 * (`GET /computers`), fetched on boot. Read-only — there is no Computer CRUD
+	 * (the user edits their ssh config to add one). Empty until the `ssh`
+	 * extension lands.
+	 */
+	readonly computers: readonly ComputerEntry[];
+	/**
+	 * The live connection state of a computer (`GET /computers/:alias/status`):
+	 * whether Dispatch currently holds an open SSH session to it. Returns null
+	 * only if no alias is given (the focused conversation is local). Polled by the
+	 * `ComputerField` while a computer is selected.
+	 */
+	computerStatus(alias: string): Promise<ComputerStatusResult | null>;
+	/**
+	 * One-shot connectivity probe (`POST /computers/:alias/test`): Dispatch opens
+	 * an SSH connection to the alias, runs a trivial command, then closes. `ok` is
+	 * true on success; `error` carries the failure reason otherwise.
+	 */
+	testComputer(alias: string): Promise<TestComputerResult | null>;
 	/**
 	 * The workspace conversation's persisted reasoning effort, or null when never
 	 * set (the server then resolves turns at the default, `"high"`).
@@ -304,6 +356,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	let protocol = $state<ProtocolState>(protocolInitialState());
 	let models = $state<readonly string[]>([]);
 	let modelInfo = $state<Readonly<Record<string, ModelMetadata>>>({});
+	// Discovered SSH computers (`GET /computers`). Global (like `models`); empty
+	// until the `ssh` extension lands. Read-only — no CRUD (the user edits their
+	// `~/.ssh/config`).
+	let computers = $state<readonly ComputerEntry[]>([]);
 	let activeModel = $state(DEFAULT_MODEL);
 	let fatalError = $state<string | null>(null);
 
@@ -421,6 +477,31 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			if (workspaceConversationId() === id) cwd = data.cwd ?? null;
 		} catch (err) {
 			reportError("Failed to load working directory", err);
+		}
+	}
+
+	// The active conversation's persisted computer (SSH Host alias). Seeded on
+	// focus change; null = local / never set (inherits the workspace default).
+	let computerId = $state<string | null>(null);
+
+	/**
+	 * Refetch the workspace conversation's persisted computer into reactive state
+	 * (works for a draft too). A draft's id 404s until promoted; `res.ok` is false
+	 * so it is a silent no-op (mirrors `refreshCwd` for a draft).
+	 */
+	async function refreshComputer(): Promise<void> {
+		const id = workspaceConversationId();
+		// Clear immediately so a switch never shows the PREVIOUS conversation's
+		// computer while the fetch is in flight (null renders as "Local").
+		computerId = null;
+		try {
+			const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/computer`);
+			if (!res.ok) return;
+			const data = (await res.json()) as ConversationComputerResponse;
+			// Guard a slow response losing a race with a conversation switch.
+			if (workspaceConversationId() === id) computerId = data.computerId ?? null;
+		} catch (err) {
+			reportError("Failed to load computer", err);
 		}
 	}
 
@@ -657,6 +738,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		refreshActiveChat();
 		syncSubscriptions();
 		void refreshCwd();
+		void refreshComputer();
 		void refreshReasoningEffort();
 		void refreshCompactPercent();
 	}
@@ -823,6 +905,21 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			reportError("Failed to load model list", err);
 		});
 
+	// Fetch the discovered-computer catalog (global, like models). Empty until
+	// the `ssh` extension lands — a safe no-op until then (the selector shows
+	// "Local (none)" only). Non-fatal: a failure leaves an empty list.
+	void fetchImpl(`${httpBase}/computers`)
+		.then((res) => {
+			if (!res.ok) return { computers: [] } as ComputerListResponse;
+			return res.json() as Promise<ComputerListResponse>;
+		})
+		.then((data) => {
+			computers = data?.computers ?? [];
+		})
+		.catch((err) => {
+			reportError("Failed to load computer list", err);
+		});
+
 	// Restore persisted tabs
 	const persistedState = storageAdapter.load();
 	if (persistedState !== null && persistedState.tabs.length > 0) {
@@ -847,6 +944,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 	refreshActiveChat();
 	void refreshCwd();
+	void refreshComputer();
 	void refreshModel();
 	void refreshReasoningEffort();
 	void refreshCompactPercent();
@@ -877,6 +975,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshComputer();
 			void refreshModel();
 			void refreshReasoningEffort();
 			void refreshCompactPercent();
@@ -912,6 +1011,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		},
 		get cwd(): string | null {
 			return cwd;
+		},
+		get computerId(): string | null {
+			return computerId;
+		},
+		get computers(): readonly ComputerEntry[] {
+			return computers;
 		},
 		get reasoningEffort(): ReasoningEffort | null {
 			return reasoningEffort;
@@ -957,6 +1062,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				// surfaces (e.g. cache-warming) to its id.
 				syncSubscriptions();
 				void refreshCwd();
+				void refreshComputer();
 				void refreshReasoningEffort();
 				void refreshCompactPercent();
 				// Now send on the promoted store
@@ -1001,6 +1107,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshComputer();
 			void refreshModel();
 			void refreshReasoningEffort();
 			void refreshCompactPercent();
@@ -1015,6 +1122,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			refreshActiveChat();
 			syncSubscriptions();
 			void refreshCwd();
+			void refreshComputer();
 			void refreshModel();
 			void refreshReasoningEffort();
 			void refreshCompactPercent();
@@ -1094,6 +1202,81 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				return { ok: true, cwd: next };
 			} catch (err) {
 				return { ok: false, error: err instanceof Error ? err.message : "Set cwd request failed" };
+			}
+		},
+
+		async setComputer(computerIdValue: string | null): Promise<ComputerResult | null> {
+			const id = workspaceConversationId();
+			const body: SetConversationComputerRequest = { computerId: computerIdValue };
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/conversations/${encodeURIComponent(id)}/computer`,
+					{
+						method: "PUT",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(body),
+					},
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Set computer failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json()) as ConversationComputerResponse;
+				const next = data.computerId ?? null;
+				if (workspaceConversationId() === id) computerId = next;
+				return { ok: true, computerId: next };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Set computer request failed",
+				};
+			}
+		},
+
+		async computerStatus(alias: string): Promise<ComputerStatusResult | null> {
+			if (alias === "") return null;
+			try {
+				const res = await fetchImpl(`${httpBase}/computers/${encodeURIComponent(alias)}/status`);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Computer status failed (HTTP ${res.status})`,
+					};
+				}
+				const status = (await res.json()) as ComputerStatusResponse;
+				return { ok: true, response: status };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Computer status request failed",
+				};
+			}
+		},
+
+		async testComputer(alias: string): Promise<TestComputerResult | null> {
+			if (alias === "") return null;
+			try {
+				const res = await fetchImpl(`${httpBase}/computers/${encodeURIComponent(alias)}/test`, {
+					method: "POST",
+				});
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Test computer failed (HTTP ${res.status})`,
+					};
+				}
+				const response = (await res.json()) as TestComputerResponse;
+				return { ok: true, response };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Test computer request failed",
+				};
 			}
 		},
 

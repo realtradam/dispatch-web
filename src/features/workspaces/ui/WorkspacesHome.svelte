@@ -1,10 +1,16 @@
 <script lang="ts">
 	import { onMount } from "svelte";
+	import type { ComputerEntry } from "@dispatch/wire";
 	import type { WorkspaceStore } from "../store.svelte";
 	import { isValidSlug, workspacePath } from "../logic/route";
 	import WorkspaceCard from "./WorkspaceCard.svelte";
 
-	let { store, onNavigate }: { store: WorkspaceStore; onNavigate: (path: string) => void } = $props();
+	let {
+		store,
+		onNavigate,
+		computers,
+	}: { store: WorkspaceStore; onNavigate: (path: string) => void; computers: readonly ComputerEntry[] } =
+		$props();
 
 	onMount(() => {
 		void store.refresh();
@@ -78,7 +84,7 @@
 		{:else}
 			<ul class="flex flex-col gap-2">
 				{#each store.list as ws (ws.id)}
-					<WorkspaceCard {ws} {store} />
+					<WorkspaceCard {ws} {store} {onNavigate} {computers} />
 				{/each}
 			</ul>
 		{/if}
