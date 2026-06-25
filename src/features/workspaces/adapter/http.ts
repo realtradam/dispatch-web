@@ -1,6 +1,7 @@
 import type {
 	DeleteWorkspaceResponse,
 	EnsureWorkspaceRequest,
+	SetWorkspaceDefaultComputerRequest,
 	SetWorkspaceDefaultCwdRequest,
 	SetWorkspaceTitleRequest,
 	Workspace,
@@ -23,6 +24,7 @@ import type {
  * - `GET /workspaces/:id` (404 → null) → get
  * - `PUT /workspaces/:id/title` → rename
  * - `PUT /workspaces/:id/default-cwd` → set/clear default cwd
+ * - `PUT /workspaces/:id/default-computer` → set/clear default computer (SSH handoff #2)
  * - `DELETE /workspaces/:id` (409 for "default") → delete
  */
 export type WorkspaceResult<T> =
@@ -35,6 +37,7 @@ export interface WorkspaceHttp {
 	get(id: string): Promise<Workspace | null>;
 	setTitle(id: string, title: string): Promise<WorkspaceResult<Workspace>>;
 	setDefaultCwd(id: string, defaultCwd: string | null): Promise<WorkspaceResult<Workspace>>;
+	setDefaultComputer(id: string, computerId: string | null): Promise<WorkspaceResult<Workspace>>;
 	delete(id: string): Promise<WorkspaceResult<{ closedCount: number }>>;
 }
 
@@ -115,6 +118,26 @@ export function createWorkspaceHttp(httpBase: string, fetchImpl: typeof fetch): 
 				return { ok: true, value: (await res.json()) as WorkspaceResponse };
 			} catch (err) {
 				return { ok: false, error: err instanceof Error ? err.message : "Set default cwd failed" };
+			}
+		},
+
+		async setDefaultComputer(id, computerId): Promise<WorkspaceResult<Workspace>> {
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/workspaces/${encodeURIComponent(id)}/default-computer`,
+					{
+						method: "PUT",
+						headers: { "Content-Type": "application/json" },
+						body: JSON.stringify({ computerId } satisfies SetWorkspaceDefaultComputerRequest),
+					},
+				);
+				if (!res.ok) return { ok: false, error: await errText(res) };
+				return { ok: true, value: (await res.json()) as WorkspaceResponse };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Set default computer failed",
+				};
 			}
 		},
 

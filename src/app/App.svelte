@@ -50,6 +50,16 @@
 		manifest as cwdLspManifest,
 	} from "../features/cwd-lsp";
 	import {
+		ComputerField,
+		manifest as computerManifest,
+		type ComputerSaveResult,
+		type ComputerStatusResult,
+		type LoadComputerStatus,
+		type SaveComputer,
+		type TestComputer,
+		type TestComputerResult,
+	} from "../features/computer";
+	import {
 		SystemPromptBuilder,
 		type LoadSystemPrompt as LoadSystemPromptAlias,
 		type LoadSystemPromptVariables as LoadSystemPromptVariablesAlias,
@@ -116,6 +126,7 @@
 		cacheWarmingManifest,
 		cwdLspManifest,
 		mcpManifest,
+		computerManifest,
 		smartScrollManifest,
 		settingsManifest,
 		systemPromptManifest,
@@ -311,6 +322,29 @@
 			: { ok: false, error: result.error };
 	}
 
+	// Adapt the store's computer results to the computer feature's ports.
+	async function saveComputer(computerId: string | null): Promise<ComputerSaveResult | null> {
+		const result = await store.setComputer(computerId);
+		if (result === null) return null;
+		return result.ok ? { ok: true, computerId: result.computerId } : { ok: false, error: result.error };
+	}
+
+	const loadComputerStatus: LoadComputerStatus = async (
+		alias: string,
+	): Promise<ComputerStatusResult | null> => {
+		const result = await store.computerStatus(alias);
+		if (result === null) return null;
+		return result.ok ? { ok: true, status: result.response } : { ok: false, error: result.error };
+	};
+
+	const testComputer: TestComputer = async (
+		alias: string,
+	): Promise<TestComputerResult | null> => {
+		const result = await store.testComputer(alias);
+		if (result === null) return null;
+		return result.ok ? { ok: true, response: result.response } : { ok: false, error: result.error };
+	};
+
 	async function loadMcpStatus(): Promise<McpStatusResult | null> {
 		const result = await store.mcpStatus();
 		if (result === null) return null;
@@ -493,6 +527,14 @@
 			{#key store.currentConversationId}
 				<ReasoningEffortSelector persisted={store.reasoningEffort} save={saveReasoningEffort} />
 				<CwdField cwd={store.cwd} canEdit={true} save={saveCwd} />
+				<ComputerField
+					computerId={store.computerId}
+					canEdit={true}
+					computers={store.computers}
+					save={saveComputer}
+					loadStatus={loadComputerStatus}
+					test={testComputer}
+				/>
 			{/key}
 		</div>
 	{:else if kind === "lsp"}

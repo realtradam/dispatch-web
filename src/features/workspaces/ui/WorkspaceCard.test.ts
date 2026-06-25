@@ -11,6 +11,7 @@ function fakeEntry(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
 		id: "my-ws",
 		title: "My Workspace",
 		defaultCwd: null,
+		defaultComputerId: null,
 		createdAt: 1,
 		lastActivityAt: 2,
 		conversationCount: 3,
@@ -33,6 +34,12 @@ function fakeStore() {
 				value: fakeEntry({ id, defaultCwd }),
 			}),
 		),
+		setDefaultComputer: vi.fn(
+			async (id: string, computerId: string | null): Promise<WorkspaceResult<WorkspaceEntry>> => ({
+				ok: true,
+				value: fakeEntry({ id, defaultComputerId: computerId }),
+			}),
+		),
 		remove: vi.fn(
 			async (): Promise<WorkspaceResult<{ closedCount: number }>> => ({
 				ok: true,
@@ -46,7 +53,7 @@ describe("WorkspaceCard", () => {
 	it("renders the title, slug, and an Open link", () => {
 		const store = fakeStore() as unknown as WorkspaceStore;
 		render(WorkspaceCard, {
-			props: { ws: fakeEntry(), store },
+			props: { ws: fakeEntry(), store, onNavigate, computers: [] },
 		});
 		expect(screen.getByText("My Workspace")).toBeInTheDocument();
 		expect(screen.getByText("/my-ws")).toBeInTheDocument();
@@ -56,7 +63,9 @@ describe("WorkspaceCard", () => {
 	it("double-clicking the title reveals an edit input", async () => {
 		const user = userEvent.setup();
 		const store = fakeStore() as unknown as WorkspaceStore;
-		render(WorkspaceCard, { props: { ws: fakeEntry(), store } });
+		render(WorkspaceCard, {
+			props: { ws: fakeEntry(), store, onNavigate: vi.fn(), computers: [] },
+		});
 
 		await user.dblClick(screen.getByText("My Workspace"));
 		expect(screen.getByLabelText("Workspace title")).toHaveValue("My Workspace");
@@ -65,7 +74,9 @@ describe("WorkspaceCard", () => {
 	it("renames via the store on Enter", async () => {
 		const user = userEvent.setup();
 		const store = fakeStore() as unknown as WorkspaceStore;
-		render(WorkspaceCard, { props: { ws: fakeEntry(), store } });
+		render(WorkspaceCard, {
+			props: { ws: fakeEntry(), store, onNavigate: vi.fn(), computers: [] },
+		});
 
 		await user.dblClick(screen.getByText("My Workspace"));
 		const input = screen.getByLabelText("Workspace title");
@@ -79,7 +90,7 @@ describe("WorkspaceCard", () => {
 		const user = userEvent.setup();
 		const store = fakeStore() as unknown as WorkspaceStore;
 		render(WorkspaceCard, {
-			props: { ws: fakeEntry({ defaultCwd: "/old" }), store },
+			props: { ws: fakeEntry({ defaultCwd: "/old" }), store, onNavigate: vi.fn(), computers: [] },
 		});
 
 		const input = screen.getByLabelText("Default working directory");
@@ -98,7 +109,7 @@ describe("WorkspaceCard", () => {
 		const user = userEvent.setup();
 		const store = fakeStore() as unknown as WorkspaceStore;
 		render(WorkspaceCard, {
-			props: { ws: fakeEntry({ defaultCwd: "/old" }), store },
+			props: { ws: fakeEntry({ defaultCwd: "/old" }), store, onNavigate: vi.fn(), computers: [] },
 		});
 
 		const input = screen.getByLabelText("Default working directory");
@@ -110,7 +121,8 @@ describe("WorkspaceCard", () => {
 
 	it("the Open link opens the workspace in a new browser tab (no same-tab navigation)", () => {
 		const store = fakeStore() as unknown as WorkspaceStore;
-		render(WorkspaceCard, { props: { ws: fakeEntry(), store } });
+		const onNavigate = vi.fn();
+		render(WorkspaceCard, { props: { ws: fakeEntry(), store, onNavigate, computers: [] } });
 
 		const open = screen.getByRole("link", { name: "Open" });
 		// Native new-tab link: href points at the workspace, and target="_blank"
