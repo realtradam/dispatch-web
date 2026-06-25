@@ -36,6 +36,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
 			return "step-complete";
 		case "steering":
 			return "steering";
+		case "provider-retry":
+			return "provider-retry";
 		default:
 			return event satisfies never;
 	}

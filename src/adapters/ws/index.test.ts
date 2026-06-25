@@ -283,11 +283,18 @@ describe("createSurfaceSocket", () => {
 		});
 
 		ws.resolveOpen();
-		ws.invokeMessage(JSON.stringify({ type: "conversation.open", conversationId: "c1" }));
+		ws.invokeMessage(
+			JSON.stringify({
+				type: "conversation.open",
+				conversationId: "c1",
+				workspaceId: "w1",
+			}),
+		);
 		expect(onConversationOpen).toHaveBeenCalledOnce();
 		expect(onConversationOpen).toHaveBeenCalledWith({
 			type: "conversation.open",
 			conversationId: "c1",
+			workspaceId: "w1",
 		});
 		expect(onMessage).not.toHaveBeenCalled();
 		expect(onChat).not.toHaveBeenCalled();
@@ -310,6 +317,7 @@ describe("createSurfaceSocket", () => {
 				type: "conversation.statusChanged",
 				conversationId: "c1",
 				status: "active",
+				workspaceId: "w1",
 			}),
 		);
 		expect(onConversationStatusChanged).toHaveBeenCalledOnce();
@@ -317,6 +325,7 @@ describe("createSurfaceSocket", () => {
 			type: "conversation.statusChanged",
 			conversationId: "c1",
 			status: "active",
+			workspaceId: "w1",
 		});
 		expect(onMessage).not.toHaveBeenCalled();
 	});

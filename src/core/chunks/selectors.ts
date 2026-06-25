@@ -1,4 +1,4 @@
-import type { ChatMessage, Chunk } from "@dispatch/wire";
+import type { ChatMessage, Chunk, TurnProviderRetryEvent } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "./types";
 
 /**
@@ -30,6 +30,15 @@ export function selectChunks(state: TranscriptState): readonly RenderedChunk[] {
  */
 export function selectGenerating(state: TranscriptState): boolean {
 	return state.generating;
+}
+
+/**
+ * The latest `provider-retry` event for the current turn, or `null` when no retry
+ * is pending. Drives the transient yellow "retrying…" warning banner (rendered
+ * by ChatView). Never persisted — see `TranscriptState.providerRetry`.
+ */
+export function selectProviderRetry(state: TranscriptState): TurnProviderRetryEvent | null {
+	return state.providerRetry;
 }
 
 /**
