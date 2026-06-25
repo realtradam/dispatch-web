@@ -7,7 +7,9 @@ export {
 	foldEvent,
 	initialState,
 } from "./reducer";
-export { selectChunks, selectGenerating, selectMessages } from "./selectors";
+export type { ProviderRetryView } from "./retry-banner";
+export { formatRetryDelay, viewProviderRetry } from "./retry-banner";
+export { selectChunks, selectGenerating, selectMessages, selectProviderRetry } from "./selectors";
 export {
 	DEFAULT_CHAT_LIMIT,
 	initialWindowSize,

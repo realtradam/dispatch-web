@@ -13,6 +13,7 @@ export function initialState(): TranscriptState {
 		hiddenBeforeSeq: 0,
 		hiddenThinkingCount: 0,
 		generating: false,
+		providerRetry: null,
 	};
 }
 
@@ -25,7 +26,10 @@ export function initialState(): TranscriptState {
  */
 export function clearGenerating(state: TranscriptState): TranscriptState {
 	if (!state.generating) return state;
-	return { ...state, generating: false };
+	// Also drop a stale `provider-retry` banner — a retry pending at disconnect
+	// is stale once we re-subscribe (provider-retry events are not replayed), so
+	// a finished turn must not keep showing a "retrying…" banner forever.
+	return { ...state, generating: false, providerRetry: null };
 }
 
 function flushAccumulating(
@@ -116,8 +120,12 @@ export function applyHistory(
  * it true; `done` / `turn-sealed` / `error` clear it. This is what a watching
  * (or reconnected) client renders as "generating…", with no dependence on the
  * free-form `status` event string.
+ *
+ * NOTE: this is the inner reducer. The transient `provider-retry` banner is SET
+ * here (on a `provider-retry` event) but CLEARED by the `foldEvent` wrapper
+ * below, so the clearing logic stays centralized in one place.
  */
-export function foldEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
+function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
 	switch (event.type) {
 		case "status":
 		case "tool-output":
@@ -280,7 +288,48 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 				generating: true,
 			};
 		}
+
+		case "provider-retry": {
+			// TRANSIENT: a retryable provider error is being retried with backoff.
+			// Coalesce — the latest attempt + delay replaces any previous, so a
+			// single updating "retrying…" banner shows the newest. NOT a chunk: it
+			// never enters provisional/committed, so it can never pollute the prompt
+			// or be replayed on a reload. The turn is still in flight, so `generating`
+			// (already true from `turn-start`) is left untouched.
+			return { ...state, providerRetry: event };
+		}
 	}
+}
+
+/**
+ * Fold one live AgentEvent into the transcript state. Wraps `reduceEvent` to
+ * centralize the TRANSIENT `provider-retry` banner's clearing: the banner is
+ * SET by `reduceEvent` on a `provider-retry` event (coalescing), and CLEARED
+ * here when the model's content resumes (the retry succeeded) or the turn ends
+ * (done/sealed/error) or a new turn starts. Metadata/no-op events
+ * (`status`/`tool-output`/`usage`/`step-complete`) leave a showing banner
+ * untouched. The `state.providerRetry !== null` guard keeps the common path
+ * (no banner pending) identity-stable — no needless new object.
+ */
+// Events that clear a showing provider-retry banner (content resumed or turn ended).
+const RETRY_CLEARING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
+	"turn-start",
+	"text-delta",
+	"reasoning-delta",
+	"tool-call",
+	"tool-result",
+	"error",
+	"done",
+	"turn-sealed",
+]);
+
+export function foldEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
+	const next = reduceEvent(state, event);
+	if (event.type === "provider-retry") return next; // set by reduceEvent; not a clearing event
+	if (RETRY_CLEARING_EVENTS.has(event.type) && state.providerRetry !== null) {
+		return { ...next, providerRetry: null };
+	}
+	return next;
 }
 
 /**

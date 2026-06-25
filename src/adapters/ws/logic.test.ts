@@ -219,18 +219,52 @@ describe("parseServerMessage", () => {
 	});
 
 	it("parses a conversation.open message", () => {
-		const data = JSON.stringify({ type: "conversation.open", conversationId: "c1" });
+		const data = JSON.stringify({
+			type: "conversation.open",
+			conversationId: "c1",
+			workspaceId: "w1",
+		});
 		const result = parseServerMessage(data);
-		expect(result).toEqual({ type: "conversation.open", conversationId: "c1" });
+		expect(result).toEqual({
+			type: "conversation.open",
+			conversationId: "c1",
+			workspaceId: "w1",
+		});
 	});
 
 	it("returns null for conversation.open with missing conversationId", () => {
-		expect(parseServerMessage(JSON.stringify({ type: "conversation.open" }))).toBeNull();
+		expect(
+			parseServerMessage(JSON.stringify({ type: "conversation.open", workspaceId: "w1" })),
+		).toBeNull();
 	});
 
 	it("returns null for conversation.open with non-string conversationId", () => {
 		expect(
-			parseServerMessage(JSON.stringify({ type: "conversation.open", conversationId: 42 })),
+			parseServerMessage(
+				JSON.stringify({
+					type: "conversation.open",
+					conversationId: 42,
+					workspaceId: "w1",
+				}),
+			),
+		).toBeNull();
+	});
+
+	it("returns null for conversation.open with missing workspaceId", () => {
+		expect(
+			parseServerMessage(JSON.stringify({ type: "conversation.open", conversationId: "c1" })),
+		).toBeNull();
+	});
+
+	it("returns null for conversation.open with non-string workspaceId", () => {
+		expect(
+			parseServerMessage(
+				JSON.stringify({
+					type: "conversation.open",
+					conversationId: "c1",
+					workspaceId: 42,
+				}),
+			),
 		).toBeNull();
 	});
 
@@ -239,14 +273,40 @@ describe("parseServerMessage", () => {
 			type: "conversation.statusChanged",
 			conversationId: "c1",
 			status: "active",
+			workspaceId: "w1",
 		});
 		expect(parseServerMessage(data)).toEqual({
 			type: "conversation.statusChanged",
 			conversationId: "c1",
 			status: "active",
+			workspaceId: "w1",
 		});
 	});
 
+	it("returns null for conversation.statusChanged with missing workspaceId", () => {
+		expect(
+			parseServerMessage(
+				JSON.stringify({
+					type: "conversation.statusChanged",
+					conversationId: "c1",
+					status: "active",
+				}),
+			),
+		).toBeNull();
+	});
+
+	it("returns null for conversation.statusChanged with non-string workspaceId", () => {
+		expect(
+			parseServerMessage(
+				JSON.stringify({
+					type: "conversation.statusChanged",
+					conversationId: "c1",
+					status: "active",
+					workspaceId: 42,
+				}),
+			),
+		).toBeNull();
+	});
 	it("returns null for conversation.statusChanged with invalid status", () => {
 		expect(
 			parseServerMessage(
@@ -254,6 +314,7 @@ describe("parseServerMessage", () => {
 					type: "conversation.statusChanged",
 					conversationId: "c1",
 					status: "done",
+					workspaceId: "w1",
 				}),
 			),
 		).toBeNull();

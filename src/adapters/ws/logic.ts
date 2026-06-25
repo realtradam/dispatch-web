@@ -115,9 +115,11 @@ export function parseServerMessage(data: string): WsServerMessage | null {
 		}
 		case "conversation.open": {
 			if (typeof parsed.conversationId !== "string") return null;
+			if (typeof parsed.workspaceId !== "string") return null;
 			const msg: ConversationOpenMessage = {
 				type: "conversation.open",
 				conversationId: parsed.conversationId,
+				workspaceId: parsed.workspaceId,
 			};
 			return msg;
 		}
@@ -127,10 +129,12 @@ export function parseServerMessage(data: string): WsServerMessage | null {
 			if (parsed.status !== "active" && parsed.status !== "idle" && parsed.status !== "closed") {
 				return null;
 			}
+			if (typeof parsed.workspaceId !== "string") return null;
 			const msg: ConversationStatusChangedMessage = {
 				type: "conversation.statusChanged",
 				conversationId: parsed.conversationId,
 				status: parsed.status,
+				workspaceId: parsed.workspaceId,
 			};
 			return msg;
 		}

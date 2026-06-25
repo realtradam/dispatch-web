@@ -1,4 +1,4 @@
-import type { Chunk, Role, StoredChunk, Usage } from "@dispatch/wire";
+import type { Chunk, Role, StoredChunk, TurnProviderRetryEvent, Usage } from "@dispatch/wire";
 
 /** A chunk being accumulated from streaming deltas (text or thinking). */
 export interface AccumulatingChunk {
@@ -45,6 +45,20 @@ export interface TranscriptState {
 	 * watching client. NOT inferred from the free-form `status` event string.
 	 */
 	readonly generating: boolean;
+	/**
+	 * The latest `provider-retry` event for the current turn, or `null` when no
+	 * retry is pending. TRANSIENT UI state (never a Chunk — never committed or
+	 * provisional, so it can NEVER pollute the model's prompt or be replayed on a
+	 * reload/replay of past turns: only committed seq'd chunks are history). Set
+	 * by `foldEvent` on each `provider-retry` (the latest coalesces over previous
+	 * so a single updating "retrying…" banner shows the newest attempt + delay);
+	 * cleared when the model's content resumes (`text-delta`/`reasoning-delta`/
+	 * `tool-call`/`tool-result`), the turn ends (`done`/`turn-sealed`/`error`),
+	 * or a new turn starts (`turn-start`). Also cleared on a WS reconnect
+	 * (`clearGenerating`) — a retry pending at disconnect is stale once we
+	 * re-subscribe (provider-retry events are not replayed).
+	 */
+	readonly providerRetry: TurnProviderRetryEvent | null;
 }
 
 /** A chunk ready for rendering: either committed (with seq) or provisional. */

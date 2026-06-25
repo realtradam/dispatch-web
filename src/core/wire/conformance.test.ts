@@ -76,6 +76,15 @@ describe("classifies every AgentEvent type", () => {
 		{ type: "done", conversationId: "c1", turnId: "t1", reason: "complete" },
 		{ type: "turn-sealed", conversationId: "c1", turnId: "t1" },
 		{ type: "steering", conversationId: "c1", turnId: "t1", text: "steer mid-turn" },
+		{
+			type: "provider-retry",
+			conversationId: "c1",
+			turnId: "t1",
+			attempt: 0,
+			delayMs: 5000,
+			message: "HTTP 429: overloaded",
+			code: "429",
+		},
 	];
 
 	it("returns a stable label for every AgentEvent.type variant", () => {
@@ -95,11 +104,12 @@ describe("classifies every AgentEvent type", () => {
 			"done",
 			"turn-sealed",
 			"steering",
+			"provider-retry",
 		]);
 	});
 
-	it("covers all 14 AgentEvent variants", () => {
-		expect(samples).toHaveLength(14);
+	it("covers all 15 AgentEvent variants", () => {
+		expect(samples).toHaveLength(15);
 	});
 });
 
@@ -139,11 +149,12 @@ describe("classifies every WsServerMessage type", () => {
 				event: { type: "done" as const, conversationId: "c", turnId: "t", reason: "r" },
 			},
 			{ type: "chat.error" as const, message: "e" },
-			{ type: "conversation.open" as const, conversationId: "c1" },
+			{ type: "conversation.open" as const, conversationId: "c1", workspaceId: "w1" },
 			{
 				type: "conversation.statusChanged" as const,
 				conversationId: "c1",
 				status: "active" as const,
+				workspaceId: "w1",
 			},
 			{
 				type: "conversation.compacted" as const,

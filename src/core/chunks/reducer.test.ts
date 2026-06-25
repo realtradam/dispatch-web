@@ -4,6 +4,7 @@ import type {
 	TurnDoneEvent,
 	TurnErrorEvent,
 	TurnInputEvent,
+	TurnProviderRetryEvent,
 	TurnReasoningDeltaEvent,
 	TurnSealedEvent,
 	TurnStartEvent,
@@ -21,7 +22,7 @@ import {
 	foldEvent,
 	initialState,
 } from "./reducer";
-import { selectChunks, selectGenerating, selectMessages } from "./selectors";
+import { selectChunks, selectGenerating, selectMessages, selectProviderRetry } from "./selectors";
 
 const turnStart = (turnId: string): TurnStartEvent => ({
 	type: "turn-start",
@@ -100,6 +101,17 @@ const turnSealed = (turnId: string): TurnSealedEvent => ({
 	conversationId: "c1",
 	turnId,
 });
+
+const providerRetry = (
+	turnId: string,
+	attempt: number,
+	delayMs: number,
+	message = "HTTP 429: overloaded",
+	code?: string,
+): TurnProviderRetryEvent =>
+	code !== undefined
+		? { type: "provider-retry", conversationId: "c1", turnId, attempt, delayMs, message, code }
+		: { type: "provider-retry", conversationId: "c1", turnId, attempt, delayMs, message };
 
 const storedChunk = (
 	seq: number,
@@ -381,6 +393,145 @@ describe("foldEvent — status and tool-output", () => {
 			stream: "stdout",
 		});
 		expect(next).toBe(s);
+	});
+});
+
+describe("foldEvent — provider-retry (transient retry banner)", () => {
+	it("sets the provider-retry banner on a provider-retry event", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000, "HTTP 429: overloaded", "429"));
+		const retry = selectProviderRetry(s);
+		expect(retry).not.toBeNull();
+		expect(retry?.attempt).toBe(0);
+		expect(retry?.delayMs).toBe(5000);
+		expect(retry?.code).toBe("429");
+	});
+
+	it("does NOT add a chunk (never persisted — never pollutes the prompt)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		expect(selectChunks(s)).toHaveLength(0);
+		expect(s.provisional).toHaveLength(0);
+		expect(s.accumulating).toBeNull();
+	});
+
+	it("coalesces: the latest attempt + delay replaces the previous", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000, "first", "429"));
+		s = foldEvent(s, providerRetry("t1", 1, 10000, "second", "429"));
+		const retry = selectProviderRetry(s);
+		expect(retry?.attempt).toBe(1);
+		expect(retry?.delayMs).toBe(10000);
+		expect(retry?.message).toBe("second");
+	});
+
+	it("keeps generating true (the turn is still in flight, just retrying)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		expect(s.generating).toBe(true);
+	});
+
+	it("clears when content resumes (text-delta)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		expect(selectProviderRetry(s)).not.toBeNull();
+		s = foldEvent(s, textDelta("t1", "here is the reply"));
+		expect(selectProviderRetry(s)).toBeNull();
+	});
+
+	it("clears when content resumes (reasoning-delta / tool-call / tool-result)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		s = foldEvent(s, reasoningDelta("t1", "thinking"));
+		expect(selectProviderRetry(s)).toBeNull();
+
+		s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		s = foldEvent(s, toolCall("t1", "tc1", "bash", {}));
+		expect(selectProviderRetry(s)).toBeNull();
+	});
+
+	it("clears when the turn ends (done / turn-sealed / error)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		s = foldEvent(s, errorEvent("t1", "exhausted"));
+		expect(selectProviderRetry(s)).toBeNull();
+
+		s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		s = foldEvent(s, doneEvent("t1"));
+		expect(selectProviderRetry(s)).toBeNull();
+
+		s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		s = foldEvent(s, turnSealed("t1"));
+		expect(selectProviderRetry(s)).toBeNull();
+	});
+
+	it("clears on a new turn (turn-start)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		expect(selectProviderRetry(s)).not.toBeNull();
+		s = foldEvent(s, turnStart("t2"));
+		expect(selectProviderRetry(s)).toBeNull();
+	});
+
+	it("leaves the banner untouched across metadata events (usage / step-complete / status)", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		s = foldEvent(s, usageEvent("t1", 10, 20));
+		expect(selectProviderRetry(s)).not.toBeNull();
+		s = foldEvent(s, {
+			type: "step-complete",
+			conversationId: "c1",
+			turnId: "t1",
+			stepId: "t1#0" as StepId,
+			ttftMs: 100,
+			decodeMs: 200,
+			genTotalMs: 300,
+		});
+		expect(selectProviderRetry(s)).not.toBeNull();
+		s = foldEvent(s, { type: "status", conversationId: "c1", status: "running" });
+		expect(selectProviderRetry(s)).not.toBeNull();
+	});
+
+	it("is null in the initial state", () => {
+		expect(selectProviderRetry(initialState())).toBeNull();
+	});
+});
+
+describe("clearGenerating also clears a stale provider-retry banner (reconnect)", () => {
+	it("clears the retry banner alongside generating on reconnect", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		expect(s.generating).toBe(true);
+		expect(selectProviderRetry(s)).not.toBeNull();
+		const cleared = clearGenerating(s);
+		expect(cleared.generating).toBe(false);
+		expect(selectProviderRetry(cleared)).toBeNull();
+	});
+
+	it("preserves transcript content while clearing the banner", () => {
+		let s = initialState();
+		s = foldEvent(s, turnStart("t1"));
+		s = foldEvent(s, textDelta("t1", "partial"));
+		s = foldEvent(s, providerRetry("t1", 0, 5000));
+		const cleared = clearGenerating(s);
+		expect(cleared.accumulating).toEqual({ kind: "text", text: "partial" });
+		expect(selectProviderRetry(cleared)).toBeNull();
 	});
 });
 
