@@ -5,9 +5,9 @@ import type { Tab } from "./tabs";
 import TabBar from "./ui/TabBar.svelte";
 
 const sampleTabs: readonly Tab[] = [
-	{ conversationId: "c1", model: "openai/gpt-4", title: "First" },
-	{ conversationId: "c2", model: "anthropic/claude-3", title: "Second" },
-	{ conversationId: "c3", model: "google/gemini", title: "Third" },
+	{ conversationId: "c1", model: "openai/gpt-4", title: "First", workspaceId: "default" },
+	{ conversationId: "c2", model: "anthropic/claude-3", title: "Second", workspaceId: "default" },
+	{ conversationId: "c3", model: "google/gemini", title: "Third", workspaceId: "default" },
 ];
 
 describe("TabBar", () => {
@@ -178,8 +178,8 @@ describe("TabBar", () => {
 
 	it("renders a short-handle tab ID badge (shortest unique prefix) per tab", () => {
 		const tabs: readonly Tab[] = [
-			{ conversationId: "3f9a1b2c-1111", model: "m", title: "Alpha" },
-			{ conversationId: "7c2db4e5-2222", model: "m", title: "Beta" },
+			{ conversationId: "3f9a1b2c-1111", model: "m", title: "Alpha", workspaceId: "default" },
+			{ conversationId: "7c2db4e5-2222", model: "m", title: "Beta", workspaceId: "default" },
 		];
 		render(TabBar, {
 			props: {

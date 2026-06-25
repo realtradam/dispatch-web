@@ -24,7 +24,7 @@ function createMemoryStorage(initial?: TabsState): TabsStorage & { data: TabsSta
 describe("createTabsStore", () => {
 	it("loads persisted state on construct", () => {
 		const persisted: TabsState = {
-			tabs: [{ conversationId: "c1", model: "m1", title: "T1" }],
+			tabs: [{ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" }],
 			activeConversationId: "c1",
 		};
 		const storage = createMemoryStorage(persisted);
@@ -48,11 +48,11 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "T1" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" });
 		expect(storage.data?.tabs).toHaveLength(1);
 		expect(storage.data?.activeConversationId).toBe("c1");
 
-		store.createTab({ conversationId: "c2", model: "m2", title: "T2" });
+		store.createTab({ conversationId: "c2", model: "m2", title: "T2", workspaceId: "default" });
 		expect(storage.data?.tabs).toHaveLength(2);
 
 		store.selectTab("c1");
@@ -76,11 +76,11 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "T1" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" });
 		expect(store.tabs).toHaveLength(1);
 		expect(store.activeConversationId).toBe("c1");
 
-		store.createTab({ conversationId: "c2", model: "m2", title: "T2" });
+		store.createTab({ conversationId: "c2", model: "m2", title: "T2", workspaceId: "default" });
 		expect(store.tabs).toHaveLength(2);
 		expect(store.activeConversationId).toBe("c2");
 	});
@@ -89,8 +89,8 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "T1" });
-		store.createTab({ conversationId: "c2", model: "m2", title: "T2" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" });
+		store.createTab({ conversationId: "c2", model: "m2", title: "T2", workspaceId: "default" });
 
 		store.selectTab("c1");
 		expect(store.activeConversationId).toBe("c1");
@@ -100,9 +100,9 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "T1" });
-		store.createTab({ conversationId: "c2", model: "m2", title: "T2" });
-		store.createTab({ conversationId: "c3", model: "m3", title: "T3" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" });
+		store.createTab({ conversationId: "c2", model: "m2", title: "T2", workspaceId: "default" });
+		store.createTab({ conversationId: "c3", model: "m3", title: "T3", workspaceId: "default" });
 
 		store.selectTab("c2");
 		store.closeTab("c2");
@@ -114,7 +114,7 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "T1" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" });
 		store.closeTab("c1");
 		expect(store.tabs).toHaveLength(0);
 		expect(store.activeConversationId).toBeNull();
@@ -124,8 +124,8 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "old", title: "T1" });
-		store.createTab({ conversationId: "c2", model: "m2", title: "T2" });
+		store.createTab({ conversationId: "c1", model: "old", title: "T1", workspaceId: "default" });
+		store.createTab({ conversationId: "c2", model: "m2", title: "T2", workspaceId: "default" });
 
 		store.setModel("c1", "new-model");
 		expect(store.tabs[0]?.model).toBe("new-model");
@@ -136,7 +136,7 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "Old" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "Old", workspaceId: "default" });
 
 		store.setTitle("c1", "New Title");
 		expect(store.tabs[0]?.title).toBe("New Title");
@@ -146,8 +146,8 @@ describe("createTabsStore", () => {
 		const storage = createMemoryStorage();
 		const store = createTabsStore(storage);
 
-		store.createTab({ conversationId: "c1", model: "m1", title: "T1" });
-		store.createTab({ conversationId: "c2", model: "m2", title: "T2" });
+		store.createTab({ conversationId: "c1", model: "m1", title: "T1", workspaceId: "default" });
+		store.createTab({ conversationId: "c2", model: "m2", title: "T2", workspaceId: "default" });
 
 		store.newDraft();
 		expect(store.tabs).toHaveLength(2);

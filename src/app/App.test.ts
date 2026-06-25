@@ -1,4 +1,4 @@
-import type { WsServerMessage } from "@dispatch/transport-contract";
+import type { SetCwdRequest, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
@@ -61,6 +61,9 @@ function fakeFetchImpl(): typeof fetch {
 			return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
 				status: 200,
 			});
+		}
+		if (url.includes("/conversations?status=")) {
+			return new Response(JSON.stringify({ conversations: [] }), { status: 200 });
 		}
 		if (url.endsWith("/cwd")) {
 			return new Response(JSON.stringify({ conversationId: "c", cwd: null }), { status: 200 });
@@ -412,6 +415,109 @@ describe("App component interaction tests", () => {
 		]) {
 			expect(screen.getByRole("cell", { name })).toBeInTheDocument();
 		}
+
+		store.dispose();
+	});
+
+	it("shows a full-screen error modal when fetchOpenConversations fails", async () => {
+		// A fetch that throws for the conversations list endpoint (simulating a
+		// network failure / unreachable backend on a new device).
+		const failingFetch = async (input: string | URL | Request): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			if (url.endsWith("/models")) {
+				return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+					status: 200,
+				});
+			}
+			if (url.includes("/conversations?status=")) {
+				throw new TypeError("Failed to fetch: network error");
+			}
+			if (url.endsWith("/cwd")) {
+				return new Response(JSON.stringify({ conversationId: "c", cwd: null }), { status: 200 });
+			}
+			if (url.endsWith("/lsp")) {
+				return new Response(JSON.stringify({ conversationId: "c", cwd: null, servers: [] }), {
+					status: 200,
+				});
+			}
+			return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+		};
+
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: failingFetch,
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		render(App, { props: { store } });
+
+		// The modal should appear with the error text
+		const dialog = await screen.findByRole("dialog", { name: "Error" }, { timeout: 3000 });
+		expect(dialog).toBeInTheDocument();
+		expect(dialog).toHaveTextContent("Failed to load conversations");
+		expect(dialog).toHaveTextContent("TypeError");
+		expect(dialog).toHaveTextContent("network error");
+
+		// Dismiss button clears the modal
+		const dismissBtn = screen.getByRole("button", { name: "Dismiss error" });
+		await userEvent.setup().click(dismissBtn);
+		expect(store.fatalError).toBeNull();
+
+		store.dispose();
+	});
+
+	it("does not show the error modal when fetchOpenConversations succeeds", async () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(), // returns valid empty conversations list
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		render(App, { props: { store } });
+
+		// Wait a tick for boot async to settle
+		await new Promise((resolve) => setTimeout(resolve, 200));
+
+		expect(store.fatalError).toBeNull();
+
+		store.dispose();
+	});
+
+	it("sends workspaceId when setting cwd", async () => {
+		let capturedBody: SetCwdRequest | undefined;
+		const fetchWithCapture = async (
+			input: string | URL | Request,
+			init?: RequestInit,
+		): Promise<Response> => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			if (url.endsWith("/cwd") && init?.method === "PUT") {
+				capturedBody = JSON.parse(init.body as string) as SetCwdRequest;
+				return new Response(JSON.stringify({ conversationId: "c", cwd: capturedBody.cwd }), {
+					status: 200,
+				});
+			}
+			return fakeFetchImpl()(input);
+		};
+
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fetchWithCapture,
+			localStorage: createFakeStorage(),
+			workspaceId: "my-team",
+		});
+		ws.resolveOpen();
+
+		// Let async boot settle before mutating cwd.
+		await new Promise((resolve) => setTimeout(resolve, 50));
+
+		const result = await store.setCwd("arch-rewrite");
+		expect(result).toMatchObject({ ok: true, cwd: "arch-rewrite" });
+		expect(capturedBody).toEqual({ cwd: "arch-rewrite", workspaceId: "my-team" });
 
 		store.dispose();
 	});

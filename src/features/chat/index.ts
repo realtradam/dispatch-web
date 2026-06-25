@@ -1,5 +1,10 @@
-export type { RenderedChunk, RenderGroup, ToolBatchEntry } from "../../core/chunks";
-export { groupRenderedChunks } from "../../core/chunks";
+export type {
+	ProviderRetryView,
+	RenderedChunk,
+	RenderGroup,
+	ToolBatchEntry,
+} from "../../core/chunks";
+export { groupRenderedChunks, viewProviderRetry } from "../../core/chunks";
 export type { TurnMetricsEntry } from "../../core/metrics";
 export type { ChatTransport, HistorySync, HistoryWindow, MetricsSync } from "./ports";
 export type {

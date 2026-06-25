@@ -4,7 +4,7 @@ import type {
 	ChatQueueMessage,
 	ChatSendMessage,
 } from "@dispatch/transport-contract";
-import type { ChatMessage, StoredChunk } from "@dispatch/wire";
+import type { ChatMessage, StoredChunk, TurnProviderRetryEvent } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "../../core/chunks";
 import {
 	appendUserMessage,
@@ -19,6 +19,7 @@ import {
 	selectGenerating,
 	selectHasEarlier,
 	selectMessages,
+	selectProviderRetry,
 	trimTranscript,
 	unloadCount,
 	windowTranscript,
@@ -42,6 +43,12 @@ export interface ChatStoreDependencies {
 	readonly metricsSync: MetricsSync;
 	readonly cache: ConversationCache;
 	/**
+	 * The workspace this conversation belongs to (its URL slug). Sent on
+	 * `chat.send`/`chat.queue` so the backend stamps the conversation's workspace
+	 * at creation (default "default"). Absent → omitted (legacy behavior).
+	 */
+	readonly workspaceId?: string;
+	/**
 	 * The chat limit: max loaded chunks before the oldest quarter is unloaded
 	 * (see `core/chunks/trim.ts`). Normalized via `normalizeChatLimit`; absent →
 	 * `DEFAULT_CHAT_LIMIT`.
@@ -54,6 +61,12 @@ export interface ChatStoreDependencies {
 	 * to the bottom (the next fold retries). Absent → always allowed.
 	 */
 	readonly canUnload?: () => boolean;
+	/**
+	 * Called when a swallowed error should be surfaced to the user (e.g. a
+	 * metrics sync failure). Wired by the composition root to the app store's
+	 * `reportError` → full-screen error modal. Absent → errors are logged only.
+	 */
+	readonly onError?: (context: string, err: unknown) => void;
 }
 
 export interface ChatStore {
@@ -73,6 +86,13 @@ export interface ChatStore {
 	 * turn was replayed. Drives the composer's "generating…" indicator.
 	 */
 	readonly generating: boolean;
+	/**
+	 * The latest `provider-retry` event for the current turn, or `null` when no
+	 * retry is pending. Drives the transient yellow "retrying…" warning banner —
+	 * never persisted (never sent to the model or replayed on reload). Coalesces
+	 * to the newest attempt + delay; cleared when content resumes or the turn ends.
+	 */
+	readonly providerRetry: TurnProviderRetryEvent | null;
 	readonly pendingSync: boolean;
 	readonly error: string | null;
 	readonly model: string | undefined;
@@ -183,9 +203,11 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		try {
 			const res = await deps.metricsSync(deps.conversationId);
 			metrics = applyDurableMetrics(metrics, res.turns);
-		} catch {
+		} catch (err) {
 			// Metrics fetch failure must not block history sync or throw;
-			// live-folded metrics remain intact.
+			// live-folded metrics remain intact. Surface via onError (modal).
+			console.error("[syncMetrics] failed:", err);
+			deps.onError?.("Failed to sync conversation metrics", err);
 		}
 	}
 
@@ -251,6 +273,9 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 		get generating(): boolean {
 			return selectGenerating(transcript);
 		},
+		get providerRetry(): TurnProviderRetryEvent | null {
+			return selectProviderRetry(transcript);
+		},
 		get pendingSync(): boolean {
 			return _pendingSync;
 		},
@@ -295,6 +320,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 				conversationId: deps.conversationId,
 				message: text,
 				...(_model !== undefined ? { model: _model } : {}),
+				...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
 			};
 			deps.transport.send(msg);
 		},
@@ -306,6 +332,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 				type: "chat.queue",
 				conversationId: deps.conversationId,
 				text: trimmed,
+				...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
 			};
 			deps.transport.send(msg);
 		},
