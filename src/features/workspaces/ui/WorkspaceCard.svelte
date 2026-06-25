@@ -8,11 +8,9 @@
 	let {
 		ws,
 		store,
-		onNavigate,
 	}: {
 		ws: WorkspaceEntry;
 		store: WorkspaceStore;
-		onNavigate: (path: string) => void;
 	} = $props();
 
 	// ── Title: double-click to rename inline ──────────────────────────────────
@@ -78,10 +76,6 @@
 		deleting = true;
 		await store.remove(ws.id);
 		deleting = false;
-	}
-
-	function open(): void {
-		onNavigate(workspacePath(ws.id));
 	}
 </script>
 
@@ -163,10 +157,8 @@
 		<a
 			class="btn"
 			href={workspacePath(ws.id)}
-			onclick={(e) => {
-				e.preventDefault();
-				open();
-			}}
+			target="_blank"
+			rel="noopener noreferrer"
 		>
 			Open
 		</a>
