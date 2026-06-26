@@ -31,7 +31,7 @@ Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.12.0`; `transport-contrac
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
 | `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`TurnProviderRetryEvent`(transient retry-warning)/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, `done.contextSize`/`TurnMetrics.contextSize`, `ReasoningEffort`, `QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`, `ConversationMeta`/`ConversationStatus`, `Workspace`/`WorkspaceEntry`(+`defaultComputerId`)/`Computer`/`ComputerEntry` (SSH handoff #1) |
-| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + `QueueRequest`/`QueueResponse`/`ChatQueueMessage` + `ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + MCP (`McpStatusResponse`/`McpServerInfo`/`McpServerState`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
+| `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + `QueueRequest`/`QueueResponse`/`ChatQueueMessage` + `ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + MCP (`McpStatusResponse`/`McpServerInfo`/`McpServerState`) + concurrency (`ConcurrencyLimitsResponse`/`SetConcurrencyLimitRequest`/`ConcurrencyLimitResponse`/`ConcurrencyStatusEntry`/`ConcurrencyStatusResponse`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
 `POST /chat` (NDJSON) · `GET /models` ·
@@ -45,7 +45,10 @@ steering message; auto-starts a turn if idle) · WS `chat.send`→`chat.delta` �
 WS `chat.subscribe`/`chat.unsubscribe` (watch a conversation's turns without sending; replay + live) ·
 WS `chat.queue` (enqueue steering; fire-and-forget — surface updates on success) ·
 WS `conversation.open` (broadcast: CLI `--open` flag signals the FE to open/focus a tab; carries `workspaceId`) ·
-WS `conversation.statusChanged` (broadcast: lifecycle status change — `active`/`idle`/`closed`; carries `workspaceId`).
+WS `conversation.statusChanged` (broadcast: lifecycle status change — `active`/`idle`/`closed`; carries `workspaceId`) ·
+`GET /concurrency/limits` · `GET`/`PUT`/`DELETE /concurrency/limits/:providerId` · `GET /concurrency/status`
+(per-provider in-flight caps + oldest-agent-first queueing + 429-pause backoff; the `concurrency` extension — when not
+loaded the list + status endpoints return empty arrays, the single/PUT/DELETE return `503`).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
@@ -714,6 +717,84 @@ REST surface, not a transport-contract type; the FE owns the `HeartbeatNextRunRe
 can only be confirmed against a running backend with CR-HB-3 shipped (enable the heartbeat, watch "Next run in …" tick
 down, confirm it matches when a run actually fires). Until CR-HB-3 ships, the FE shows the APPROXIMATE countdown
 (latest run + interval) — flagged as the known gap.
+
+---
+
+## 2j. Provider concurrency limits → **CONSUMED ✅ (backend shipped; FE built)**
+
+The backend tracks + limits how many concurrent token-generating API requests are in flight PER
+PROVIDER. When the cap is reached, further requests QUEUE and are granted slots oldest-agent-first
+(a 429 backoff PAUSES a provider's queue until `pausedUntil`). The cap is in-memory + per-provider
+(no persistence), managed via a new GLOBAL REST surface under `/concurrency/...` provided by the
+`concurrency` extension. **`transport-contract@0.23.0`** added the 5 types:
+`ConcurrencyLimitsResponse`, `SetConcurrencyLimitRequest`, `ConcurrencyLimitResponse`,
+`ConcurrencyStatusEntry`, `ConcurrencyStatusResponse`.
+
+**Backend API (plain REST — the types ARE in `transport-contract@0.23.0`):**
+- `GET /concurrency/limits` → `{ limits: [{ providerId, limit }] }` (empty when extension not loaded)
+- `GET /concurrency/limits/:providerId` → `{ providerId, limit }` · 404 (not configured) · 503 (not loaded)
+- `PUT /concurrency/limits/:providerId` body `{ limit }` (positive int) → `{ providerId, limit }` · 400 (bad body) · 503
+- `DELETE /concurrency/limits/:providerId` → `{ ok, providerId }` · 404 · 503
+- `GET /concurrency/status` → `{ providers: [{ providerId, limit, inFlight, queued, paused, pausedUntil? }] }` (empty when not loaded)
+
+**Contract note:** the concurrency shapes ARE in `@dispatch/transport-contract@0.23.0` (a real version
+bump, unlike the additive `provider-retry`/`computer` deltas). The FE re-pinned the `file:` dep
+(`bun install`) + re-mirrored `.dispatch/transport-contract.reference.md` (appended the 5 types +
+bumped the snapshot header). The FE imports the contract types directly (no consumer-defines-port
+needed for the data shapes), exactly mirroring `mcp`/`computer`.
+
+**FE (DONE + verified):**
+- New feature library `src/features/concurrency/`:
+  - `logic/types.ts` — re-exports the 5 contract types + defines the FE-owned result types
+    (`ConcurrencyLimitsResult`/`ConcurrencyLimitResult`/`ConcurrencyDeleteResult`/
+    `ConcurrencyStatusResult`) + the 5 injected ports (`LoadConcurrencyLimits`/
+    `GetConcurrencyLimit`/`SaveConcurrencyLimit`/`DeleteConcurrencyLimit`/`LoadConcurrencyStatus`).
+  - `logic/view-model.ts` (pure) — `viewConcurrencyStatus`/`viewConcurrencyStatuses` (badge +
+    busy + "2/4" in-flight + queue + `paused — resumes in Ns` countdown), `viewConcurrencyLimit`/
+    `Limits`, `summarizeLimits`/`summarizeStatus`, `parseLimitInput`/`normalizeLimit` (positive-int
+    validation), `formatPauseDuration`/`pauseLabel`, + the network-seam normalizers
+    `normalizeConcurrencyLimits`/`normalizeConcurrencyLimit`/`normalizeConcurrencyStatus` (defensive
+    coercion — a malformed/empty `{}` body never crashes the renderer). 34 view-model tests green.
+  - `ui/ConcurrencyView.svelte` — a sidebar panel with TWO sections: (1) **Concurrency limits**
+    (config): an add form (provider id text input + positive-int limit + Add → PUT) + a list of
+    `ConcurrencyLimitRow` (inline-edit limit + Save → PUT + ✕ Remove → DELETE); (2) **Live status**:
+    a summary + per-provider cards (in-flight "2/4", queued, paused indicator with a live countdown),
+    polling `GET /concurrency/status` every 2s + a 1s countdown clock (both intervals disposed on
+    unmount). Reloads limits+status on every mutation.
+  - `ui/ConcurrencyLimitRow.svelte` — one editable limit row (inline-edit seeded via the ChatLimitField
+    pattern so a save echo / refresh re-syncs without clobbering an in-flight edit).
+  - `index.ts` — `ConcurrencyView`/`ConcurrencyLimitRow`/`manifest`/types/exports.
+- `AppStore` (`src/app/store.svelte.ts`) — 5 methods (GLOBAL, not workspace-scoped): `concurrencyLimits()`,
+  `getConcurrencyLimit(providerId)`, `setConcurrencyLimit(providerId, limit)`,
+  `deleteConcurrencyLimit(providerId)`, `concurrencyStatus()`. Each normalizes the untyped JSON at the
+  network seam + surfaces HTTP errors (incl. 400/404/503) as `ok:false` with the backend's `error`
+  string. Interface declarations added to `AppStore`.
+- `src/app/App.svelte` — new `"concurrency"` viewKind (sidebar "Concurrency"), `concurrencyManifest`
+  in `loadedModules`, thin passthrough adapters, + the `viewContent` branch rendering `<ConcurrencyView>`
+  (global — no `{#key}`, stays mounted across tab switches).
+- Tests: 34 view-model + 5 component (`@testing-library/svelte`, faking the 4 ports) + 9 store
+  (load/empty/503/404/PUT/400/DELETE/status coerce/empty).
+
+**Verification:** typecheck 0/0, **914 tests green** (run TWICE — no cross-test pollution; the polling
+intervals are per-component, cleaned up on unmount by `@testing-library/svelte`'s auto-cleanup), biome
+clean, `vite build` succeeds (the lone build warning is PRE-EXISTING — a Tailwind/DaisyUI `file:path` /
+`heartbeat:elapsed` arbitrary-CSS ambiguity, not from concurrency). Live probe NOT run (the backend
+was the user's process; never booted headless). To confirm end-to-end: start the backend with the
+`concurrency` extension loaded, open the Concurrency sidebar view, add a provider limit, watch the live
+status poll (in-flight/queued/paused), update + remove it. If the extension isn't loaded, the limits +
+status lists render empty (graceful).
+
+**Note (the single-provider GET):** the FE implements all 5 API client functions (incl.
+`getConcurrencyLimit`, endpoint #2), but the UI uses only 4 — the limits LIST covers the configured
+providers; `getConcurrencyLimit` is an API-client function for completeness/future use (a detail view).
+**No `chat.send` change** — concurrency is a transport-layer concern the backend applies to outbound
+provider calls; the agent/model prompt never sees it (does not affect prompt caching).
+
+**Worktree environment note (same as §2d):** this worktree lays the repos out as
+`…/worktrees/provider-concurrency/{backend,frontend}`, but `package.json`'s canonical `file:` paths
+point at `../dispatch-backend/...` (kept canonical — no worktree hack committed). An UNTRACKED symlink
+`dispatch-backend → backend` was created in the worktree parent, then `bun install` re-synced
+`node_modules/@dispatch/*` to pick up `transport-contract@0.23.0`.
 
 ---
 

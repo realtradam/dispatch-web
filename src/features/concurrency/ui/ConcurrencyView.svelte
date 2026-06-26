@@ -3,7 +3,6 @@
   import type { ConcurrencyStatusEntry } from "@dispatch/transport-contract";
   import {
     type Badge,
-    type ConcurrencyLimitView,
     parseLimitInput,
     summarizeLimits,
     summarizeStatus,
