@@ -53,7 +53,7 @@ describe("WorkspaceCard", () => {
 	it("renders the title, slug, and an Open link", () => {
 		const store = fakeStore() as unknown as WorkspaceStore;
 		render(WorkspaceCard, {
-			props: { ws: fakeEntry(), store, onNavigate, computers: [] },
+			props: { ws: fakeEntry(), store, onNavigate: vi.fn(), computers: [] },
 		});
 		expect(screen.getByText("My Workspace")).toBeInTheDocument();
 		expect(screen.getByText("/my-ws")).toBeInTheDocument();

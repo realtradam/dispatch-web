@@ -1124,4 +1124,255 @@ describe("createAppStore", () => {
 
 		store.dispose();
 	});
+
+	// ── Heartbeat (workspace-scoped config + runs + watch) ───────────────────────
+	//
+	// The heartbeat API is a plain REST surface (not a transport-contract type),
+	// so these tests fake the four endpoints + verify the store coerces the
+	// untyped JSON and routes live deltas to a watch store (the run-chat modal).
+
+	function heartbeatFetchImpl(opts?: {
+		config?: Record<string, unknown>;
+		runs?: Record<string, unknown>;
+	}): typeof fetch {
+		const base = fakeFetchImpl();
+		const config = opts?.config ?? {
+			enabled: true,
+			systemPrompt: "sys",
+			taskPrompt: "task",
+			intervalMinutes: 15,
+			model: "openai/gpt-4o",
+			reasoningEffort: "medium",
+		};
+		const runs = opts?.runs ?? {
+			runs: [
+				{
+					id: "run-1",
+					conversationId: "hb-conv-1",
+					triggeredAt: "2026-06-25T10:00:00Z",
+					status: "running",
+				},
+			],
+		};
+		return async (input, init) => {
+			const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+			const method = init?.method ?? "GET";
+			if (url.includes("/heartbeat/runs") && method === "GET") {
+				return new Response(JSON.stringify(runs), { status: 200 });
+			}
+			if (url.includes("/heartbeat/runs/") && method === "POST") {
+				return new Response(JSON.stringify({ ok: true }), { status: 200 });
+			}
+			if (url.endsWith("/heartbeat") && method === "GET") {
+				return new Response(JSON.stringify(config), { status: 200 });
+			}
+			if (url.endsWith("/heartbeat") && method === "PUT") {
+				// Echo the patch merged onto the stored config so the round-trip is observable.
+				const patch = init?.body ? JSON.parse(init.body as string) : {};
+				return new Response(JSON.stringify({ ...config, ...patch }), {
+					status: 200,
+				});
+			}
+			if (url.includes("/heartbeat")) {
+				return new Response(JSON.stringify(config), { status: 200 });
+			}
+			return base(input, init);
+		};
+	}
+
+	it("heartbeatConfig loads + coerces the workspace config", async () => {
+		const store = createAppStore({
+			socketFactory: () => fakeSocket(),
+			fetchImpl: heartbeatFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		const result = await store.heartbeatConfig();
+		expect(result.ok).toBe(true);
+		if (!result.ok) throw new Error("unreachable");
+		expect(result.config).toEqual({
+			enabled: true,
+			systemPrompt: "sys",
+			taskPrompt: "task",
+			intervalMinutes: 15,
+			model: "openai/gpt-4o",
+			reasoningEffort: "medium",
+		});
+		store.dispose();
+	});
+
+	it("heartbeatConfig surfaces an HTTP error", async () => {
+		const store = createAppStore({
+			socketFactory: () => fakeSocket(),
+			fetchImpl: async (input) => {
+				const url =
+					typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+				if (url.endsWith("/heartbeat"))
+					return new Response(JSON.stringify({ error: "nope" }), { status: 500 });
+				return fakeFetchImpl()(input);
+			},
+			localStorage: createFakeStorage(),
+		});
+		const result = await store.heartbeatConfig();
+		expect(result.ok).toBe(false);
+		if (result.ok) throw new Error("unreachable");
+		expect(result.error).toContain("nope");
+		store.dispose();
+	});
+
+	it("setHeartbeatConfig PUTs a patch and returns the merged config", async () => {
+		const calls: { url: string; method: string; body: unknown }[] = [];
+		const store = createAppStore({
+			socketFactory: () => fakeSocket(),
+			fetchImpl: async (input, init) => {
+				const url =
+					typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+				const method = init?.method ?? "GET";
+				if (url.endsWith("/heartbeat") && method === "PUT") {
+					calls.push({ url, method, body: JSON.parse(init?.body as string) });
+				}
+				return heartbeatFetchImpl()(input, init);
+			},
+			localStorage: createFakeStorage(),
+		});
+		const result = await store.setHeartbeatConfig({ enabled: false, intervalMinutes: 9999 });
+		expect(result.ok).toBe(true);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.body).toEqual({ enabled: false, intervalMinutes: 9999 });
+		// The store normalizes the echoed response (interval clamped to the 1–1440 range).
+		if (!result.ok) throw new Error("unreachable");
+		expect(result.config.intervalMinutes).toBe(1440);
+		store.dispose();
+	});
+
+	it("heartbeatRuns loads + coerces the run list", async () => {
+		const store = createAppStore({
+			socketFactory: () => fakeSocket(),
+			fetchImpl: heartbeatFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		const result = await store.heartbeatRuns();
+		expect(result.ok).toBe(true);
+		if (!result.ok) throw new Error("unreachable");
+		expect(result.runs).toHaveLength(1);
+		expect(result.runs[0]).toMatchObject({
+			id: "run-1",
+			conversationId: "hb-conv-1",
+			status: "running",
+		});
+		store.dispose();
+	});
+
+	it("stopHeartbeatRun POSTs the stop endpoint", async () => {
+		const calls: { url: string; method: string }[] = [];
+		const store = createAppStore({
+			socketFactory: () => fakeSocket(),
+			fetchImpl: async (input, init) => {
+				const url =
+					typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+				const method = init?.method ?? "GET";
+				if (url.includes("/heartbeat/runs/") && method === "POST") {
+					calls.push({ url, method });
+				}
+				return heartbeatFetchImpl()(input, init);
+			},
+			localStorage: createFakeStorage(),
+		});
+		const result = await store.stopHeartbeatRun("run-1");
+		expect(result.ok).toBe(true);
+		expect(calls).toHaveLength(1);
+		expect(calls[0]?.url).toContain("/heartbeat/runs/run-1/stop");
+		expect(calls[0]?.method).toBe("POST");
+		store.dispose();
+	});
+
+	it("watchConversation subscribes + routes live deltas to the watch store", async () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		// A heartbeat run's conversation that is NOT an open tab — watch it.
+		const watch = store.watchConversation("hb-conv-watch");
+		// A chat.subscribe was sent for the watched conversation.
+		const subscribed = parseSent(ws).some(
+			(p) =>
+				(p as { type: string; conversationId?: string }).type === "chat.subscribe" &&
+				(p as { conversationId?: string }).conversationId === "hb-conv-watch",
+		);
+		expect(subscribed).toBe(true);
+
+		// Feed a live delta for the watched conversation → the watch store folds it.
+		ws.feedServerMessage({
+			type: "chat.delta",
+			event: { type: "turn-start", conversationId: "hb-conv-watch", turnId: "t1" },
+		});
+		ws.feedServerMessage({
+			type: "chat.delta",
+			event: {
+				type: "text-delta",
+				conversationId: "hb-conv-watch",
+				turnId: "t1",
+				delta: "hello from heartbeat",
+			},
+		});
+
+		await vi.waitFor(() => {
+			const text = watch.chunks.find((c) => c.role === "assistant" && c.chunk.type === "text");
+			expect((text?.chunk as { type: "text"; text: string } | undefined)?.text).toBe(
+				"hello from heartbeat",
+			);
+		});
+		expect(watch.generating).toBe(true);
+
+		// Unwatch → unsubscribes (a chat.unsubscribe for this conversation is sent).
+		ws.sent.length = 0;
+		store.unwatchConversation("hb-conv-watch");
+		const unsubscribed = parseSent(ws).some(
+			(p) =>
+				(p as { type: string; conversationId?: string }).type === "chat.unsubscribe" &&
+				(p as { conversationId?: string }).conversationId === "hb-conv-watch",
+		);
+		expect(unsubscribed).toBe(true);
+
+		store.dispose();
+	});
+
+	it("watchConversation reuses an open tab's store; unwatch is a no-op for it", () => {
+		const ws = fakeSocket();
+		const store = createAppStore({
+			socketFactory: () => ws,
+			fetchImpl: fakeFetchImpl(),
+			localStorage: createFakeStorage(),
+		});
+		ws.resolveOpen();
+
+		store.send("first");
+		const convId = activeConversationId(store);
+		// The conversation is an open tab (already subscribed on send). Watching it
+		// must REUSE the tab's store + subscription — so no NEW chat.subscribe is
+		// sent (the watch path only subscribes when it creates an ephemeral store).
+		// (Note: `store.activeChat` is a Svelte `$state` PROXY of the tab store, so a
+		// reference-equality check is meaningless here — we assert behavior instead.)
+		ws.sent.length = 0;
+		store.watchConversation(convId);
+		const subscribed = parseSent(ws).some(
+			(p) =>
+				(p as { type: string; conversationId?: string }).type === "chat.subscribe" &&
+				(p as { conversationId?: string }).conversationId === convId,
+		);
+		expect(subscribed).toBe(false);
+
+		// Unwatching a tab conversation does NOT unsubscribe (the tab keeps its stream).
+		ws.sent.length = 0;
+		store.unwatchConversation(convId);
+		const unsubscribed = parseSent(ws).some(
+			(p) => (p as { type: string }).type === "chat.unsubscribe",
+		);
+		expect(unsubscribed).toBe(false);
+
+		store.dispose();
+	});
 });
