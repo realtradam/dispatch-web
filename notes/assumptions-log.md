@@ -1,4 +1,4 @@
-# Assumptions log (dispatch-web)
+# Assumptions log (frontend)
 
 > Recorded while working autonomously (user away). Raise these when the user returns.
 

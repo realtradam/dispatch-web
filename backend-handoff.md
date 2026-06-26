@@ -2,7 +2,7 @@
 
 > **Purpose:** the single rolling document the FE orchestrator keeps current so the user can hand off
 > the whole FE↔backend seam at any time — on completion OR at a roadblock. Updated continuously.
-> **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
+> **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
 _Last updated: 2026-06-25 (§2d RESOLVED — backend merged `dev` into `feature/ssh-support`, merge `de022ce`;
@@ -235,8 +235,8 @@ exactly. Contract types in `transport-contract@0.22.0`: `McpServerState`
 (`"connecting" | "connected" | "error" | "disconnected"`), `McpServerInfo`
 (`{ id, state, error?, toolCount, configSource? }`), `McpStatusResponse`
 (`{ conversationId, cwd: string|null, servers: McpServerInfo[] }`). Full backend handoff:
-`../dispatch-backend/frontend-mcp-status-handoff.md`; shape/behavior details:
-`../dispatch-backend/reports/transport-http-mcp.md`.
+`../backend/frontend-mcp-status-handoff.md`; shape/behavior details:
+`../backend/reports/transport-http-mcp.md`.
 
 **Backend (shipped CR-12):** endpoint behaves identically to `/lsp` — no persisted cwd →
 `{ cwd: null, servers: [] }` (HTTP 200, empty); MCP extension not loaded →
@@ -391,8 +391,8 @@ The auto-merge was clean — `computerId` threading + retry-with-backoff coexist
 
 ### Worktree environment note (not a contract change)
 This worktree lays the repos out as `…/worktrees/ssh-support/{backend,frontend}`, but `package.json`'s canonical
-`file:` paths point at `../dispatch-backend` (correct for the main `dispatch/{dispatch-backend,dispatch-web}` layout).
-To keep `package.json` canonical (no worktree-specific hack committed), a symlink `../dispatch-backend → ../backend`
+`file:` paths point at `../backend` (correct for the main `dispatch/{dispatch-backend,dispatch-web}` layout).
+To keep `package.json` canonical (no worktree-specific hack committed), a symlink `../backend → ../backend`
 was created in the worktree parent (untracked, outside the repo), then `bun install` re-synced `node_modules/@dispatch/*`.
 The backend wire `dist/` was already built + current (has the new types); no backend edit was made.
 

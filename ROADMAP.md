@@ -1,4 +1,4 @@
-# Roadmap — dispatch-web
+# Roadmap — frontend
 
 > Living document of shipped + planned FE work. Updated at each milestone.
 > Source of truth for "what's done" + "what's next". Cross-repo handoffs land here
