@@ -9,24 +9,24 @@ import type { ConversationCacheIndexEntry, ReconcileResult } from "./types";
  * (exactly what to persist). Idempotent; tolerant of out-of-order/overlapping `incoming`.
  */
 export function reconcileCache(
-	cached: readonly StoredChunk[],
-	incoming: readonly StoredChunk[],
+  cached: readonly StoredChunk[],
+  incoming: readonly StoredChunk[],
 ): ReconcileResult {
-	const seen = new Set<number>();
-	for (const chunk of cached) {
-		seen.add(chunk.seq);
-	}
+  const seen = new Set<number>();
+  for (const chunk of cached) {
+    seen.add(chunk.seq);
+  }
 
-	const toAppend: StoredChunk[] = [];
-	for (const chunk of incoming) {
-		if (!seen.has(chunk.seq)) {
-			toAppend.push(chunk);
-			seen.add(chunk.seq);
-		}
-	}
+  const toAppend: StoredChunk[] = [];
+  for (const chunk of incoming) {
+    if (!seen.has(chunk.seq)) {
+      toAppend.push(chunk);
+      seen.add(chunk.seq);
+    }
+  }
 
-	const merged = [...cached, ...toAppend].sort((a, b) => a.seq - b.seq);
-	return { merged, toAppend };
+  const merged = [...cached, ...toAppend].sort((a, b) => a.seq - b.seq);
+  return { merged, toAppend };
 }
 
 /**
@@ -34,12 +34,12 @@ export function reconcileCache(
  * This is the `?sinceSeq=` cursor for the next incremental sync.
  */
 export function nextSinceSeq(cached: readonly StoredChunk[]): number {
-	if (cached.length === 0) return 0;
-	let max = 0;
-	for (const chunk of cached) {
-		if (chunk.seq > max) max = chunk.seq;
-	}
-	return max;
+  if (cached.length === 0) return 0;
+  let max = 0;
+  for (const chunk of cached) {
+    if (chunk.seq > max) max = chunk.seq;
+  }
+  return max;
 }
 
 /**
@@ -50,28 +50,28 @@ export function nextSinceSeq(cached: readonly StoredChunk[]): number {
  * Returns [] when under budget.
  */
 export function selectEvictions(
-	index: readonly ConversationCacheIndexEntry[],
-	opts: { maxChunks: number; activeConversationId: string | null },
+  index: readonly ConversationCacheIndexEntry[],
+  opts: { maxChunks: number; activeConversationId: string | null },
 ): readonly string[] {
-	const totalChunks = index.reduce((sum, entry) => sum + entry.chunkCount, 0);
-	if (totalChunks <= opts.maxChunks) return [];
+  const totalChunks = index.reduce((sum, entry) => sum + entry.chunkCount, 0);
+  if (totalChunks <= opts.maxChunks) return [];
 
-	const candidates = index
-		.filter((entry) => entry.conversationId !== opts.activeConversationId)
-		.sort((a, b) => {
-			const aAccess = a.lastAccess ?? 0;
-			const bAccess = b.lastAccess ?? 0;
-			if (aAccess !== bAccess) return aAccess - bAccess;
-			return a.maxSeq - b.maxSeq;
-		});
+  const candidates = index
+    .filter((entry) => entry.conversationId !== opts.activeConversationId)
+    .sort((a, b) => {
+      const aAccess = a.lastAccess ?? 0;
+      const bAccess = b.lastAccess ?? 0;
+      if (aAccess !== bAccess) return aAccess - bAccess;
+      return a.maxSeq - b.maxSeq;
+    });
 
-	let remaining = totalChunks;
-	const evictions: string[] = [];
-	for (const entry of candidates) {
-		if (remaining <= opts.maxChunks) break;
-		evictions.push(entry.conversationId);
-		remaining -= entry.chunkCount;
-	}
+  let remaining = totalChunks;
+  const evictions: string[] = [];
+  for (const entry of candidates) {
+    if (remaining <= opts.maxChunks) break;
+    evictions.push(entry.conversationId);
+    remaining -= entry.chunkCount;
+  }
 
-	return evictions;
+  return evictions;
 }

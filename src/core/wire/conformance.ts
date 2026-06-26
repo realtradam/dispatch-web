@@ -7,62 +7,62 @@ import type { AgentEvent, Chunk } from "@dispatch/wire";
  * default branch becomes reachable → TypeScript error at build time.
  */
 export function assertAgentEventExhaustive(event: AgentEvent): string {
-	switch (event.type) {
-		case "status":
-			return "status";
-		case "turn-start":
-			return "turn-start";
-		case "user-message":
-			return "user-message";
-		case "text-delta":
-			return "text-delta";
-		case "reasoning-delta":
-			return "reasoning-delta";
-		case "tool-call":
-			return "tool-call";
-		case "tool-result":
-			return "tool-result";
-		case "tool-output":
-			return "tool-output";
-		case "usage":
-			return "usage";
-		case "error":
-			return "error";
-		case "done":
-			return "done";
-		case "turn-sealed":
-			return "turn-sealed";
-		case "step-complete":
-			return "step-complete";
-		case "steering":
-			return "steering";
-		case "provider-retry":
-			return "provider-retry";
-		default:
-			return event satisfies never;
-	}
+  switch (event.type) {
+    case "status":
+      return "status";
+    case "turn-start":
+      return "turn-start";
+    case "user-message":
+      return "user-message";
+    case "text-delta":
+      return "text-delta";
+    case "reasoning-delta":
+      return "reasoning-delta";
+    case "tool-call":
+      return "tool-call";
+    case "tool-result":
+      return "tool-result";
+    case "tool-output":
+      return "tool-output";
+    case "usage":
+      return "usage";
+    case "error":
+      return "error";
+    case "done":
+      return "done";
+    case "turn-sealed":
+      return "turn-sealed";
+    case "step-complete":
+      return "step-complete";
+    case "steering":
+      return "steering";
+    case "provider-retry":
+      return "provider-retry";
+    default:
+      return event satisfies never;
+  }
 }
 
 /**
  * Compile-time exhaustiveness guard for `Chunk.type`.
  */
 export function assertChunkExhaustive(chunk: Chunk): string {
-	switch (chunk.type) {
-		case "text":
-			return "text";
-		case "thinking":
-			return "thinking";
-		case "tool-call":
-			return "tool-call";
-		case "tool-result":
-			return "tool-result";
-		case "error":
-			return "error";
-		case "system":
-			return "system";
-		default:
-			return chunk satisfies never;
-	}
+  switch (chunk.type) {
+    case "text":
+      return "text";
+    case "thinking":
+      return "thinking";
+    case "tool-call":
+      return "tool-call";
+    case "tool-result":
+      return "tool-result";
+    case "error":
+      return "error";
+    case "system":
+      return "system";
+    default:
+      return chunk satisfies never;
+  }
 }
 
 /**
@@ -70,28 +70,28 @@ export function assertChunkExhaustive(chunk: Chunk): string {
  * Covers both surface ops and chat ops.
  */
 export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
-	switch (msg.type) {
-		case "catalog":
-			return "catalog";
-		case "surface":
-			return "surface";
-		case "update":
-			return "update";
-		case "error":
-			return "error";
-		case "chat.delta":
-			return "chat.delta";
-		case "chat.error":
-			return "chat.error";
-		case "conversation.open":
-			return "conversation.open";
-		case "conversation.statusChanged":
-			return "conversation.statusChanged";
-		case "conversation.compacted":
-			return "conversation.compacted";
-		default:
-			return msg satisfies never;
-	}
+  switch (msg.type) {
+    case "catalog":
+      return "catalog";
+    case "surface":
+      return "surface";
+    case "update":
+      return "update";
+    case "error":
+      return "error";
+    case "chat.delta":
+      return "chat.delta";
+    case "chat.error":
+      return "chat.error";
+    case "conversation.open":
+      return "conversation.open";
+    case "conversation.statusChanged":
+      return "conversation.statusChanged";
+    case "conversation.compacted":
+      return "conversation.compacted";
+    default:
+      return msg satisfies never;
+  }
 }
 
 /**
@@ -99,22 +99,22 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
  * Covers both surface ops and chat ops.
  */
 export function assertWsClientMessageExhaustive(msg: WsClientMessage): string {
-	switch (msg.type) {
-		case "subscribe":
-			return "subscribe";
-		case "unsubscribe":
-			return "unsubscribe";
-		case "invoke":
-			return "invoke";
-		case "chat.send":
-			return "chat.send";
-		case "chat.subscribe":
-			return "chat.subscribe";
-		case "chat.unsubscribe":
-			return "chat.unsubscribe";
-		case "chat.queue":
-			return "chat.queue";
-		default:
-			return msg satisfies never;
-	}
+  switch (msg.type) {
+    case "subscribe":
+      return "subscribe";
+    case "unsubscribe":
+      return "unsubscribe";
+    case "invoke":
+      return "invoke";
+    case "chat.send":
+      return "chat.send";
+    case "chat.subscribe":
+      return "chat.subscribe";
+    case "chat.unsubscribe":
+      return "chat.unsubscribe";
+    case "chat.queue":
+      return "chat.queue";
+    default:
+      return msg satisfies never;
+  }
 }

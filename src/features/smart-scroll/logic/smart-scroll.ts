@@ -6,12 +6,12 @@
 
 /** A snapshot of a scroll container's vertical geometry (in CSS pixels). */
 export interface ScrollGeometry {
-	/** Current scroll offset from the top. */
-	readonly scrollTop: number;
-	/** Total scrollable content height. */
-	readonly scrollHeight: number;
-	/** Visible viewport height. */
-	readonly clientHeight: number;
+  /** Current scroll offset from the top. */
+  readonly scrollTop: number;
+  /** Total scrollable content height. */
+  readonly scrollHeight: number;
+  /** Visible viewport height. */
+  readonly clientHeight: number;
 }
 
 /** Distance (px) from the bottom within which we still consider the view "at bottom". */
@@ -19,43 +19,43 @@ export const NEAR_BOTTOM_THRESHOLD = 64;
 
 /** True when the viewport is within `threshold` px of the content's bottom edge. */
 export function isNearBottom(
-	geom: ScrollGeometry,
-	threshold: number = NEAR_BOTTOM_THRESHOLD,
+  geom: ScrollGeometry,
+  threshold: number = NEAR_BOTTOM_THRESHOLD,
 ): boolean {
-	return geom.scrollHeight - geom.scrollTop - geom.clientHeight <= threshold;
+  return geom.scrollHeight - geom.scrollTop - geom.clientHeight <= threshold;
 }
 
 /** A scroll the shell should perform on the real element. */
 export interface ScrollCommand {
-	readonly kind: "scroll-to-bottom";
-	/** Smooth-scroll (a deliberate resume) vs. jump (keeping up with a stream). */
-	readonly animate: boolean;
+  readonly kind: "scroll-to-bottom";
+  /** Smooth-scroll (a deliberate resume) vs. jump (keeping up with a stream). */
+  readonly animate: boolean;
 }
 
 export interface SmartScrollState {
-	/**
-	 * Whether the view is currently following the bottom. While `stuck`, new
-	 * content keeps the view pinned to the bottom; once the user scrolls up it
-	 * goes false and stays false until they return to the bottom (or resume).
-	 */
-	readonly stuck: boolean;
+  /**
+   * Whether the view is currently following the bottom. While `stuck`, new
+   * content keeps the view pinned to the bottom; once the user scrolls up it
+   * goes false and stays false until they return to the bottom (or resume).
+   */
+  readonly stuck: boolean;
 }
 
 /** A reducer step's result: the next state, an optional command, and whether to show the button. */
 export interface SmartScrollResult {
-	readonly state: SmartScrollState;
-	readonly command: ScrollCommand | null;
-	/** Show the "scroll to bottom" affordance exactly when not stuck. */
-	readonly showButton: boolean;
+  readonly state: SmartScrollState;
+  readonly command: ScrollCommand | null;
+  /** Show the "scroll to bottom" affordance exactly when not stuck. */
+  readonly showButton: boolean;
 }
 
 /** Initial state — start stuck so the first content snaps to the bottom. */
 export function createSmartScrollState(): SmartScrollState {
-	return { stuck: true };
+  return { stuck: true };
 }
 
 function result(state: SmartScrollState, command: ScrollCommand | null): SmartScrollResult {
-	return { state, command, showButton: !state.stuck };
+  return { state, command, showButton: !state.stuck };
 }
 
 /**
@@ -64,7 +64,7 @@ function result(state: SmartScrollState, command: ScrollCommand | null): SmartSc
  * command — reacting to the user's own scroll with a scroll would fight them.
  */
 export function onScroll(_state: SmartScrollState, geom: ScrollGeometry): SmartScrollResult {
-	return result({ stuck: isNearBottom(geom) }, null);
+  return result({ stuck: isNearBottom(geom) }, null);
 }
 
 /**
@@ -73,7 +73,7 @@ export function onScroll(_state: SmartScrollState, geom: ScrollGeometry): SmartS
  * they are. State is unchanged — content growth alone never flips `stuck`.
  */
 export function onContentChange(state: SmartScrollState, _geom: ScrollGeometry): SmartScrollResult {
-	return result(state, state.stuck ? { kind: "scroll-to-bottom", animate: false } : null);
+  return result(state, state.stuck ? { kind: "scroll-to-bottom", animate: false } : null);
 }
 
 /**
@@ -81,7 +81,7 @@ export function onContentChange(state: SmartScrollState, _geom: ScrollGeometry):
  * emit an animated scroll.
  */
 export function onResume(_state: SmartScrollState): SmartScrollResult {
-	return result({ stuck: true }, { kind: "scroll-to-bottom", animate: true });
+  return result({ stuck: true }, { kind: "scroll-to-bottom", animate: true });
 }
 
 /**
@@ -89,5 +89,5 @@ export function onResume(_state: SmartScrollState): SmartScrollResult {
  * Reset to stuck and snap (non-animated) to the bottom of the new content.
  */
 export function onReset(): SmartScrollResult {
-	return result(createSmartScrollState(), { kind: "scroll-to-bottom", animate: false });
+  return result(createSmartScrollState(), { kind: "scroll-to-bottom", animate: false });
 }

@@ -39,88 +39,88 @@ import { markedHighlight } from "marked-highlight";
 
 // Hot set: registered eagerly so common code blocks highlight on first paint.
 const HOT_LANGUAGES: Record<string, LanguageFn> = {
-	bash,
-	c,
-	cpp,
-	csharp,
-	css,
-	go,
-	java,
-	javascript,
-	json,
-	markdown: markdownLang,
-	php,
-	plaintext,
-	python,
-	ruby,
-	rust,
-	shell,
-	sql,
-	typescript,
-	xml,
-	yaml,
+  bash,
+  c,
+  cpp,
+  csharp,
+  css,
+  go,
+  java,
+  javascript,
+  json,
+  markdown: markdownLang,
+  php,
+  plaintext,
+  python,
+  ruby,
+  rust,
+  shell,
+  sql,
+  typescript,
+  xml,
+  yaml,
 };
 for (const [name, lang] of Object.entries(HOT_LANGUAGES)) {
-	hljs.registerLanguage(name, lang);
+  hljs.registerLanguage(name, lang);
 }
 
 // Normalize common fence aliases to canonical highlight.js names.
 const ALIASES: Record<string, string> = {
-	js: "javascript",
-	jsx: "javascript",
-	mjs: "javascript",
-	cjs: "javascript",
-	ts: "typescript",
-	tsx: "typescript",
-	py: "python",
-	py3: "python",
-	rb: "ruby",
-	sh: "bash",
-	zsh: "bash",
-	yml: "yaml",
-	"c++": "cpp",
-	cxx: "cpp",
-	"c#": "csharp",
-	cs: "csharp",
-	htm: "xml",
-	html: "xml",
-	svg: "xml",
-	md: "markdown",
-	mdx: "markdown",
-	golang: "go",
-	rs: "rust",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  ts: "typescript",
+  tsx: "typescript",
+  py: "python",
+  py3: "python",
+  rb: "ruby",
+  sh: "bash",
+  zsh: "bash",
+  yml: "yaml",
+  "c++": "cpp",
+  cxx: "cpp",
+  "c#": "csharp",
+  cs: "csharp",
+  htm: "xml",
+  html: "xml",
+  svg: "xml",
+  md: "markdown",
+  mdx: "markdown",
+  golang: "go",
+  rs: "rust",
 };
 
 function normalizeLang(lang: string): string {
-	const lower = lang.toLowerCase().trim();
-	return ALIASES[lower] ?? lower;
+  const lower = lang.toLowerCase().trim();
+  return ALIASES[lower] ?? lower;
 }
 
 function escapeHtml(s: string): string {
-	return s
-		.replace(/&/g, "&amp;")
-		.replace(/</g, "&lt;")
-		.replace(/>/g, "&gt;")
-		.replace(/"/g, "&quot;")
-		.replace(/'/g, "&#39;");
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }
 
 const md = new Marked(
-	markedHighlight({
-		emptyLangClass: "hljs",
-		langPrefix: "hljs language-",
-		highlight(code: string, lang: string): string {
-			if (!lang) return escapeHtml(code);
-			const name = normalizeLang(lang);
-			if (!hljs.getLanguage(name)) return escapeHtml(code);
-			try {
-				return hljs.highlight(code, { language: name, ignoreIllegals: true }).value;
-			} catch {
-				return escapeHtml(code);
-			}
-		},
-	}),
-	{ gfm: true, breaks: true },
+  markedHighlight({
+    emptyLangClass: "hljs",
+    langPrefix: "hljs language-",
+    highlight(code: string, lang: string): string {
+      if (!lang) return escapeHtml(code);
+      const name = normalizeLang(lang);
+      if (!hljs.getLanguage(name)) return escapeHtml(code);
+      try {
+        return hljs.highlight(code, { language: name, ignoreIllegals: true }).value;
+      } catch {
+        return escapeHtml(code);
+      }
+    },
+  }),
+  { gfm: true, breaks: true },
 );
 
 /**
@@ -128,14 +128,14 @@ const md = new Marked(
  * partial text renders cleanly instead of flashing raw markers.
  */
 function closeOpenDelimiters(src: string): string {
-	let out = src;
-	const fenceCount = (out.match(/^```/gm) ?? []).length;
-	if (fenceCount % 2 !== 0) out += "\n```";
-	const boldCount = (out.match(/\*\*/g) ?? []).length;
-	if (boldCount % 2 !== 0) out += "**";
-	const inlineCode = (out.match(/(?<!`)`(?!`)/g) ?? []).length;
-	if (inlineCode % 2 !== 0) out += "`";
-	return out;
+  let out = src;
+  const fenceCount = (out.match(/^```/gm) ?? []).length;
+  if (fenceCount % 2 !== 0) out += "\n```";
+  const boldCount = (out.match(/\*\*/g) ?? []).length;
+  if (boldCount % 2 !== 0) out += "**";
+  const inlineCode = (out.match(/(?<!`)`(?!`)/g) ?? []).length;
+  if (inlineCode % 2 !== 0) out += "`";
+  return out;
 }
 
 // Wrap each fenced code block (`<pre>…</pre>`) in a positioned container with a
@@ -144,22 +144,22 @@ function closeOpenDelimiters(src: string): string {
 // `data-copy` is the delegation hook the component listens for; DOMPurify keeps
 // `<button>` + `data-*` by default. Inline `<code>` has no `<pre>`, so it's untouched.
 const COPY_BUTTON =
-	'<button type="button" data-copy aria-label="Copy code"' +
-	' class="copy-btn btn btn-xs absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">Copy</button>';
+  '<button type="button" data-copy aria-label="Copy code"' +
+  ' class="copy-btn btn btn-xs absolute right-2 top-2 opacity-0 transition-opacity group-hover:opacity-100">Copy</button>';
 
 function addCopyButtons(html: string): string {
-	return html
-		.replace(/<pre>/g, `<div class="code-block group relative">${COPY_BUTTON}<pre>`)
-		.replace(/<\/pre>/g, "</pre></div>");
+  return html
+    .replace(/<pre>/g, `<div class="code-block group relative">${COPY_BUTTON}<pre>`)
+    .replace(/<\/pre>/g, "</pre></div>");
 }
 
 /** Render Markdown to sanitized HTML. Returns `""` if parsing ever throws. */
 export function renderMarkdown(text: string, opts?: { streaming?: boolean }): string {
-	const src = opts?.streaming === true ? closeOpenDelimiters(text) : text;
-	try {
-		const raw = md.parse(src) as string;
-		return DOMPurify.sanitize(addCopyButtons(raw));
-	} catch {
-		return "";
-	}
+  const src = opts?.streaming === true ? closeOpenDelimiters(text) : text;
+  try {
+    const raw = md.parse(src) as string;
+    return DOMPurify.sanitize(addCopyButtons(raw));
+  } catch {
+    return "";
+  }
 }

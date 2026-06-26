@@ -23,7 +23,7 @@ effects / no ambient state / typed contracts / asymmetric testing.
 
 ## Stack
 Bun + Vite + Svelte 5 (runes) + TypeScript (strict). Biome for lint/format
-(tabs, double quotes, semicolons, width 100) — **biome covers `.ts`/`.js` ONLY;
+(2-space indent, double quotes, semicolons, width 100) — **biome covers `.ts`/`.js` ONLY;
 `.svelte` correctness is `svelte-check`'s job** (biome can't read Svelte template
 semantics — it flags template-used vars as unused). Vitest + `@testing-library/
 svelte` for tests.

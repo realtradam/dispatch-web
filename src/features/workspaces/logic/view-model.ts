@@ -14,9 +14,9 @@ import type { Route } from "./route";
  * workspaces in, string out.
  */
 export function pageTitle(route: Route, workspaces: readonly WorkspaceEntry[]): string {
-	if (route.kind === "home") return "Dispatch";
-	const ws = workspaces.find((w) => w.id === route.id);
-	return `Dispatch: ${ws?.title ?? route.id}`;
+  if (route.kind === "home") return "Dispatch";
+  const ws = workspaces.find((w) => w.id === route.id);
+  return `Dispatch: ${ws?.title ?? route.id}`;
 }
 
 /**
@@ -25,17 +25,17 @@ export function pageTitle(route: Route, workspaces: readonly WorkspaceEntry[]): 
  * (a workspace just created) read as "now".
  */
 export function relativeTime(then: number, now: number): string {
-	const diff = now - then;
-	if (diff < 60_000) return "now";
-	const mins = Math.floor(diff / 60_000);
-	if (mins < 60) return `${mins}m`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h`;
-	const days = Math.floor(hours / 24);
-	if (days < 7) return `${days}d`;
-	// Beyond a week: a short date (MM/DD). Uses UTC parts for determinism in tests.
-	const d = new Date(then);
-	const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-	const day = String(d.getUTCDate()).padStart(2, "0");
-	return `${month}/${day}`;
+  const diff = now - then;
+  if (diff < 60_000) return "now";
+  const mins = Math.floor(diff / 60_000);
+  if (mins < 60) return `${mins}m`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h`;
+  const days = Math.floor(hours / 24);
+  if (days < 7) return `${days}d`;
+  // Beyond a week: a short date (MM/DD). Uses UTC parts for determinism in tests.
+  const d = new Date(then);
+  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
+  const day = String(d.getUTCDate()).padStart(2, "0");
+  return `${month}/${day}`;
 }
