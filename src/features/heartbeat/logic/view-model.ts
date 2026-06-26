@@ -159,11 +159,16 @@ function dateLabel(epochMs: number): string {
  * `HeartbeatConfig` that the inputs bind to. `reasoningEffort` is resolved to
  * an effective level for the `<select>` (null ⇒ default `high`), exactly like
  * the per-conversation selector.
+ *
+ * The interval is split into `intervalHours` + `intervalMinutes` (0–59) for the
+ * UI (two inputs), and recombined to a total-minutes value at the patch seam
+ * (`patchFromForm`); the backend stores a single `intervalMinutes`.
  */
 export interface HeartbeatFormState {
 	enabled: boolean;
 	systemPrompt: string;
 	taskPrompt: string;
+	intervalHours: number;
 	intervalMinutes: number;
 	model: string;
 	reasoningEffort: ReasoningEffort;
@@ -172,16 +177,33 @@ export interface HeartbeatFormState {
 /** The default interval (minutes) shown for an empty/unset config. */
 export const DEFAULT_INTERVAL_MINUTES = 30;
 
+/** Split a total-minutes value into { hours, minutes (0–59) }. Pure. */
+export function splitInterval(totalMinutes: number): { hours: number; minutes: number } {
+	const total = normalizeInterval(totalMinutes);
+	const hours = Math.floor(total / 60);
+	const minutes = total - hours * 60;
+	return { hours, minutes };
+}
+
+/** Recombine hours + minutes into a clamped total-minutes value. Pure. */
+export function joinInterval(hours: number, minutes: number): number {
+	const h = Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) : 0;
+	const m = Number.isFinite(minutes) ? Math.max(0, Math.floor(minutes)) : 0;
+	return normalizeInterval(h * 60 + m);
+}
+
 /**
  * Seed the editable form state from a loaded config, applying safe defaults for
  * any malformed/absent backend field so the inputs are never `undefined`.
  */
 export function formFromConfig(config: HeartbeatConfig): HeartbeatFormState {
+	const { hours, minutes } = splitInterval(config.intervalMinutes);
 	return {
 		enabled: config.enabled === true,
 		systemPrompt: config.systemPrompt ?? "",
 		taskPrompt: config.taskPrompt ?? "",
-		intervalMinutes: normalizeInterval(config.intervalMinutes),
+		intervalHours: hours,
+		intervalMinutes: minutes,
 		model: typeof config.model === "string" ? config.model : "",
 		reasoningEffort: effectiveEffort(config.reasoningEffort ?? null),
 	};
@@ -189,11 +211,13 @@ export function formFromConfig(config: HeartbeatConfig): HeartbeatFormState {
 
 /** An empty form (before the config loads). */
 export function emptyForm(): HeartbeatFormState {
+	const { hours, minutes } = splitInterval(DEFAULT_INTERVAL_MINUTES);
 	return {
 		enabled: false,
 		systemPrompt: "",
 		taskPrompt: "",
-		intervalMinutes: DEFAULT_INTERVAL_MINUTES,
+		intervalHours: hours,
+		intervalMinutes: minutes,
 		model: "",
 		reasoningEffort: DEFAULT_REASONING_EFFORT,
 	};
@@ -209,16 +233,17 @@ export function normalizeInterval(value: unknown): number {
 }
 
 /**
- * The patch to PUT when persisting the form. Only `intervalMinutes` is clamped;
- * text fields are sent verbatim. `reasoningEffort` is always present (a resolved
- * level) since the heartbeat has no per-run override — it persists the level.
+ * The patch to PUT when persisting the form. The split hours+minutes are
+ * recombined into a single `intervalMinutes` (clamped); text fields are sent
+ * verbatim. `reasoningEffort` is always present (a resolved level) since the
+ * heartbeat has no per-run override — it persists the level.
  */
 export function patchFromForm(form: HeartbeatFormState): HeartbeatConfigPatch {
 	return {
 		enabled: form.enabled,
 		systemPrompt: form.systemPrompt,
 		taskPrompt: form.taskPrompt,
-		intervalMinutes: normalizeInterval(form.intervalMinutes),
+		intervalMinutes: joinInterval(form.intervalHours, form.intervalMinutes),
 		model: form.model,
 		reasoningEffort: form.reasoningEffort,
 	};
@@ -226,11 +251,13 @@ export function patchFromForm(form: HeartbeatFormState): HeartbeatConfigPatch {
 
 /** Whether the form differs from the loaded config (drives the Save button). */
 export function formDiffers(form: HeartbeatFormState, config: HeartbeatConfig): boolean {
+	const { hours, minutes } = splitInterval(config.intervalMinutes);
 	return (
 		form.enabled !== config.enabled ||
 		form.systemPrompt !== (config.systemPrompt ?? "") ||
 		form.taskPrompt !== (config.taskPrompt ?? "") ||
-		form.intervalMinutes !== normalizeInterval(config.intervalMinutes) ||
+		form.intervalHours !== hours ||
+		form.intervalMinutes !== minutes ||
 		form.model !== (typeof config.model === "string" ? config.model : "") ||
 		form.reasoningEffort !== effectiveEffort(config.reasoningEffort ?? null)
 	);

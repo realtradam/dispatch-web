@@ -9,11 +9,13 @@ import {
 	formatRunTime,
 	formDiffers,
 	formFromConfig,
+	joinInterval,
 	normalizeHeartbeatConfig,
 	normalizeHeartbeatRuns,
 	normalizeInterval,
 	patchFromForm,
 	relativeLabel,
+	splitInterval,
 	statusLabelFor,
 	viewRun,
 	viewRuns,
@@ -120,10 +122,12 @@ describe("viewRun / viewRuns", () => {
 });
 
 describe("config form", () => {
-	it("emptyForm has defaults (disabled, default interval, default effort)", () => {
+	it("emptyForm has defaults (disabled, default interval split, default effort)", () => {
 		const f = emptyForm();
 		expect(f.enabled).toBe(false);
-		expect(f.intervalMinutes).toBe(DEFAULT_INTERVAL_MINUTES);
+		// 30 min → 0h 30m
+		expect(f.intervalHours).toBe(0);
+		expect(f.intervalMinutes).toBe(30);
 		expect(f.reasoningEffort).toBe("high"); // DEFAULT_REASONING_EFFORT
 		expect(f.systemPrompt).toBe("");
 		expect(f.model).toBe("");
@@ -139,6 +143,25 @@ describe("config form", () => {
 		expect(f.reasoningEffort).toBe("max");
 	});
 
+	it("formFromConfig splits intervalMinutes into hours + minutes (0–59)", () => {
+		expect(formFromConfig(config({ intervalMinutes: 90 }))).toMatchObject({
+			intervalHours: 1,
+			intervalMinutes: 30,
+		});
+		expect(formFromConfig(config({ intervalMinutes: 60 }))).toMatchObject({
+			intervalHours: 1,
+			intervalMinutes: 0,
+		});
+		expect(formFromConfig(config({ intervalMinutes: 59 }))).toMatchObject({
+			intervalHours: 0,
+			intervalMinutes: 59,
+		});
+		expect(formFromConfig(config({ intervalMinutes: 1440 }))).toMatchObject({
+			intervalHours: 24,
+			intervalMinutes: 0,
+		});
+	});
+
 	it("formFromConfig coerces malformed fields safely", () => {
 		const f = formFromConfig(
 			config({
@@ -149,7 +172,9 @@ describe("config form", () => {
 			}),
 		);
 		expect(f.enabled).toBe(false); // non-true → false
-		expect(f.intervalMinutes).toBe(1); // clamped
+		// -5 clamps to 1 → 0h 1m
+		expect(f.intervalHours).toBe(0);
+		expect(f.intervalMinutes).toBe(1);
 		expect(f.model).toBe(""); // non-string → ""
 		expect(f.systemPrompt).toBe(""); // undefined → ""
 	});
@@ -164,8 +189,24 @@ describe("config form", () => {
 		expect(normalizeInterval(undefined)).toBe(DEFAULT_INTERVAL_MINUTES);
 	});
 
-	it("patchFromForm clamps interval + carries every field", () => {
+	it("splitInterval / joinInterval round-trip (and clamp)", () => {
+		expect(splitInterval(90)).toEqual({ hours: 1, minutes: 30 });
+		expect(splitInterval(0)).toEqual({ hours: 0, minutes: 1 }); // 0 → clamps to 1
+		expect(splitInterval(1440)).toEqual({ hours: 24, minutes: 0 });
+		expect(splitInterval(2000)).toEqual({ hours: 24, minutes: 0 }); // clamped
+		// join recomputes + clamps
+		expect(joinInterval(1, 30)).toBe(90);
+		expect(joinInterval(0, 0)).toBe(1); // 0 → clamps to 1
+		expect(joinInterval(25, 0)).toBe(1440); // 1500 → clamps to 1440
+		expect(joinInterval(-1, 30)).toBe(30); // negatives floored to 0
+		expect(joinInterval("x" as unknown as number, 15)).toBe(15); // non-finite → 0h
+	});
+
+	it("patchFromForm recombines hours+minutes into intervalMinutes + carries every field", () => {
 		const f = formFromConfig(config({ intervalMinutes: 2000 }));
+		// 2000 clamps to 1440 → 24h 0m in the form
+		expect(f.intervalHours).toBe(24);
+		expect(f.intervalMinutes).toBe(0);
 		const patch = patchFromForm(f);
 		expect(patch.intervalMinutes).toBe(1440);
 		expect(patch.enabled).toBe(false);
@@ -173,6 +214,13 @@ describe("config form", () => {
 		expect(patch.reasoningEffort).toBe("high");
 		expect(patch.systemPrompt).toBe("be helpful");
 		expect(patch.taskPrompt).toBe("check status");
+	});
+
+	it("patchFromForm recombines an arbitrary hours/minutes edit", () => {
+		const f = formFromConfig(config({ intervalMinutes: 15 }));
+		f.intervalHours = 2;
+		f.intervalMinutes = 45;
+		expect(patchFromForm(f).intervalMinutes).toBe(165);
 	});
 
 	it("formDiffers is false for a form seeded from the config (no edits)", () => {
@@ -185,6 +233,13 @@ describe("config form", () => {
 		const c = config();
 		const f = formFromConfig(c);
 		f.systemPrompt = "changed";
+		expect(formDiffers(f, c)).toBe(true);
+	});
+
+	it("formDiffers is true after an interval edit (hours or minutes)", () => {
+		const c = config({ intervalMinutes: 90 });
+		const f = formFromConfig(c);
+		f.intervalMinutes = 45; // 1h45m vs 1h30m
 		expect(formDiffers(f, c)).toBe(true);
 	});
 

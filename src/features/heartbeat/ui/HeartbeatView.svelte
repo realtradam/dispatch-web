@@ -5,12 +5,10 @@
 	import {
 		badgeForStatus,
 		type Badge,
-		DEFAULT_INTERVAL_MINUTES,
 		emptyForm,
 		effortOptions,
 		formDiffers,
 		formFromConfig,
-		normalizeInterval,
 		patchFromForm,
 		viewRuns,
 		type HeartbeatFormState,
@@ -22,6 +20,8 @@
 		SaveHeartbeatConfig,
 		StopHeartbeatRun,
 	} from "../logic/types";
+	import type { LoadSystemPromptVariables } from "../../system-prompt";
+	import PromptEditor from "./PromptEditor.svelte";
 
 	let {
 		models,
@@ -29,6 +29,7 @@
 		saveConfig,
 		loadRuns,
 		stopRun,
+		loadVariables,
 		onOpenRun,
 	}: {
 		/** The available model names (for the config's model dropdown). */
@@ -37,6 +38,8 @@
 		saveConfig: SaveHeartbeatConfig;
 		loadRuns: LoadHeartbeatRuns;
 		stopRun: StopHeartbeatRun;
+		/** Load the available system-prompt variables (palette in the prompt editor). */
+		loadVariables: LoadSystemPromptVariables;
 		/** Open a run's chat in the fullscreen modal (composition-root wires the live watch). */
 		onOpenRun: (run: HeartbeatRunView) => void;
 	} = $props();
@@ -60,6 +63,7 @@
 	let saveError = $state<string | null>(null);
 	let justSaved = $state(false);
 	let hasConfig = $state(false);
+	let promptEditorOpen = $state(false);
 
 	const hasChanges = $derived(formDiffers(form, loadedConfig) && hasConfig);
 
@@ -230,30 +234,20 @@
 	{#if configError}
 		<p class="text-xs text-error">{configError}</p>
 	{:else}
-		<!-- System prompt -->
+		<!-- Prompts (open the full-page editor) -->
 		<section class="flex flex-col gap-1">
-			<span class="text-xs font-semibold uppercase opacity-60">System prompt</span>
-			<textarea
-				class="textarea textarea-bordered textarea-sm h-20 w-full font-mono text-xs"
-				placeholder="You are an autonomous agent…"
-				value={form.systemPrompt}
+			<span class="text-xs font-semibold uppercase opacity-60">Prompts</span>
+			<button
+				type="button"
+				class="btn btn-sm btn-outline"
 				disabled={saving || configLoading}
-				oninput={(e) => (form = { ...form, systemPrompt: e.currentTarget.value })}
-				aria-label="Heartbeat system prompt"
-			></textarea>
-		</section>
-
-		<!-- Task prompt -->
-		<section class="flex flex-col gap-1">
-			<span class="text-xs font-semibold uppercase opacity-60">Task prompt</span>
-			<textarea
-				class="textarea textarea-bordered textarea-sm h-20 w-full font-mono text-xs"
-				placeholder="Check the system status and report…"
-				value={form.taskPrompt}
-				disabled={saving || configLoading}
-				oninput={(e) => (form = { ...form, taskPrompt: e.currentTarget.value })}
-				aria-label="Heartbeat task prompt"
-			></textarea>
+				onclick={() => (promptEditorOpen = true)}
+			>
+				Edit prompts
+			</button>
+			<p class="text-xs opacity-50">
+				Open the editor for the system + task prompts (with a variable palette).
+			</p>
 		</section>
 
 		<!-- Model + reasoning effort -->
@@ -297,32 +291,48 @@
 			</div>
 		</section>
 
-		<!-- Interval -->
+		<!-- Interval (hours + minutes) -->
 		<section class="flex flex-col gap-1">
-			<span class="text-xs font-semibold uppercase opacity-60">Interval (minutes)</span>
+			<span class="text-xs font-semibold uppercase opacity-60">Interval</span>
 			<div class="flex items-center gap-2">
 				<input
 					type="number"
-					class="input input-bordered input-sm w-24"
-					min="1"
-					max="1440"
-					placeholder={String(DEFAULT_INTERVAL_MINUTES)}
+					class="input input-bordered input-sm w-20"
+					min="0"
+					max="24"
+					value={form.intervalHours}
+					disabled={saving || configLoading}
+					oninput={(e) => {
+						const n = Number.parseInt(e.currentTarget.value, 10);
+						form = { ...form, intervalHours: Number.isNaN(n) ? 0 : n };
+					}}
+					onchange={(e) => {
+						const clamped = Math.max(0, Math.min(24, form.intervalHours));
+						form = { ...form, intervalHours: clamped };
+						e.currentTarget.value = String(clamped);
+					}}
+					aria-label="Heartbeat interval hours"
+				/>
+				<span class="text-xs opacity-60">h</span>
+				<input
+					type="number"
+					class="input input-bordered input-sm w-20"
+					min="0"
+					max="59"
 					value={form.intervalMinutes}
 					disabled={saving || configLoading}
 					oninput={(e) => {
 						const n = Number.parseInt(e.currentTarget.value, 10);
-						form = {
-							...form,
-							intervalMinutes: Number.isNaN(n) ? DEFAULT_INTERVAL_MINUTES : n,
-						};
+						form = { ...form, intervalMinutes: Number.isNaN(n) ? 0 : n };
 					}}
 					onchange={(e) => {
-						form = { ...form, intervalMinutes: normalizeInterval(form.intervalMinutes) };
-						e.currentTarget.value = String(form.intervalMinutes);
+						const clamped = Math.max(0, Math.min(59, form.intervalMinutes));
+						form = { ...form, intervalMinutes: clamped };
+						e.currentTarget.value = String(clamped);
 					}}
-					aria-label="Heartbeat interval in minutes"
+					aria-label="Heartbeat interval minutes"
 				/>
-				<span class="text-xs opacity-60">min between runs</span>
+				<span class="text-xs opacity-60">m between runs</span>
 			</div>
 		</section>
 
@@ -419,3 +429,20 @@
 		{/if}
 	</section>
 </div>
+
+{#if promptEditorOpen}
+	<PromptEditor
+		systemPrompt={form.systemPrompt}
+		taskPrompt={form.taskPrompt}
+		{loadVariables}
+		{saveConfig}
+		onSaved={(systemPrompt, taskPrompt) => {
+			// Sync the form + the diff baseline so the main Save button + formDiffers
+			// stay accurate (the editor persisted the prompts already).
+			form = { ...form, systemPrompt, taskPrompt };
+			loadedConfig = { ...loadedConfig, systemPrompt, taskPrompt };
+			justSaved = true;
+		}}
+		onClose={() => (promptEditorOpen = false)}
+	/>
+{/if}
