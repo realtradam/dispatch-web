@@ -9,6 +9,7 @@
 		type LoadSystemPromptVariables,
 	} from "../../system-prompt";
 	import type { SaveHeartbeatConfig } from "../logic/types";
+	import { portal } from "../../../adapters/portal";
 
 	let {
 		systemPrompt,
@@ -141,8 +142,15 @@
 
 <svelte:window onkeydown={onKeydown} />
 
+<!-- Teleported to <body> (use:portal) so `position: fixed` resolves against the
+     VIEWPORT, not the sidebar's `transform: translateX(...)` container — an
+     ancestor transform establishes a containing block for `fixed`, which would
+     otherwise clip this overlay to the sidebar area. (RunModal/SystemPromptBuilder
+     avoid this by rendering at the composition root; this modal lives inside
+     HeartbeatView, so it must escape its ancestor.) -->
 <!-- svelte-ignore a11y_no_static_element_interactions -->
 <div
+	use:portal
 	class="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4"
 	role="dialog"
 	aria-modal="true"
