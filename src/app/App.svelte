@@ -69,6 +69,14 @@
 		type HeartbeatRunsResult,
 		type HeartbeatStopResult,
 	} from "../features/heartbeat";
+	import {
+		ConcurrencyView,
+		manifest as concurrencyManifest,
+		type DeleteConcurrencyLimit,
+		type LoadConcurrencyLimits,
+		type LoadConcurrencyStatus,
+		type SaveConcurrencyLimit,
+	} from "../features/concurrency";
 	import type { ChatStore } from "../features/chat";
 	import {
 		SystemPromptBuilder,
@@ -107,6 +115,7 @@
 		{ id: "tasks", label: "Tasks" },
 		{ id: "compaction", label: "Compaction" },
 		{ id: "heartbeat", label: "Heartbeat" },
+		{ id: "concurrency", label: "Concurrency" },
 		{ id: "system-prompt", label: "System Prompt" },
 		{ id: "settings", label: "Settings" },
 	] as const;
@@ -143,6 +152,7 @@
 		settingsManifest,
 		systemPromptManifest,
 		heartbeatManifest,
+		concurrencyManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -412,6 +422,18 @@
 	function closeRunChat(conversationId: string): void {
 		store.unwatchConversation(conversationId);
 	}
+
+	// Adapt the store's concurrency results to the feature's ports. The store
+	// returns the feature's result types directly (the API is a plain REST surface
+	// under /concurrency, not a workspace/conversation-scoped one), so the adapter
+	// is a thin passthrough (kept for structural consistency — AGENTS.md "contracts
+	// are the cross-unit surface").
+	const loadConcurrencyLimits: LoadConcurrencyLimits = () => store.concurrencyLimits();
+	const saveConcurrencyLimit: SaveConcurrencyLimit = (providerId, limit) =>
+		store.setConcurrencyLimit(providerId, limit);
+	const deleteConcurrencyLimit: DeleteConcurrencyLimit = (providerId) =>
+		store.deleteConcurrencyLimit(providerId);
+	const loadConcurrencyStatus: LoadConcurrencyStatus = () => store.concurrencyStatus();
 </script>
 
 <main class="relative flex h-screen overflow-hidden">
@@ -689,6 +711,15 @@
 			loadDefaultPrompt={loadSystemPromptPrompt}
 			loadNextRun={loadHeartbeatNextRun}
 			onOpenRun={(run) => (heartbeatRun = run)}
+		/>
+	{:else if kind === "concurrency"}
+		<!-- Per-provider concurrency limits + live status. GLOBAL (not workspace- or
+		     conversation-scoped), so the panel stays mounted across tab switches. -->
+		<ConcurrencyView
+			loadLimits={loadConcurrencyLimits}
+			saveLimit={saveConcurrencyLimit}
+			deleteLimit={deleteConcurrencyLimit}
+			loadStatus={loadConcurrencyStatus}
 		/>
 	{/if}
 {/snippet}

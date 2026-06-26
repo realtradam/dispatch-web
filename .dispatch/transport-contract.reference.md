@@ -5,8 +5,16 @@
 > permission prompt). Your CODE still imports `@dispatch/transport-contract` normally — this file is for
 > READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.22.0` (MCP status + computers). Regenerate whenever
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.23.0` (MCP status + computers + provider concurrency). Regenerate whenever
 > it changes.
+>
+> **2026-06-26 delta (provider concurrency — `transport-contract@0.23.0` bump):** adds the
+> per-provider concurrency-limits API types: `ConcurrencyLimitsResponse` (`GET /concurrency/limits`),
+> `SetConcurrencyLimitRequest` + `ConcurrencyLimitResponse` (`GET`/`PUT /concurrency/limits/:providerId`),
+> and `ConcurrencyStatusEntry` + `ConcurrencyStatusResponse` (`GET /concurrency/status`). The
+> `concurrency` extension tracks/limits in-flight token-generating requests per provider with
+> oldest-agent-first queueing; when it isn't loaded the list + status endpoints return empty arrays and
+> the single/PUT/DELETE return `503`. See `backend-handoff.md` §2j.
 >
 > **2026-06-25 delta (SSH handoff #2 — ADDITIVE to `transport-contract@0.22.0`, NO version bump):** adds the
 > computer HTTP API types: `ComputerListResponse` (`GET /computers`), `ComputerResponse` (`GET /computers/:alias`),
@@ -940,6 +948,58 @@ export interface TestComputerResponse {
 	readonly alias: string;
 	readonly ok: boolean;
 	readonly error?: string;
+}
+
+// ── Provider concurrency limits (transport-contract@0.23.0) ───────────────────
+
+/**
+ * Response of `GET /concurrency/limits` — all providers with configured
+ * concurrency limits. Each entry pairs a provider id (e.g. "umans",
+ * "openai-compat") with its maximum concurrent in-flight requests. Providers
+ * not listed here have no limit (unlimited).
+ */
+export interface ConcurrencyLimitsResponse {
+	readonly limits: readonly {
+		readonly providerId: string;
+		readonly limit: number;
+	}[];
+}
+/**
+ * Body of `PUT /concurrency/limits/:providerId` — set or update the concurrency
+ * limit for a provider. `limit` must be a positive integer. When a limit is
+ * set, requests beyond the limit queue (oldest-agent-first) rather than being
+ * sent immediately.
+ */
+export interface SetConcurrencyLimitRequest {
+	readonly limit: number;
+}
+/** Response of `GET/PUT /concurrency/limits/:providerId` — the configured limit. */
+export interface ConcurrencyLimitResponse {
+	readonly providerId: string;
+	readonly limit: number;
+}
+/**
+ * One provider's live concurrency status.
+ *
+ * - `inFlight`: how many slots are currently held (tokens being generated).
+ * - `queued`: how many agents are waiting for a slot.
+ * - `paused`: whether the queue is paused due to a 429 backoff.
+ * - `pausedUntil`: when the pause expires (epoch-ms), present only when paused.
+ */
+export interface ConcurrencyStatusEntry {
+	readonly providerId: string;
+	readonly limit: number;
+	readonly inFlight: number;
+	readonly queued: number;
+	readonly paused: boolean;
+	readonly pausedUntil?: number;
+}
+/**
+ * Response of `GET /concurrency/status` — live status for every provider with a
+ * configured limit. Providers without a limit are absent (they are unlimited).
+ */
+export interface ConcurrencyStatusResponse {
+	readonly providers: readonly ConcurrencyStatusEntry[];
 }
 ```
 
