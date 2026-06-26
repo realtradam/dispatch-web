@@ -1375,4 +1375,263 @@ describe("createAppStore", () => {
 
     store.dispose();
   });
+
+  // ── Concurrency (per-provider limits + live status; GLOBAL REST surface) ─────
+  //
+  // The concurrency API is a plain REST surface under /concurrency (provided by
+  // the `concurrency` extension). These tests fake all five endpoints + verify
+  // the store coerces the untyped JSON and routes the right method/URL.
+
+  function concurrencyFetchImpl(opts?: {
+    limits?: Record<string, unknown>;
+    limit?: Record<string, unknown>;
+    status?: Record<string, unknown>;
+  }): typeof fetch {
+    const base = fakeFetchImpl();
+    const limits = opts?.limits ?? {
+      limits: [
+        { providerId: "umans", limit: 4 },
+        { providerId: "openai-compat", limit: 5 },
+      ],
+    };
+    const limit = opts?.limit ?? { providerId: "umans", limit: 4 };
+    const status = opts?.status ?? {
+      providers: [
+        { providerId: "umans", limit: 4, inFlight: 2, queued: 1, paused: false },
+        {
+          providerId: "openai-compat",
+          limit: 5,
+          inFlight: 5,
+          queued: 3,
+          paused: true,
+          pausedUntil: 1_719_408_000_000,
+        },
+      ],
+    };
+    return async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      const method = init?.method ?? "GET";
+      if (url.endsWith("/concurrency/status") && method === "GET") {
+        return new Response(JSON.stringify(status), { status: 200 });
+      }
+      if (url.endsWith("/concurrency/limits") && method === "GET") {
+        return new Response(JSON.stringify(limits), { status: 200 });
+      }
+      if (url.includes("/concurrency/limits/") && method === "GET") {
+        return new Response(JSON.stringify(limit), { status: 200 });
+      }
+      if (url.includes("/concurrency/limits/") && method === "PUT") {
+        const seg = url.slice(
+          url.lastIndexOf("/concurrency/limits/") + "/concurrency/limits/".length,
+        );
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        return new Response(JSON.stringify({ providerId: seg, ...body }), { status: 200 });
+      }
+      if (url.includes("/concurrency/limits/") && method === "DELETE") {
+        return new Response(JSON.stringify({ ok: true, providerId: "umans" }), { status: 200 });
+      }
+      return base(input, init);
+    };
+  }
+
+  it("concurrencyLimits loads + coerces the limits list", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: concurrencyFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.concurrencyLimits();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.limits).toEqual([
+      { providerId: "umans", limit: 4 },
+      { providerId: "openai-compat", limit: 5 },
+    ]);
+    store.dispose();
+  });
+
+  it("concurrencyLimits tolerates a malformed/empty body (extension not loaded)", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: concurrencyFetchImpl({ limits: {} }),
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.concurrencyLimits();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.limits).toEqual([]);
+    store.dispose();
+  });
+
+  it("concurrencyLimits surfaces an HTTP error", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith("/concurrency/limits"))
+          return new Response(JSON.stringify({ error: "Concurrency service not available" }), {
+            status: 503,
+          });
+        return fakeFetchImpl()(input);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.concurrencyLimits();
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("Concurrency service not available");
+    store.dispose();
+  });
+
+  it("getConcurrencyLimit loads one provider's limit", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: concurrencyFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.getConcurrencyLimit("umans");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.providerId).toBe("umans");
+    expect(result.limit).toBe(4);
+    store.dispose();
+  });
+
+  it("getConcurrencyLimit surfaces a 404 (not configured)", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? "GET";
+        if (url.includes("/concurrency/limits/") && method === "GET")
+          return new Response(
+            JSON.stringify({ error: "No concurrency limit configured for this provider" }),
+            { status: 404 },
+          );
+        return fakeFetchImpl()(input);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.getConcurrencyLimit("anthropic");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("No concurrency limit configured");
+    store.dispose();
+  });
+
+  it("setConcurrencyLimit PUTs { limit } to the provider URL and returns the echoed limit", async () => {
+    const calls: { url: string; method: string; body: unknown }[] = [];
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? "GET";
+        if (url.includes("/concurrency/limits/") && method === "PUT") {
+          calls.push({ url, method, body: JSON.parse(init?.body as string) });
+        }
+        return concurrencyFetchImpl()(input, init);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.setConcurrencyLimit("anthropic", 8);
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("PUT");
+    expect(calls[0]?.url).toContain("/concurrency/limits/anthropic");
+    expect(calls[0]?.body).toEqual({ limit: 8 });
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.providerId).toBe("anthropic"); // echoed by the fake
+    expect(result.limit).toBe(8);
+    store.dispose();
+  });
+
+  it("setConcurrencyLimit surfaces a 400 (non-positive body)", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/concurrency/limits/") && init?.method === "PUT")
+          return new Response(
+            JSON.stringify({ error: "Body must be { limit: <positive integer> }" }),
+            {
+              status: 400,
+            },
+          );
+        return fakeFetchImpl()(input);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.setConcurrencyLimit("umans", 0);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("Body must be");
+    store.dispose();
+  });
+
+  it("deleteConcurrencyLimit DELETEs the provider URL and returns ok", async () => {
+    const calls: { url: string; method: string }[] = [];
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? "GET";
+        if (url.includes("/concurrency/limits/") && method === "DELETE") {
+          calls.push({ url, method });
+        }
+        return concurrencyFetchImpl()(input, init);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.deleteConcurrencyLimit("umans");
+    expect(result.ok).toBe(true);
+    expect(calls).toHaveLength(1);
+    expect(calls[0]?.method).toBe("DELETE");
+    expect(calls[0]?.url).toContain("/concurrency/limits/umans");
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.providerId).toBe("umans");
+    store.dispose();
+  });
+
+  it("concurrencyStatus loads + coerces the status list (incl. pausedUntil)", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: concurrencyFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.concurrencyStatus();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.providers).toHaveLength(2);
+    expect(result.providers[0]).toEqual({
+      providerId: "umans",
+      limit: 4,
+      inFlight: 2,
+      queued: 1,
+      paused: false,
+    });
+    expect(result.providers[1]).toMatchObject({
+      providerId: "openai-compat",
+      paused: true,
+      pausedUntil: 1_719_408_000_000,
+    });
+    store.dispose();
+  });
+
+  it("concurrencyStatus tolerates a malformed body (extension not loaded)", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: concurrencyFetchImpl({ status: {} }),
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.concurrencyStatus();
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.providers).toEqual([]);
+    store.dispose();
+  });
 });

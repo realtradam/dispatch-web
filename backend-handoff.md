@@ -5,11 +5,12 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2i ADDED — Heartbeat next-run countdown timer: FE shows a live "Next run in Xm Ys" countdown
-from a 1s clock; opens 1 backend ask CR-HB-3: new `GET /workspaces/:id/heartbeat/next-run` → `{ nextRunAt: ISO|null }`.
-FE falls back to an approximation (latest run + interval) until the endpoint ships. typecheck 0/0, 865 tests green, biome
-clean, build OK. §2h/§2g/§2f unchanged.)_
-**FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
+_Last updated: 2026-06-26 (§2j ADDED — Provider concurrency limits: per-provider in-flight caps with oldest-agent-first
+queueing + 429-pause backoff. New `concurrency` REST surface (`GET`/`PUT`/`DELETE /concurrency/limits[/:id]`,
+`GET /concurrency/status`) + `transport-contract@0.23.0` bump (5 concurrency types). FE re-pinned + re-mirrored; new
+`features/concurrency` feature library + AppStore wiring + a sidebar "Concurrency" view. typecheck 0/0, 914 tests
+green, biome clean, build OK. §2i/§2h/§2g/§2f unchanged.)_
+**FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
 Backend shipped CR-10 (workspace id on `conversation.open` / `conversation.statusChanged`), CR-11
@@ -24,7 +25,7 @@ FE consumes the MCP status slice (`GET /conversations/:id/mcp`, mirroring `/lsp`
 
 ## 1. Pinned backend contracts (consumed by the FE)
 
-Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.12.0`; `transport-contract@0.22.0`**.
+Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.12.0`; `transport-contract@0.23.0`**.
 
 | Package | Used for |
 |---|---|
@@ -48,7 +49,7 @@ WS `conversation.statusChanged` (broadcast: lifecycle status change — `active`
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
-`transport-contract@0.22.0` / `wire@0.12.0`).
+`transport-contract@0.23.0` / `wire@0.12.0`).
 
 ### FE invariants to keep (don't regress)
 

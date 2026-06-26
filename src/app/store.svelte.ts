@@ -53,6 +53,17 @@ import {
 } from "../core/protocol";
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore } from "../features/chat";
+import type {
+  ConcurrencyDeleteResult,
+  ConcurrencyLimitResult,
+  ConcurrencyLimitsResult,
+  ConcurrencyStatusResult,
+} from "../features/concurrency";
+import {
+  normalizeConcurrencyLimit,
+  normalizeConcurrencyLimits,
+  normalizeConcurrencyStatus,
+} from "../features/concurrency";
 import type { ConversationCache } from "../features/conversation-cache";
 import { createConversationCache } from "../features/conversation-cache";
 import type {
@@ -362,6 +373,38 @@ export interface AppStore {
   watchConversation(conversationId: string): ChatStore;
   /** Dispose + unsubscribe a watch opened by {@link watchConversation}. */
   unwatchConversation(conversationId: string): void;
+  /**
+   * Load all configured per-provider concurrency limits
+   * (`GET /concurrency/limits`). Global (not workspace-scoped). Returns an empty
+   * list when the concurrency extension isn't loaded (`{ limits: [] }`).
+   */
+  concurrencyLimits(): Promise<ConcurrencyLimitsResult>;
+  /**
+   * Fetch the configured limit for one provider
+   * (`GET /concurrency/limits/:providerId`). `404` (no limit configured) and
+   * `503` (extension not loaded) both surface as `ok: false`.
+   */
+  getConcurrencyLimit(providerId: string): Promise<ConcurrencyLimitResult>;
+  /**
+   * Set or update a provider's concurrency limit
+   * (`PUT /concurrency/limits/:providerId`, body `{ limit }`). `limit` must be a
+   * positive integer (a non-positive body is `400`). At the cap, further requests
+   * queue oldest-agent-first rather than being sent immediately.
+   */
+  setConcurrencyLimit(providerId: string, limit: number): Promise<ConcurrencyLimitResult>;
+  /**
+   * Remove a provider's concurrency limit (`DELETE /concurrency/limits/:providerId`),
+   * making it unlimited. `404` (not configured) and `503` (extension not loaded)
+   * both surface as `ok: false`.
+   */
+  deleteConcurrencyLimit(providerId: string): Promise<ConcurrencyDeleteResult>;
+  /**
+   * Fetch live concurrency status for every provider with a configured limit
+   * (`GET /concurrency/status`): in-flight slots held, agents queued, and a paused
+   * state with a `pausedUntil` epoch-ms when a 429 backoff is in effect. Returns
+   * an empty list when the extension isn't loaded (`{ providers: [] }`).
+   */
+  concurrencyStatus(): Promise<ConcurrencyStatusResult>;
   /**
    * A critical error that blocks normal operation (e.g. the cross-device tab
    * restore fetch failed). When non-null, a full-screen modal is shown with the
@@ -1694,6 +1737,128 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
     unwatchConversation(conversationId: string): void {
       unwatchConversation(conversationId);
+    },
+
+    // ── Concurrency (per-provider limits + live status; GLOBAL, not workspace-scoped)
+
+    async concurrencyLimits(): Promise<ConcurrencyLimitsResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/concurrency/limits`);
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Concurrency limits failed (HTTP ${res.status})`,
+          };
+        }
+        // Normalize the untyped JSON at the network seam (pure helper) so a
+        // malformed/partial response (e.g. the extension returning `{}`) can
+        // never crash the renderer.
+        const limits = normalizeConcurrencyLimits(await res.json());
+        return { ok: true, limits };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Concurrency limits request failed",
+        };
+      }
+    },
+
+    async getConcurrencyLimit(providerId: string): Promise<ConcurrencyLimitResult> {
+      try {
+        const res = await fetchImpl(
+          `${httpBase}/concurrency/limits/${encodeURIComponent(providerId)}`,
+        );
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Concurrency limit failed (HTTP ${res.status})`,
+          };
+        }
+        const limit = normalizeConcurrencyLimit(await res.json());
+        if (limit === null) {
+          return { ok: false, error: "Malformed concurrency limit response" };
+        }
+        return { ok: true, providerId: limit.providerId, limit: limit.limit };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Concurrency limit request failed",
+        };
+      }
+    },
+
+    async setConcurrencyLimit(providerId: string, limit: number): Promise<ConcurrencyLimitResult> {
+      try {
+        const res = await fetchImpl(
+          `${httpBase}/concurrency/limits/${encodeURIComponent(providerId)}`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ limit }),
+          },
+        );
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Set concurrency limit failed (HTTP ${res.status})`,
+          };
+        }
+        const echoed = normalizeConcurrencyLimit(await res.json());
+        if (echoed === null) {
+          return { ok: false, error: "Malformed concurrency limit response" };
+        }
+        return { ok: true, providerId: echoed.providerId, limit: echoed.limit };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Set concurrency limit request failed",
+        };
+      }
+    },
+
+    async deleteConcurrencyLimit(providerId: string): Promise<ConcurrencyDeleteResult> {
+      try {
+        const res = await fetchImpl(
+          `${httpBase}/concurrency/limits/${encodeURIComponent(providerId)}`,
+          { method: "DELETE" },
+        );
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Delete concurrency limit failed (HTTP ${res.status})`,
+          };
+        }
+        return { ok: true, providerId };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Delete concurrency limit request failed",
+        };
+      }
+    },
+
+    async concurrencyStatus(): Promise<ConcurrencyStatusResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/concurrency/status`);
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Concurrency status failed (HTTP ${res.status})`,
+          };
+        }
+        const providers = normalizeConcurrencyStatus(await res.json());
+        return { ok: true, providers };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Concurrency status request failed",
+        };
+      }
     },
 
     async loadSystemPrompt(): Promise<SystemPromptLoadResult> {
