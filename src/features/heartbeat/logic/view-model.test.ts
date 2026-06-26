@@ -2,16 +2,19 @@ import type { ReasoningEffort } from "@dispatch/transport-contract";
 import { describe, expect, it } from "vitest";
 import type { HeartbeatConfig, HeartbeatRun } from "./types";
 import {
+	approximateNextRunEpoch,
 	badgeForStatus,
 	DEFAULT_INTERVAL_MINUTES,
 	effectiveSystemPrompt,
 	effortOptions,
 	emptyForm,
+	formatCountdown,
 	formatRunTime,
 	formDiffers,
 	formFromConfig,
 	isInheritingSystemPrompt,
 	joinInterval,
+	nextRunEpoch,
 	normalizeHeartbeatConfig,
 	normalizeHeartbeatRuns,
 	normalizeInterval,
@@ -395,5 +398,73 @@ describe("normalizeHeartbeatRuns", () => {
 		expect(runs[0]?.status).toBe("completed"); // "garbage" → default
 		expect(runs[0]?.id).toBe("r1");
 		expect(runs[1]?.id).toBe("r4");
+	});
+});
+
+describe("next-run countdown", () => {
+	const ISO_AT = "2026-06-25T14:05:00Z"; // 5 min past the hour
+
+	describe("nextRunEpoch", () => {
+		it("parses an ISO timestamp to epoch-ms", () => {
+			expect(nextRunEpoch(ISO_AT)).toBe(Date.parse(ISO_AT));
+		});
+		it("returns null for unparseable / empty / non-string", () => {
+			expect(nextRunEpoch("not-a-date")).toBeNull();
+			expect(nextRunEpoch("")).toBeNull();
+			expect(nextRunEpoch(null)).toBeNull();
+			expect(nextRunEpoch(undefined)).toBeNull();
+		});
+	});
+
+	describe("formatCountdown", () => {
+		it("null → —", () => {
+			expect(formatCountdown(null)).toBe("—");
+		});
+		it("≤ 0 → due", () => {
+			expect(formatCountdown(0)).toBe("due");
+			expect(formatCountdown(-5000)).toBe("due");
+		});
+		it("seconds only (< 1m)", () => {
+			expect(formatCountdown(32_000)).toBe("32s");
+			expect(formatCountdown(1_000)).toBe("1s");
+		});
+		it("minutes + seconds (1m–1h)", () => {
+			expect(formatCountdown(4 * 60_000 + 32_000)).toBe("4m 32s");
+			expect(formatCountdown(59 * 60_000 + 5_000)).toBe("59m 05s");
+		});
+		it("hours + minutes (≥ 1h)", () => {
+			expect(formatCountdown(3_600_000 + 5 * 60_000)).toBe("1h 05m");
+			expect(formatCountdown(2 * 3_600_000 + 30 * 60_000)).toBe("2h 30m");
+		});
+	});
+
+	describe("approximateNextRunEpoch", () => {
+		const runs = (times: string[]): HeartbeatRun[] =>
+			times.map((t, i) => ({
+				id: `r${i}`,
+				conversationId: "c",
+				triggeredAt: t,
+				status: "completed",
+			}));
+
+		it("disabled → null", () => {
+			expect(approximateNextRunEpoch(runs([ISO_AT]), 15, false)).toBeNull();
+		});
+		it("no runs → null (no fabricated countdown)", () => {
+			expect(approximateNextRunEpoch([], 15, true)).toBeNull();
+		});
+		it("latest run + interval (minutes)", () => {
+			// latest is the max triggeredAt (runs need not be ordered)
+			const unordered = runs(["2026-06-25T13:00:00Z", "2026-06-25T13:50:00Z"]);
+			// 13:50 + 15 min = 14:05
+			expect(approximateNextRunEpoch(unordered, 15, true)).toBe(Date.parse("2026-06-25T14:05:00Z"));
+		});
+		it("ignores unparseable triggeredAt values", () => {
+			const mixed = runs(["not-a-date", "2026-06-25T13:50:00Z"]);
+			expect(approximateNextRunEpoch(mixed, 15, true)).toBe(Date.parse("2026-06-25T14:05:00Z"));
+		});
+		it("all-unparseable → null", () => {
+			expect(approximateNextRunEpoch(runs(["nope", "also-nope"]), 15, true)).toBeNull();
+		});
 	});
 });

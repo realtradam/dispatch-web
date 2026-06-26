@@ -3,19 +3,25 @@
 	import type { ReasoningEffort } from "@dispatch/transport-contract";
 	import { isReasoningEffort } from "../../chat/reasoning-effort";
 	import {
+		approximateNextRunEpoch,
 		badgeForStatus,
 		type Badge,
 		emptyForm,
 		effortOptions,
+		formatCountdown,
 		formDiffers,
 		formFromConfig,
+		joinInterval,
+		nextRunEpoch,
 		patchFromForm,
 		viewRuns,
 		type HeartbeatFormState,
 		type HeartbeatRunView,
 	} from "../logic/view-model";
 	import type {
+		HeartbeatRun,
 		LoadHeartbeatConfig,
+		LoadHeartbeatNextRun,
 		LoadHeartbeatRuns,
 		SaveHeartbeatConfig,
 		StopHeartbeatRun,
@@ -34,6 +40,7 @@
 		stopRun,
 		loadVariables,
 		loadDefaultPrompt,
+		loadNextRun,
 		onOpenRun,
 	}: {
 		/** The available model names (for the config's model dropdown). */
@@ -47,6 +54,8 @@
 		/** Load the global system prompt — the default the heartbeat inherits when
 		 *  its `systemPrompt` is empty (the workspace's regular prompt). */
 		loadDefaultPrompt: LoadSystemPrompt;
+		/** Load the server-authoritative next-run timestamp (the countdown source). */
+		loadNextRun: LoadHeartbeatNextRun;
 		/** Open a run's chat in the fullscreen modal (composition-root wires the live watch). */
 		onOpenRun: (run: HeartbeatRunView) => void;
 	} = $props();
@@ -133,6 +142,9 @@
 
 	// ── Runs list (polls while mounted) ───────────────────────────────────────
 	let runs = $state<readonly HeartbeatRunView[]>([]);
+	/** The raw backend runs (carry `triggeredAt`), kept for the next-run
+	 *  approximation fallback (the view drops `triggeredAt` for display labels). */
+	let rawRuns = $state<readonly HeartbeatRun[]>([]);
 	/** True after the first successful load (gates the "No runs yet" empty state
 	 *  WITHOUT flashing it before the initial fetch resolves). The per-poll
 	 *  loading is intentionally INVISIBLE — it's near-instant and a visible
@@ -145,6 +157,40 @@
 	/** Re-entrancy guard for background polling (no UI — prevents overlapping fetches). */
 	let refreshInFlight = false;
 
+	// ── Next-run countdown ───────────────────────────────────────────────────
+	/** Epoch-ms of the next scheduled run, or null (no countdown shown). Sourced
+	 *  from the backend's `next-run` endpoint; falls back to an approximation
+	 *  (latest run + interval) when the endpoint is unavailable (404 — pre-CR-HB-3). */
+	let nextRunAt = $state<number | null>(null);
+	/** Once the next-run endpoint fails (404), stop polling it (avoid 404 spam) and
+	 *  rely on the approximation. Reset only on remount. */
+	let nextRunEndpointFailed = $state(false);
+
+	async function refreshNextRun(): Promise<void> {
+		if (nextRunEndpointFailed) return;
+		const result = await loadNextRun();
+		if (result === null) return;
+		if (result.ok) {
+			nextRunAt = nextRunEpoch(result.nextRunAt);
+		} else {
+			// Endpoint absent / errored → stop polling it + use the approximation.
+			nextRunEndpointFailed = true;
+		}
+	}
+
+	/** The fallback countdown source: latest run + interval (only when enabled +
+	 *  ≥1 run). Recomputed reactively from the loaded config + raw runs. */
+	const approxNextRun = $derived(
+		approximateNextRunEpoch(
+			rawRuns,
+			joinInterval(loadedConfig.intervalHours, loadedConfig.intervalMinutes),
+			loadedConfig.enabled,
+		),
+	);
+	/** The effective next-run epoch: the server value if available, else the
+	 *  approximation. Drives the countdown. */
+	const effectiveNextRun = $derived(nextRunEndpointFailed ? approxNextRun : nextRunAt);
+
 	const RUN_POLL_MS = 4000;
 
 	async function refreshRuns(): Promise<void> {
@@ -154,6 +200,7 @@
 		refreshInFlight = false;
 		if (result === null) return;
 		if (result.ok) {
+			rawRuns = result.runs;
 			runs = viewRuns(result.runs);
 			// Clear the error only on success so it stays visible (stable, no
 			// flicker) during an in-flight retry rather than vanishing mid-poll.
@@ -178,15 +225,18 @@
 		}
 	}
 
-	// Load config + runs on mount, and poll runs while the view is alive so a
-	// running run's completion/stopped transition shows without a manual refresh.
+	// Load config + runs + next-run on mount, and poll them while the view is
+	// alive so a running run's completion/stopped transition + the next-run timer
+	// stay fresh without a manual refresh.
 	$effect(() => {
 		untrack(() => {
 			void refreshConfig();
 			void refreshRuns();
+			void refreshNextRun();
 		});
 		pollHandle = setInterval(() => {
 			void refreshRuns();
+			void refreshNextRun();
 		}, RUN_POLL_MS);
 		return () => {
 			if (pollHandle !== null) clearInterval(pollHandle);
@@ -207,45 +257,67 @@
 		void tick; // depend on the ticker
 		return runs;
 	});
+
+	// The countdown clock: ticks every second so the "next run in Xm Ys" stays
+	// live. Pure countdown math is in `formatCountdown` (view-model); this only
+	// advances `now`.
+	let now = $state(Date.now());
+	$effect(() => {
+		const h = setInterval(() => {
+			now = Date.now();
+		}, 1000);
+		return () => clearInterval(h);
+	});
+	const countdownMs = $derived(
+		effectiveNextRun !== null ? effectiveNextRun - now : null,
+	);
+	const countdownLabel = $derived(formatCountdown(countdownMs));
 </script>
 
 <div class="flex flex-col gap-3">
 	<!-- Enable / status header -->
-	<section class="flex items-center justify-between gap-2">
-		<div class="flex items-center gap-2">
+	<section class="flex flex-col gap-1">
+		<div class="flex items-center justify-between gap-2">
+			<div class="flex items-center gap-2">
+				<button
+					type="button"
+					role="switch"
+					aria-checked={form.enabled}
+					aria-label="Toggle heartbeat"
+					class="toggle toggle-sm"
+					class:toggle-primary={form.enabled}
+					disabled={saving || configLoading}
+					onclick={handleToggleEnabled}
+				></button>
+				<span class="text-xs font-semibold uppercase opacity-60">
+					{#if configLoading}
+						Loading…
+					{:else if form.enabled}
+						Enabled
+					{:else}
+						Disabled
+					{/if}
+				</span>
+			</div>
 			<button
 				type="button"
-				role="switch"
-				aria-checked={form.enabled}
-				aria-label="Toggle heartbeat"
-				class="toggle toggle-sm"
-				class:toggle-primary={form.enabled}
-				disabled={saving || configLoading}
-				onclick={handleToggleEnabled}
-			></button>
-			<span class="text-xs font-semibold uppercase opacity-60">
+				class="btn btn-ghost btn-xs"
+				disabled={configLoading}
+				onclick={() => refreshConfig()}
+				aria-label="Refresh heartbeat config"
+			>
 				{#if configLoading}
-					Loading…
-				{:else if form.enabled}
-					Enabled
+					<span class="loading loading-spinner loading-xs"></span>
 				{:else}
-					Disabled
+					Refresh
 				{/if}
-			</span>
+			</button>
 		</div>
-		<button
-			type="button"
-			class="btn btn-ghost btn-xs"
-			disabled={configLoading}
-			onclick={() => refreshConfig()}
-			aria-label="Refresh heartbeat config"
-		>
-			{#if configLoading}
-				<span class="loading loading-spinner loading-xs"></span>
-			{:else}
-				Refresh
-			{/if}
-		</button>
+		{#if form.enabled && effectiveNextRun !== null}
+			<p class="text-xs opacity-60" title="When the next heartbeat run fires">
+				Next run in {countdownLabel}
+			</p>
+		{/if}
 	</section>
 
 	{#if configError}

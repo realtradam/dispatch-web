@@ -152,6 +152,60 @@ function dateLabel(epochMs: number): string {
 	return `${month} ${day}, ${hh}:${mm}`;
 }
 
+// ── Next-run countdown (timer of when the next heartbeat fires) ───────────────
+//
+// The authoritative next-run time comes from the backend
+// (`GET /workspaces/:id/heartbeat/next-run` → `nextRunAt` ISO string); the FE
+// computes a live countdown from it + a 1s clock. When that endpoint is absent,
+// the FE falls back to an approximation (`approximateNextRunEpoch`) from the
+// latest run + the configured interval.
+
+/** Parse an ISO timestamp to epoch-ms, or null if unparseable. */
+export function nextRunEpoch(iso: string | null | undefined): number | null {
+	if (typeof iso !== "string" || iso.length === 0) return null;
+	const t = Date.parse(iso);
+	return Number.isNaN(t) ? null : t;
+}
+
+/**
+ * Format a remaining-ms delta as a short countdown: "4m 32s", "32s", "1h 05m",
+ * "due" (≤ 0), or "—" (unknown/null). Pure via the injected `remainingMs`.
+ */
+export function formatCountdown(remainingMs: number | null): string {
+	if (remainingMs === null) return "—";
+	if (remainingMs <= 0) return "due";
+	const totalSec = Math.floor(remainingMs / 1000);
+	const hours = Math.floor(totalSec / 3600);
+	const mins = Math.floor((totalSec % 3600) / 60);
+	const secs = totalSec % 60;
+	if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m`;
+	if (mins > 0) return `${mins}m ${String(secs).padStart(2, "0")}s`;
+	return `${secs}s`;
+}
+
+/**
+ * Approximate the next-run epoch-ms when the backend's `next-run` endpoint is
+ * unavailable: the LATEST run's `triggeredAt` + `intervalMinutes` (only when the
+ * heartbeat is enabled AND at least one run exists). Returns null otherwise (the
+ * FE then shows no countdown — never a fabricated one). The latest run is the
+ * max `triggeredAt` (runs need not be ordered). Pure (no `now` needed — the next
+ * run is latest + interval, independent of the current time).
+ */
+export function approximateNextRunEpoch(
+	runs: readonly HeartbeatRun[],
+	intervalMinutes: number,
+	enabled: boolean,
+): number | null {
+	if (!enabled) return null;
+	let latest: number | null = null;
+	for (const r of runs) {
+		const t = Date.parse(r.triggeredAt);
+		if (!Number.isNaN(t) && (latest === null || t > latest)) latest = t;
+	}
+	if (latest === null) return null;
+	return latest + intervalMinutes * 60_000;
+}
+
 // ── Config form ───────────────────────────────────────────────────────────────
 
 /**

@@ -87,3 +87,17 @@ export type SaveHeartbeatConfig = (
 ) => Promise<HeartbeatConfigResult | null>;
 export type LoadHeartbeatRuns = () => Promise<HeartbeatRunsResult | null>;
 export type StopHeartbeatRun = (runId: string) => Promise<HeartbeatStopResult | null>;
+
+/**
+ * Outcome of `GET /workspaces/:id/heartbeat/next-run` — the server-authoritative
+ * timestamp of the next scheduled heartbeat run (ISO 8601 string), or `null`
+ * when the heartbeat is disabled or no run is scheduled. The FE computes a live
+ * countdown from this + a 1s clock (see `formatCountdown`). When the endpoint is
+ * unavailable (404 — backend hasn't shipped it yet), the FE falls back to an
+ * approximation from the runs + config (see `approximateNextRunEpoch`).
+ */
+export type HeartbeatNextRunResult =
+	| { readonly ok: true; readonly nextRunAt: string | null }
+	| { readonly ok: false; readonly error: string };
+
+export type LoadHeartbeatNextRun = () => Promise<HeartbeatNextRunResult | null>;

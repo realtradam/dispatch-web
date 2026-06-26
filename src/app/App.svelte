@@ -64,6 +64,7 @@
 		manifest as heartbeatManifest,
 		RunModal,
 		type HeartbeatConfigResult,
+		type HeartbeatNextRunResult,
 		type HeartbeatRunView,
 		type HeartbeatRunsResult,
 		type HeartbeatStopResult,
@@ -399,6 +400,10 @@
 		return store.stopHeartbeatRun(runId);
 	}
 
+	async function loadHeartbeatNextRun(): Promise<HeartbeatNextRunResult> {
+		return store.heartbeatNextRun();
+	}
+
 	// Run-chat modal: open a live watch on the run's conversation (the store owns
 	// the ChatStore + the `chat.subscribe` stream), and tear it down on close.
 	function openRunChat(conversationId: string): ChatStore {
@@ -682,6 +687,7 @@
 			stopRun={stopHeartbeatRun}
 			loadVariables={loadSystemPromptVariablesPrompt}
 			loadDefaultPrompt={loadSystemPromptPrompt}
+			loadNextRun={loadHeartbeatNextRun}
 			onOpenRun={(run) => (heartbeatRun = run)}
 		/>
 	{/if}
