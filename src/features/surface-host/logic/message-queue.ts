@@ -14,31 +14,31 @@ import type { QueuedMessage } from "@dispatch/wire";
  * payload shape.
  */
 export interface MessageQueueData {
-	readonly messages: readonly QueuedMessage[];
+  readonly messages: readonly QueuedMessage[];
 }
 
 function isQueuedMessage(v: unknown): v is QueuedMessage {
-	if (typeof v !== "object" || v === null) return false;
-	const o = v as Record<string, unknown>;
-	return (
-		typeof o.id === "string" &&
-		typeof o.text === "string" &&
-		typeof o.queuedAt === "number" &&
-		Number.isFinite(o.queuedAt)
-	);
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return (
+    typeof o.id === "string" &&
+    typeof o.text === "string" &&
+    typeof o.queuedAt === "number" &&
+    Number.isFinite(o.queuedAt)
+  );
 }
 
 export function parseMessageQueuePayload(payload: unknown): MessageQueueData | null {
-	if (typeof payload !== "object" || payload === null) return null;
-	const obj = payload as Record<string, unknown>;
-	const raw = obj.messages;
-	if (!Array.isArray(raw)) return null;
-	const messages: QueuedMessage[] = [];
-	for (const entry of raw) {
-		if (!isQueuedMessage(entry)) return null;
-		messages.push(entry);
-	}
-	return { messages };
+  if (typeof payload !== "object" || payload === null) return null;
+  const obj = payload as Record<string, unknown>;
+  const raw = obj.messages;
+  if (!Array.isArray(raw)) return null;
+  const messages: QueuedMessage[] = [];
+  for (const entry of raw) {
+    if (!isQueuedMessage(entry)) return null;
+    messages.push(entry);
+  }
+  return { messages };
 }
 
 /** The `rendererId` the message-queue extension's `custom` surface field uses. */

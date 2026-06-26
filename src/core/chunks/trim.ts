@@ -29,54 +29,54 @@ export const MAX_CHAT_LIMIT = 100_000;
  * [MIN_CHAT_LIMIT, MAX_CHAT_LIMIT].
  */
 export function normalizeChatLimit(value: unknown): number {
-	if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CHAT_LIMIT;
-	const n = Math.floor(value);
-	if (n < MIN_CHAT_LIMIT) return MIN_CHAT_LIMIT;
-	if (n > MAX_CHAT_LIMIT) return MAX_CHAT_LIMIT;
-	return n;
+  if (typeof value !== "number" || !Number.isFinite(value)) return DEFAULT_CHAT_LIMIT;
+  const n = Math.floor(value);
+  if (n < MIN_CHAT_LIMIT) return MIN_CHAT_LIMIT;
+  if (n > MAX_CHAT_LIMIT) return MAX_CHAT_LIMIT;
+  return n;
 }
 
 /** The bulk-unload unit: a quarter of the limit, rounded up. */
 export function unloadCount(limit: number): number {
-	return Math.ceil(limit / 4);
+  return Math.ceil(limit / 4);
 }
 
 /** The fresh-load window: 75% of the limit, rounded down (≥ 1). */
 export function initialWindowSize(limit: number): number {
-	return Math.max(1, Math.floor(limit * 0.75));
+  return Math.max(1, Math.floor(limit * 0.75));
 }
 
 /** Total loaded (rendered) chunk count: committed + provisional + accumulating. */
 function totalCount(state: TranscriptState): number {
-	return state.committed.length + state.provisional.length + (state.accumulating !== null ? 1 : 0);
+  return state.committed.length + state.provisional.length + (state.accumulating !== null ? 1 : 0);
 }
 
 function countThinking(chunks: readonly StoredChunk[]): number {
-	let n = 0;
-	for (const c of chunks) {
-		if (c.chunk.type === "thinking") n++;
-	}
-	return n;
+  let n = 0;
+  for (const c of chunks) {
+    if (c.chunk.type === "thinking") n++;
+  }
+  return n;
 }
 
 /** Drop the `drop` oldest committed chunks, advancing the watermark + thinking base. */
 function dropOldest(state: TranscriptState, drop: number): TranscriptState {
-	const dropped = state.committed.slice(0, drop);
-	const kept = state.committed.slice(drop);
-	const first = kept[0];
-	const lastDropped = dropped[dropped.length - 1];
-	let hiddenBeforeSeq = state.hiddenBeforeSeq;
-	if (first !== undefined) {
-		hiddenBeforeSeq = first.seq;
-	} else if (lastDropped !== undefined) {
-		hiddenBeforeSeq = lastDropped.seq + 1;
-	}
-	return {
-		...state,
-		committed: kept,
-		hiddenBeforeSeq,
-		hiddenThinkingCount: state.hiddenThinkingCount + countThinking(dropped),
-	};
+  const dropped = state.committed.slice(0, drop);
+  const kept = state.committed.slice(drop);
+  const first = kept[0];
+  const lastDropped = dropped[dropped.length - 1];
+  let hiddenBeforeSeq = state.hiddenBeforeSeq;
+  if (first !== undefined) {
+    hiddenBeforeSeq = first.seq;
+  } else if (lastDropped !== undefined) {
+    hiddenBeforeSeq = lastDropped.seq + 1;
+  }
+  return {
+    ...state,
+    committed: kept,
+    hiddenBeforeSeq,
+    hiddenThinkingCount: state.hiddenThinkingCount + countThinking(dropped),
+  };
 }
 
 /**
@@ -89,36 +89,36 @@ function dropOldest(state: TranscriptState, drop: number): TranscriptState {
  * to keep the browser responsive during very long turns.
  */
 export function trimTranscript(state: TranscriptState, limit: number): TranscriptState {
-	if (!Number.isFinite(limit) || limit <= 0) return state;
-	const total = totalCount(state);
-	if (total <= limit) return state;
-	const quarter = unloadCount(limit);
-	const passes = Math.ceil((total - limit) / quarter);
+  if (!Number.isFinite(limit) || limit <= 0) return state;
+  const total = totalCount(state);
+  if (total <= limit) return state;
+  const quarter = unloadCount(limit);
+  const passes = Math.ceil((total - limit) / quarter);
 
-	// First, drop oldest committed chunks (the usual path).
-	const committedDrop = Math.min(passes * quarter, state.committed.length);
-	let next = committedDrop > 0 ? dropOldest(state, committedDrop) : state;
+  // First, drop oldest committed chunks (the usual path).
+  const committedDrop = Math.min(passes * quarter, state.committed.length);
+  let next = committedDrop > 0 ? dropOldest(state, committedDrop) : state;
 
-	// If still over the limit and committed is exhausted, drop oldest
-	// provisional chunks (the in-flight turn). These chunks have no seq
-	// (not yet persisted) and can't be "Show earlier" — but dropping them
-	// keeps the browser responsive. They'll come back as committed when
-	// the turn seals and syncTail fetches them from the server.
-	const remaining = totalCount(next);
-	if (remaining > limit && next.provisional.length > 0) {
-		const provisionalDrop = Math.min(
-			Math.ceil((remaining - limit) / quarter) * quarter,
-			next.provisional.length,
-		);
-		if (provisionalDrop > 0) {
-			next = {
-				...next,
-				provisional: next.provisional.slice(provisionalDrop),
-			};
-		}
-	}
+  // If still over the limit and committed is exhausted, drop oldest
+  // provisional chunks (the in-flight turn). These chunks have no seq
+  // (not yet persisted) and can't be "Show earlier" — but dropping them
+  // keeps the browser responsive. They'll come back as committed when
+  // the turn seals and syncTail fetches them from the server.
+  const remaining = totalCount(next);
+  if (remaining > limit && next.provisional.length > 0) {
+    const provisionalDrop = Math.min(
+      Math.ceil((remaining - limit) / quarter) * quarter,
+      next.provisional.length,
+    );
+    if (provisionalDrop > 0) {
+      next = {
+        ...next,
+        provisional: next.provisional.slice(provisionalDrop),
+      };
+    }
+  }
 
-	return next;
+  return next;
 }
 
 /**
@@ -127,10 +127,10 @@ export function trimTranscript(state: TranscriptState, limit: number): Transcrip
  * already within the window.
  */
 export function windowTranscript(state: TranscriptState, maxCommitted: number): TranscriptState {
-	if (!Number.isFinite(maxCommitted) || maxCommitted < 0) return state;
-	const drop = state.committed.length - maxCommitted;
-	if (drop <= 0) return state;
-	return dropOldest(state, drop);
+  if (!Number.isFinite(maxCommitted) || maxCommitted < 0) return state;
+  const drop = state.committed.length - maxCommitted;
+  if (drop <= 0) return state;
+  return dropOldest(state, drop);
 }
 
 /**
@@ -139,7 +139,7 @@ export function windowTranscript(state: TranscriptState, maxCommitted: number): 
  * committed list (all-provisional overflow). 0 = window start unknown/origin.
  */
 function oldestLoadedSeq(state: TranscriptState): number {
-	return state.committed[0]?.seq ?? state.hiddenBeforeSeq;
+  return state.committed[0]?.seq ?? state.hiddenBeforeSeq;
 }
 
 /**
@@ -154,22 +154,22 @@ function oldestLoadedSeq(state: TranscriptState): number {
  * contractual origin) or nothing older is known locally.
  */
 export function restoreEarlier(
-	state: TranscriptState,
-	earlier: readonly StoredChunk[],
-	count: number,
+  state: TranscriptState,
+  earlier: readonly StoredChunk[],
+  count: number,
 ): TranscriptState {
-	const oldest = oldestLoadedSeq(state);
-	if (oldest <= 1) return state;
-	const below = earlier.filter((c) => c.seq < oldest).sort((a, b) => a.seq - b.seq);
-	if (below.length === 0) return state;
-	const keep = below.slice(-Math.max(1, count));
-	const firstKept = keep[0];
-	return {
-		...state,
-		committed: [...keep, ...state.committed],
-		hiddenBeforeSeq: firstKept?.seq ?? state.hiddenBeforeSeq,
-		hiddenThinkingCount: Math.max(0, state.hiddenThinkingCount - countThinking(keep)),
-	};
+  const oldest = oldestLoadedSeq(state);
+  if (oldest <= 1) return state;
+  const below = earlier.filter((c) => c.seq < oldest).sort((a, b) => a.seq - b.seq);
+  if (below.length === 0) return state;
+  const keep = below.slice(-Math.max(1, count));
+  const firstKept = keep[0];
+  return {
+    ...state,
+    committed: [...keep, ...state.committed],
+    hiddenBeforeSeq: firstKept?.seq ?? state.hiddenBeforeSeq,
+    hiddenThinkingCount: Math.max(0, state.hiddenThinkingCount - countThinking(keep)),
+  };
 }
 
 /**
@@ -181,5 +181,5 @@ export function restoreEarlier(
  * fresh load.
  */
 export function selectHasEarlier(state: TranscriptState): boolean {
-	return oldestLoadedSeq(state) > 1;
+  return oldestLoadedSeq(state) > 1;
 }

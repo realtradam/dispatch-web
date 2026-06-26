@@ -14,15 +14,15 @@
  * No-op safely when there is no `document` (SSR / jsdom guards).
  */
 export function portal(node: HTMLElement): { destroy(): void } {
-	if (typeof document === "undefined") {
-		return { destroy() {} };
-	}
-	document.body.appendChild(node);
-	return {
-		destroy() {
-			if (node.parentNode === document.body) {
-				document.body.removeChild(node);
-			}
-		},
-	};
+  if (typeof document === "undefined") {
+    return { destroy() {} };
+  }
+  document.body.appendChild(node);
+  return {
+    destroy() {
+      if (node.parentNode === document.body) {
+        document.body.removeChild(node);
+      }
+    },
+  };
 }

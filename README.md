@@ -1,6 +1,6 @@
 # Dispatch Web
 
-The **web frontend** for [Dispatch](../dispatch-backend) — a separate repo built to the same
+The **web frontend** for [Dispatch](../backend) — a separate repo built to the same
 methodology (thin shell + pure feature libraries + a backend-driven *surface* host). It consumes
 the backend's typed contracts over HTTP + a WebSocket and ships no business logic the backend
 doesn't expose.
@@ -17,17 +17,17 @@ doesn't expose.
 
 - [Bun](https://bun.sh) (v1.3+).
 - **The backend repo as a sibling directory** — this repo links `@dispatch/ui-contract` from
-  `../dispatch-backend` via a `file:` dependency:
+  `../backend` via a `file:` dependency:
   ```
   dispatch/
-    dispatch-backend/    # the backend (Dispatch server)
-    dispatch-web/    # this repo
+    backend/    # the backend (Dispatch server)
+    frontend/    # this repo
   ```
-- The **backend server running** for surfaces to appear (see `../dispatch-backend/README.md`).
+- The **backend server running** for surfaces to appear (see `../backend/README.md`).
 
 ```sh
-cd dispatch-web
-bun install          # links @dispatch/ui-contract from ../dispatch-backend
+cd frontend
+bun install          # links @dispatch/ui-contract from ../backend
 ```
 
 ---
@@ -36,17 +36,17 @@ bun install          # links @dispatch/ui-contract from ../dispatch-backend
 
 ```sh
 # 1) start the backend (sibling repo) — HTTP :24203 + surface WS :24205
-cd ../dispatch-backend && bun run dev
+cd ../backend && bun run dev
 
 # 2) start this dev server — Vite on :24204
-cd ../dispatch-web && bun run dev
+cd ../frontend && bun run dev
 ```
 
 Open **http://localhost:24204**. You'll see the surface catalog (e.g. "Loaded Extensions"); the
 frontend connects to the backend's surface WebSocket at `ws://localhost:24205` (override with
 `VITE_WS_URL`).
 
-> **Tip — run both at once with live reload:** the backend repo ships `../dispatch-backend/bin/up`
+> **Tip — run both at once with live reload:** the backend repo ships `../backend/bin/up`
 > (also `bun run dev:all` there) which starts the backend (`bun --watch`) + this dev server
 > (Vite HMR) together; **Ctrl-C stops both**.
 
@@ -64,7 +64,7 @@ When browsing from a **different device than the one running the backend**, set 
 1. **Reach the dev server:** open `http://<this-machine-tailscale-name>:24204`. (The backend's Bun
    servers already bind all interfaces, so `:24203`/`:24205` are reachable over Tailscale too.)
 2. **Point the frontend at the backend's WebSocket.** The WS URL runs in *your browser*, so
-   `localhost` would mean *your* device — set it to the backend host. Create `dispatch-web/.env`:
+   `localhost` would mean *your* device — set it to the backend host. Create `frontend/.env`:
    ```sh
    VITE_WS_URL=ws://<backend-machine-tailscale-name>:24205
    ```
@@ -99,5 +99,5 @@ bun run check        # biome (.ts/.js; .svelte correctness is svelte-check's job
 
 ## Documentation
 
-- **Design + plan:** `../dispatch-backend/notes/frontend-design.md`
+- **Design + plan:** `../backend/notes/frontend-design.md`
 - **Build rules + workflow:** `AGENTS.md` · **Vocabulary:** `GLOSSARY.md`

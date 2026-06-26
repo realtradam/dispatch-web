@@ -1,34 +1,34 @@
 import type {
-	InvokeMessage,
-	SubscribeMessage,
-	SurfaceServerMessage,
-	SurfaceSpec,
-	UnsubscribeMessage,
+  InvokeMessage,
+  SubscribeMessage,
+  SurfaceServerMessage,
+  SurfaceSpec,
+  UnsubscribeMessage,
 } from "@dispatch/ui-contract";
 import type { ProtocolResult, ProtocolState } from "./types";
 
 /** The initial protocol state: empty catalog, no subscriptions, no error. */
 export function initialState(): ProtocolState {
-	return {
-		catalog: [],
-		subscriptions: new Map(),
-		lastError: null,
-	};
+  return {
+    catalog: [],
+    subscriptions: new Map(),
+    lastError: null,
+  };
 }
 
 // ── Message builders (respect exactOptionalPropertyTypes: omit `conversationId`
 //    entirely for a global subscription rather than setting it to `undefined`). ──
 
 function subMsg(surfaceId: string, conversationId: string | undefined): SubscribeMessage {
-	return conversationId === undefined
-		? { type: "subscribe", surfaceId }
-		: { type: "subscribe", surfaceId, conversationId };
+  return conversationId === undefined
+    ? { type: "subscribe", surfaceId }
+    : { type: "subscribe", surfaceId, conversationId };
 }
 
 function unsubMsg(surfaceId: string, conversationId: string | undefined): UnsubscribeMessage {
-	return conversationId === undefined
-		? { type: "unsubscribe", surfaceId }
-		: { type: "unsubscribe", surfaceId, conversationId };
+  return conversationId === undefined
+    ? { type: "unsubscribe", surfaceId }
+    : { type: "unsubscribe", surfaceId, conversationId };
 }
 
 /**
@@ -38,37 +38,37 @@ function unsubMsg(surfaceId: string, conversationId: string | undefined): Unsubs
  * surface echoes nothing (`undefined`) and is always current.
  */
 function isCurrent(desiredId: string | undefined, echoedId: string | undefined): boolean {
-	return echoedId === undefined || echoedId === desiredId;
+  return echoedId === undefined || echoedId === desiredId;
 }
 
 /** Fold an inbound server message into the next protocol state. */
 export function applyServerMessage(state: ProtocolState, msg: SurfaceServerMessage): ProtocolState {
-	switch (msg.type) {
-		case "catalog":
-			return { ...state, catalog: msg.catalog };
+  switch (msg.type) {
+    case "catalog":
+      return { ...state, catalog: msg.catalog };
 
-		case "surface": {
-			const sub = state.subscriptions.get(msg.spec.id);
-			if (sub === undefined) return state;
-			if (!isCurrent(sub.conversationId, msg.conversationId)) return state;
-			const subs = new Map(state.subscriptions);
-			subs.set(msg.spec.id, { conversationId: sub.conversationId, spec: msg.spec });
-			return { ...state, subscriptions: subs };
-		}
+    case "surface": {
+      const sub = state.subscriptions.get(msg.spec.id);
+      if (sub === undefined) return state;
+      if (!isCurrent(sub.conversationId, msg.conversationId)) return state;
+      const subs = new Map(state.subscriptions);
+      subs.set(msg.spec.id, { conversationId: sub.conversationId, spec: msg.spec });
+      return { ...state, subscriptions: subs };
+    }
 
-		case "update": {
-			const { surfaceId, spec, conversationId } = msg.update;
-			const sub = state.subscriptions.get(surfaceId);
-			if (sub === undefined) return state;
-			if (!isCurrent(sub.conversationId, conversationId)) return state;
-			const subs = new Map(state.subscriptions);
-			subs.set(surfaceId, { conversationId: sub.conversationId, spec });
-			return { ...state, subscriptions: subs };
-		}
+    case "update": {
+      const { surfaceId, spec, conversationId } = msg.update;
+      const sub = state.subscriptions.get(surfaceId);
+      if (sub === undefined) return state;
+      if (!isCurrent(sub.conversationId, conversationId)) return state;
+      const subs = new Map(state.subscriptions);
+      subs.set(surfaceId, { conversationId: sub.conversationId, spec });
+      return { ...state, subscriptions: subs };
+    }
 
-		case "error":
-			return { ...state, lastError: msg };
-	}
+    case "error":
+      return { ...state, lastError: msg };
+  }
 }
 
 /**
@@ -82,23 +82,23 @@ export function applyServerMessage(state: ProtocolState, msg: SurfaceServerMessa
  *   one, retaining the previous spec until the new one arrives (no flicker).
  */
 export function subscribe(
-	state: ProtocolState,
-	surfaceId: string,
-	conversationId?: string,
+  state: ProtocolState,
+  surfaceId: string,
+  conversationId?: string,
 ): ProtocolResult {
-	const existing = state.subscriptions.get(surfaceId);
-	if (existing !== undefined && existing.conversationId === conversationId) {
-		return { state, outgoing: [] };
-	}
-	const subs = new Map(state.subscriptions);
-	const outgoing: (SubscribeMessage | UnsubscribeMessage)[] = [];
-	const priorSpec: SurfaceSpec | null = existing?.spec ?? null;
-	if (existing !== undefined) {
-		outgoing.push(unsubMsg(surfaceId, existing.conversationId));
-	}
-	subs.set(surfaceId, { conversationId, spec: priorSpec });
-	outgoing.push(subMsg(surfaceId, conversationId));
-	return { state: { ...state, subscriptions: subs }, outgoing };
+  const existing = state.subscriptions.get(surfaceId);
+  if (existing !== undefined && existing.conversationId === conversationId) {
+    return { state, outgoing: [] };
+  }
+  const subs = new Map(state.subscriptions);
+  const outgoing: (SubscribeMessage | UnsubscribeMessage)[] = [];
+  const priorSpec: SurfaceSpec | null = existing?.spec ?? null;
+  if (existing !== undefined) {
+    outgoing.push(unsubMsg(surfaceId, existing.conversationId));
+  }
+  subs.set(surfaceId, { conversationId, spec: priorSpec });
+  outgoing.push(subMsg(surfaceId, conversationId));
+  return { state: { ...state, subscriptions: subs }, outgoing };
 }
 
 /**
@@ -107,16 +107,16 @@ export function subscribe(
  * not subscribed.
  */
 export function unsubscribe(state: ProtocolState, surfaceId: string): ProtocolResult {
-	const existing = state.subscriptions.get(surfaceId);
-	if (existing === undefined) {
-		return { state, outgoing: [] };
-	}
-	const subs = new Map(state.subscriptions);
-	subs.delete(surfaceId);
-	return {
-		state: { ...state, subscriptions: subs },
-		outgoing: [unsubMsg(surfaceId, existing.conversationId)],
-	};
+  const existing = state.subscriptions.get(surfaceId);
+  if (existing === undefined) {
+    return { state, outgoing: [] };
+  }
+  const subs = new Map(state.subscriptions);
+  subs.delete(surfaceId);
+  return {
+    state: { ...state, subscriptions: subs },
+    outgoing: [unsubMsg(surfaceId, existing.conversationId)],
+  };
 }
 
 /**
@@ -124,20 +124,20 @@ export function unsubscribe(state: ProtocolState, surfaceId: string): ProtocolRe
  * `conversationId` for a scoped surface); no state change.
  */
 export function invoke(
-	state: ProtocolState,
-	surfaceId: string,
-	actionId: string,
-	payload?: unknown,
-	conversationId?: string,
+  state: ProtocolState,
+  surfaceId: string,
+  actionId: string,
+  payload?: unknown,
+  conversationId?: string,
 ): ProtocolResult {
-	const outgoing: InvokeMessage =
-		conversationId === undefined
-			? { type: "invoke", surfaceId, actionId, payload }
-			: { type: "invoke", surfaceId, actionId, payload, conversationId };
-	return { state, outgoing: [outgoing] };
+  const outgoing: InvokeMessage =
+    conversationId === undefined
+      ? { type: "invoke", surfaceId, actionId, payload }
+      : { type: "invoke", surfaceId, actionId, payload, conversationId };
+  return { state, outgoing: [outgoing] };
 }
 
 /** The current spec for a subscribed surface, or `null` if absent/unsubscribed. */
 export function getSurfaceSpec(state: ProtocolState, surfaceId: string): SurfaceSpec | null {
-	return state.subscriptions.get(surfaceId)?.spec ?? null;
+  return state.subscriptions.get(surfaceId)?.spec ?? null;
 }

@@ -1,14 +1,14 @@
 import type { ReasoningEffort } from "@dispatch/transport-contract";
 import {
-	DEFAULT_REASONING_EFFORT,
-	effectiveEffort,
-	effortOptions,
+  DEFAULT_REASONING_EFFORT,
+  effectiveEffort,
+  effortOptions,
 } from "../../chat/reasoning-effort";
 import type {
-	HeartbeatConfig,
-	HeartbeatConfigPatch,
-	HeartbeatRun,
-	HeartbeatRunStatus,
+  HeartbeatConfig,
+  HeartbeatConfigPatch,
+  HeartbeatRun,
+  HeartbeatRunStatus,
 } from "./types";
 
 /**
@@ -26,17 +26,17 @@ export type Badge = "success" | "warning" | "error" | "neutral";
 
 /** A run shaped for display in the scrolling runs list. */
 export interface HeartbeatRunView {
-	readonly id: string;
-	readonly conversationId: string;
-	readonly status: HeartbeatRunStatus;
-	readonly statusLabel: string;
-	readonly badge: Badge;
-	/** True while the run is in flight (show a spinner). */
-	readonly busy: boolean;
-	/** A short absolute clock label, e.g. "14:30:05". */
-	readonly timeLabel: string;
-	/** A relative label, e.g. "5m ago" / "just now". */
-	readonly relativeLabel: string;
+  readonly id: string;
+  readonly conversationId: string;
+  readonly status: HeartbeatRunStatus;
+  readonly statusLabel: string;
+  readonly badge: Badge;
+  /** True while the run is in flight (show a spinner). */
+  readonly busy: boolean;
+  /** A short absolute clock label, e.g. "14:30:05". */
+  readonly timeLabel: string;
+  /** A relative label, e.g. "5m ago" / "just now". */
+  readonly relativeLabel: string;
 }
 
 const RUNNING_LABEL = "Running";
@@ -49,25 +49,25 @@ const STOPPED_LABEL = "Stopped";
  * status visual treatment.
  */
 export function badgeForStatus(status: HeartbeatRunStatus): { badge: Badge; busy: boolean } {
-	switch (status) {
-		case "running":
-			return { badge: "warning", busy: true };
-		case "completed":
-			return { badge: "success", busy: false };
-		case "stopped":
-			return { badge: "neutral", busy: false };
-	}
+  switch (status) {
+    case "running":
+      return { badge: "warning", busy: true };
+    case "completed":
+      return { badge: "success", busy: false };
+    case "stopped":
+      return { badge: "neutral", busy: false };
+  }
 }
 
 export function statusLabelFor(status: HeartbeatRunStatus): string {
-	switch (status) {
-		case "running":
-			return RUNNING_LABEL;
-		case "completed":
-			return COMPLETED_LABEL;
-		case "stopped":
-			return STOPPED_LABEL;
-	}
+  switch (status) {
+    case "running":
+      return RUNNING_LABEL;
+    case "completed":
+      return COMPLETED_LABEL;
+    case "stopped":
+      return STOPPED_LABEL;
+  }
 }
 
 /**
@@ -77,9 +77,9 @@ export function statusLabelFor(status: HeartbeatRunStatus): string {
  * clock label doesn't depend on the current time).
  */
 export function formatRunTime(triggeredAt: string): string {
-	const t = parseTime(triggeredAt);
-	if (t === null) return "—";
-	return clockLabel(t);
+  const t = parseTime(triggeredAt);
+  if (t === null) return "—";
+  return clockLabel(t);
 }
 
 /**
@@ -87,16 +87,16 @@ export function formatRunTime(triggeredAt: string): string {
  * absolute date+time (so an old run reads "Jun 24, 14:30"). Pure via `now`.
  */
 export function relativeLabel(triggeredAt: string, now: number = Date.now()): string {
-	const t = parseTime(triggeredAt);
-	if (t === null) return "—";
-	const deltaMs = now - t;
-	if (deltaMs < 0) return "just now";
-	const mins = Math.floor(deltaMs / 60000);
-	if (mins < 1) return "just now";
-	if (mins < 60) return `${mins}m ago`;
-	const hours = Math.floor(mins / 60);
-	if (hours < 24) return `${hours}h ago`;
-	return dateLabel(t);
+  const t = parseTime(triggeredAt);
+  if (t === null) return "—";
+  const deltaMs = now - t;
+  if (deltaMs < 0) return "just now";
+  const mins = Math.floor(deltaMs / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hours = Math.floor(mins / 60);
+  if (hours < 24) return `${hours}h ago`;
+  return dateLabel(t);
 }
 
 /**
@@ -104,52 +104,52 @@ export function relativeLabel(triggeredAt: string, now: number = Date.now()): st
  * `Date.now()`); the composition-root component passes nothing in production.
  */
 export function viewRun(run: HeartbeatRun, now: number = Date.now()): HeartbeatRunView {
-	const { badge, busy } = badgeForStatus(run.status);
-	return {
-		id: run.id,
-		conversationId: run.conversationId,
-		status: run.status,
-		statusLabel: statusLabelFor(run.status),
-		badge,
-		busy,
-		timeLabel: formatRunTime(run.triggeredAt),
-		relativeLabel: relativeLabel(run.triggeredAt, now),
-	};
+  const { badge, busy } = badgeForStatus(run.status);
+  return {
+    id: run.id,
+    conversationId: run.conversationId,
+    status: run.status,
+    statusLabel: statusLabelFor(run.status),
+    badge,
+    busy,
+    timeLabel: formatRunTime(run.triggeredAt),
+    relativeLabel: relativeLabel(run.triggeredAt, now),
+  };
 }
 
 export function viewRuns(
-	runs: readonly HeartbeatRun[],
-	now: number = Date.now(),
+  runs: readonly HeartbeatRun[],
+  now: number = Date.now(),
 ): readonly HeartbeatRunView[] {
-	return runs.map((r) => viewRun(r, now));
+  return runs.map((r) => viewRun(r, now));
 }
 
 // ── Time formatting (pure: no `Date` mutation; injectable `now` for tests) ─────
 
 /** Parse an ISO timestamp to epoch ms, or null if unparseable. */
 function parseTime(iso: string): number | null {
-	if (typeof iso !== "string" || iso.length === 0) return null;
-	const t = Date.parse(iso);
-	return Number.isNaN(t) ? null : t;
+  if (typeof iso !== "string" || iso.length === 0) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
 }
 
 /** `HH:MM:SS` in the viewer's locale (24h where the locale uses it). */
 function clockLabel(epochMs: number): string {
-	const d = new Date(epochMs);
-	const hh = String(d.getHours()).padStart(2, "0");
-	const mm = String(d.getMinutes()).padStart(2, "0");
-	const ss = String(d.getSeconds()).padStart(2, "0");
-	return `${hh}:${mm}:${ss}`;
+  const d = new Date(epochMs);
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  const ss = String(d.getSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
 }
 
 /** A short absolute date+time label for an old run, e.g. "Jun 24, 14:30". */
 function dateLabel(epochMs: number): string {
-	const d = new Date(epochMs);
-	const month = d.toLocaleString(undefined, { month: "short" });
-	const day = d.getDate();
-	const hh = String(d.getHours()).padStart(2, "0");
-	const mm = String(d.getMinutes()).padStart(2, "0");
-	return `${month} ${day}, ${hh}:${mm}`;
+  const d = new Date(epochMs);
+  const month = d.toLocaleString(undefined, { month: "short" });
+  const day = d.getDate();
+  const hh = String(d.getHours()).padStart(2, "0");
+  const mm = String(d.getMinutes()).padStart(2, "0");
+  return `${month} ${day}, ${hh}:${mm}`;
 }
 
 // ── Next-run countdown (timer of when the next heartbeat fires) ───────────────
@@ -162,9 +162,9 @@ function dateLabel(epochMs: number): string {
 
 /** Parse an ISO timestamp to epoch-ms, or null if unparseable. */
 export function nextRunEpoch(iso: string | null | undefined): number | null {
-	if (typeof iso !== "string" || iso.length === 0) return null;
-	const t = Date.parse(iso);
-	return Number.isNaN(t) ? null : t;
+  if (typeof iso !== "string" || iso.length === 0) return null;
+  const t = Date.parse(iso);
+  return Number.isNaN(t) ? null : t;
 }
 
 /**
@@ -172,15 +172,15 @@ export function nextRunEpoch(iso: string | null | undefined): number | null {
  * "due" (≤ 0), or "—" (unknown/null). Pure via the injected `remainingMs`.
  */
 export function formatCountdown(remainingMs: number | null): string {
-	if (remainingMs === null) return "—";
-	if (remainingMs <= 0) return "due";
-	const totalSec = Math.floor(remainingMs / 1000);
-	const hours = Math.floor(totalSec / 3600);
-	const mins = Math.floor((totalSec % 3600) / 60);
-	const secs = totalSec % 60;
-	if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m`;
-	if (mins > 0) return `${mins}m ${String(secs).padStart(2, "0")}s`;
-	return `${secs}s`;
+  if (remainingMs === null) return "—";
+  if (remainingMs <= 0) return "due";
+  const totalSec = Math.floor(remainingMs / 1000);
+  const hours = Math.floor(totalSec / 3600);
+  const mins = Math.floor((totalSec % 3600) / 60);
+  const secs = totalSec % 60;
+  if (hours > 0) return `${hours}h ${String(mins).padStart(2, "0")}m`;
+  if (mins > 0) return `${mins}m ${String(secs).padStart(2, "0")}s`;
+  return `${secs}s`;
 }
 
 /**
@@ -192,18 +192,18 @@ export function formatCountdown(remainingMs: number | null): string {
  * run is latest + interval, independent of the current time).
  */
 export function approximateNextRunEpoch(
-	runs: readonly HeartbeatRun[],
-	intervalMinutes: number,
-	enabled: boolean,
+  runs: readonly HeartbeatRun[],
+  intervalMinutes: number,
+  enabled: boolean,
 ): number | null {
-	if (!enabled) return null;
-	let latest: number | null = null;
-	for (const r of runs) {
-		const t = Date.parse(r.triggeredAt);
-		if (!Number.isNaN(t) && (latest === null || t > latest)) latest = t;
-	}
-	if (latest === null) return null;
-	return latest + intervalMinutes * 60_000;
+  if (!enabled) return null;
+  let latest: number | null = null;
+  for (const r of runs) {
+    const t = Date.parse(r.triggeredAt);
+    if (!Number.isNaN(t) && (latest === null || t > latest)) latest = t;
+  }
+  if (latest === null) return null;
+  return latest + intervalMinutes * 60_000;
 }
 
 // ── Config form ───────────────────────────────────────────────────────────────
@@ -219,13 +219,13 @@ export function approximateNextRunEpoch(
  * (`patchFromForm`); the backend stores a single `intervalMinutes`.
  */
 export interface HeartbeatFormState {
-	enabled: boolean;
-	systemPrompt: string;
-	taskPrompt: string;
-	intervalHours: number;
-	intervalMinutes: number;
-	model: string;
-	reasoningEffort: ReasoningEffort;
+  enabled: boolean;
+  systemPrompt: string;
+  taskPrompt: string;
+  intervalHours: number;
+  intervalMinutes: number;
+  model: string;
+  reasoningEffort: ReasoningEffort;
 }
 
 /** The default interval (minutes) shown for an empty/unset config. */
@@ -233,17 +233,17 @@ export const DEFAULT_INTERVAL_MINUTES = 30;
 
 /** Split a total-minutes value into { hours, minutes (0–59) }. Pure. */
 export function splitInterval(totalMinutes: number): { hours: number; minutes: number } {
-	const total = normalizeInterval(totalMinutes);
-	const hours = Math.floor(total / 60);
-	const minutes = total - hours * 60;
-	return { hours, minutes };
+  const total = normalizeInterval(totalMinutes);
+  const hours = Math.floor(total / 60);
+  const minutes = total - hours * 60;
+  return { hours, minutes };
 }
 
 /** Recombine hours + minutes into a clamped total-minutes value. Pure. */
 export function joinInterval(hours: number, minutes: number): number {
-	const h = Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) : 0;
-	const m = Number.isFinite(minutes) ? Math.max(0, Math.floor(minutes)) : 0;
-	return normalizeInterval(h * 60 + m);
+  const h = Number.isFinite(hours) ? Math.max(0, Math.floor(hours)) : 0;
+  const m = Number.isFinite(minutes) ? Math.max(0, Math.floor(minutes)) : 0;
+  return normalizeInterval(h * 60 + m);
 }
 
 /**
@@ -251,39 +251,39 @@ export function joinInterval(hours: number, minutes: number): number {
  * any malformed/absent backend field so the inputs are never `undefined`.
  */
 export function formFromConfig(config: HeartbeatConfig): HeartbeatFormState {
-	const { hours, minutes } = splitInterval(config.intervalMinutes);
-	return {
-		enabled: config.enabled === true,
-		systemPrompt: config.systemPrompt ?? "",
-		taskPrompt: config.taskPrompt ?? "",
-		intervalHours: hours,
-		intervalMinutes: minutes,
-		model: typeof config.model === "string" ? config.model : "",
-		reasoningEffort: effectiveEffort(config.reasoningEffort ?? null),
-	};
+  const { hours, minutes } = splitInterval(config.intervalMinutes);
+  return {
+    enabled: config.enabled === true,
+    systemPrompt: config.systemPrompt ?? "",
+    taskPrompt: config.taskPrompt ?? "",
+    intervalHours: hours,
+    intervalMinutes: minutes,
+    model: typeof config.model === "string" ? config.model : "",
+    reasoningEffort: effectiveEffort(config.reasoningEffort ?? null),
+  };
 }
 
 /** An empty form (before the config loads). */
 export function emptyForm(): HeartbeatFormState {
-	const { hours, minutes } = splitInterval(DEFAULT_INTERVAL_MINUTES);
-	return {
-		enabled: false,
-		systemPrompt: "",
-		taskPrompt: "",
-		intervalHours: hours,
-		intervalMinutes: minutes,
-		model: "",
-		reasoningEffort: DEFAULT_REASONING_EFFORT,
-	};
+  const { hours, minutes } = splitInterval(DEFAULT_INTERVAL_MINUTES);
+  return {
+    enabled: false,
+    systemPrompt: "",
+    taskPrompt: "",
+    intervalHours: hours,
+    intervalMinutes: minutes,
+    model: "",
+    reasoningEffort: DEFAULT_REASONING_EFFORT,
+  };
 }
 
 /** Clamp a raw interval to a sane positive-minute range (1–1440 = 1 min–24 h). */
 export function normalizeInterval(value: unknown): number {
-	const n = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_INTERVAL_MINUTES;
-	const int = Math.round(n);
-	if (int < 1) return 1;
-	if (int > 1440) return 1440;
-	return int;
+  const n = typeof value === "number" && Number.isFinite(value) ? value : DEFAULT_INTERVAL_MINUTES;
+  const int = Math.round(n);
+  if (int < 1) return 1;
+  if (int > 1440) return 1440;
+  return int;
 }
 
 /**
@@ -293,28 +293,28 @@ export function normalizeInterval(value: unknown): number {
  * heartbeat has no per-run override — it persists the level.
  */
 export function patchFromForm(form: HeartbeatFormState): HeartbeatConfigPatch {
-	return {
-		enabled: form.enabled,
-		systemPrompt: form.systemPrompt,
-		taskPrompt: form.taskPrompt,
-		intervalMinutes: joinInterval(form.intervalHours, form.intervalMinutes),
-		model: form.model,
-		reasoningEffort: form.reasoningEffort,
-	};
+  return {
+    enabled: form.enabled,
+    systemPrompt: form.systemPrompt,
+    taskPrompt: form.taskPrompt,
+    intervalMinutes: joinInterval(form.intervalHours, form.intervalMinutes),
+    model: form.model,
+    reasoningEffort: form.reasoningEffort,
+  };
 }
 
 /** Whether the form differs from the loaded config (drives the Save button). */
 export function formDiffers(form: HeartbeatFormState, config: HeartbeatConfig): boolean {
-	const { hours, minutes } = splitInterval(config.intervalMinutes);
-	return (
-		form.enabled !== config.enabled ||
-		form.systemPrompt !== (config.systemPrompt ?? "") ||
-		form.taskPrompt !== (config.taskPrompt ?? "") ||
-		form.intervalHours !== hours ||
-		form.intervalMinutes !== minutes ||
-		form.model !== (typeof config.model === "string" ? config.model : "") ||
-		form.reasoningEffort !== effectiveEffort(config.reasoningEffort ?? null)
-	);
+  const { hours, minutes } = splitInterval(config.intervalMinutes);
+  return (
+    form.enabled !== config.enabled ||
+    form.systemPrompt !== (config.systemPrompt ?? "") ||
+    form.taskPrompt !== (config.taskPrompt ?? "") ||
+    form.intervalHours !== hours ||
+    form.intervalMinutes !== minutes ||
+    form.model !== (typeof config.model === "string" ? config.model : "") ||
+    form.reasoningEffort !== effectiveEffort(config.reasoningEffort ?? null)
+  );
 }
 
 // ── System-prompt inheritance (heartbeat override ⇄ global default) ────────────
@@ -332,12 +332,12 @@ export function formDiffers(form: HeartbeatFormState, config: HeartbeatConfig): 
  * tweak) what will run — but a pre-filled default is NOT an explicit edit.
  */
 export function effectiveSystemPrompt(override: string, defaultPrompt: string): string {
-	return override !== "" ? override : defaultPrompt;
+  return override !== "" ? override : defaultPrompt;
 }
 
 /** Whether the heartbeat is inheriting the global default (empty override). */
 export function isInheritingSystemPrompt(override: string): boolean {
-	return override === "";
+  return override === "";
 }
 
 /**
@@ -348,8 +348,8 @@ export function isInheritingSystemPrompt(override: string): boolean {
  * — never duplicating the default into the heartbeat config.
  */
 export function persistedSystemPrompt(editable: string, defaultPrompt: string): string {
-	if (editable === "" || editable === defaultPrompt) return "";
-	return editable;
+  if (editable === "" || editable === defaultPrompt) return "";
+  return editable;
 }
 
 // The reasoning-effort `<option>`s are reused verbatim from the per-conversation
@@ -365,46 +365,46 @@ export { effortOptions };
 
 /** Narrow an untrusted string to the run-status enum, defaulting to "completed". */
 function asRunStatus(value: unknown): HeartbeatRunStatus {
-	if (value === "running" || value === "completed" || value === "stopped") return value;
-	return "completed";
+  if (value === "running" || value === "completed" || value === "stopped") return value;
+  return "completed";
 }
 
 /** Coerce an untrusted `GET .../heartbeat/runs` body into a typed run list. */
 export function normalizeHeartbeatRuns(data: unknown): readonly HeartbeatRun[] {
-	if (!isRecord(data) || !Array.isArray(data.runs)) return [];
-	const runs = data.runs as readonly unknown[];
-	return runs
-		.filter((r): r is Record<string, unknown> => r !== null && typeof r === "object")
-		.map((r) => ({
-			id: typeof r.id === "string" ? r.id : "",
-			conversationId: typeof r.conversationId === "string" ? r.conversationId : "",
-			triggeredAt: typeof r.triggeredAt === "string" ? r.triggeredAt : "",
-			status: asRunStatus(r.status),
-		}))
-		.filter((r) => r.id !== "" && r.conversationId !== "");
+  if (!isRecord(data) || !Array.isArray(data.runs)) return [];
+  const runs = data.runs as readonly unknown[];
+  return runs
+    .filter((r): r is Record<string, unknown> => r !== null && typeof r === "object")
+    .map((r) => ({
+      id: typeof r.id === "string" ? r.id : "",
+      conversationId: typeof r.conversationId === "string" ? r.conversationId : "",
+      triggeredAt: typeof r.triggeredAt === "string" ? r.triggeredAt : "",
+      status: asRunStatus(r.status),
+    }))
+    .filter((r) => r.id !== "" && r.conversationId !== "");
 }
 
 /** Coerce an untrusted `GET`/`PUT .../heartbeat` body into a typed config. */
 export function normalizeHeartbeatConfig(data: unknown): HeartbeatConfig {
-	const d = isRecord(data) ? data : {};
-	const effort = d.reasoningEffort;
-	return {
-		enabled: d.enabled === true,
-		systemPrompt: typeof d.systemPrompt === "string" ? d.systemPrompt : "",
-		taskPrompt: typeof d.taskPrompt === "string" ? d.taskPrompt : "",
-		intervalMinutes: normalizeInterval(d.intervalMinutes),
-		model: typeof d.model === "string" ? d.model : "",
-		reasoningEffort:
-			effort === "low" ||
-			effort === "medium" ||
-			effort === "high" ||
-			effort === "xhigh" ||
-			effort === "max"
-				? effort
-				: null,
-	};
+  const d = isRecord(data) ? data : {};
+  const effort = d.reasoningEffort;
+  return {
+    enabled: d.enabled === true,
+    systemPrompt: typeof d.systemPrompt === "string" ? d.systemPrompt : "",
+    taskPrompt: typeof d.taskPrompt === "string" ? d.taskPrompt : "",
+    intervalMinutes: normalizeInterval(d.intervalMinutes),
+    model: typeof d.model === "string" ? d.model : "",
+    reasoningEffort:
+      effort === "low" ||
+      effort === "medium" ||
+      effort === "high" ||
+      effort === "xhigh" ||
+      effort === "max"
+        ? effort
+        : null,
+  };
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
-	return value !== null && typeof value === "object";
+  return value !== null && typeof value === "object";
 }
