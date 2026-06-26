@@ -2,7 +2,7 @@ import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Tab } from "./tabs";
-import TabBar from "./ui/TabBar.svelte";
+import TabList from "./ui/TabList.svelte";
 
 const sampleTabs: readonly Tab[] = [
   { conversationId: "c1", model: "openai/gpt-4", title: "First", workspaceId: "default" },
@@ -10,9 +10,9 @@ const sampleTabs: readonly Tab[] = [
   { conversationId: "c3", model: "google/gemini", title: "Third", workspaceId: "default" },
 ];
 
-describe("TabBar", () => {
+describe("TabList", () => {
   it("renders one role=tab element per tab showing each title", () => {
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c1",
@@ -29,8 +29,8 @@ describe("TabBar", () => {
     expect(tabs[2]).toHaveTextContent("Third");
   });
 
-  it("applies tab-active to the active tab only", () => {
-    render(TabBar, {
+  it("marks the active tab as aria-selected", () => {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c2",
@@ -41,24 +41,9 @@ describe("TabBar", () => {
     });
 
     const tabs = screen.getAllByRole("tab");
-    expect(tabs[0]).not.toHaveClass("tab-active");
-    expect(tabs[1]).toHaveClass("tab-active");
-    expect(tabs[2]).not.toHaveClass("tab-active");
-  });
-
-  it("applies tab-active to New chat button when activeConversationId is null", () => {
-    render(TabBar, {
-      props: {
-        tabs: sampleTabs,
-        activeConversationId: null,
-        onSelect: vi.fn(),
-        onClose: vi.fn(),
-        onNewDraft: vi.fn(),
-      },
-    });
-
-    const newChat = screen.getByRole("button", { name: "New chat" });
-    expect(newChat).toHaveClass("tab-active");
+    expect(tabs[0]).toHaveAttribute("aria-selected", "false");
+    expect(tabs[1]).toHaveAttribute("aria-selected", "true");
+    expect(tabs[2]).toHaveAttribute("aria-selected", "false");
   });
 
   it("calls onSelect with the conversationId when a tab is clicked", async () => {
@@ -66,7 +51,7 @@ describe("TabBar", () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
 
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c1",
@@ -91,7 +76,7 @@ describe("TabBar", () => {
     const onClose = vi.fn();
     const user = userEvent.setup();
 
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c1",
@@ -115,7 +100,7 @@ describe("TabBar", () => {
     const onNewDraft = vi.fn();
     const user = userEvent.setup();
 
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c1",
@@ -131,23 +116,8 @@ describe("TabBar", () => {
     expect(onNewDraft).toHaveBeenCalledTimes(1);
   });
 
-  it("the New chat button has the sticky class", () => {
-    render(TabBar, {
-      props: {
-        tabs: sampleTabs,
-        activeConversationId: "c1",
-        onSelect: vi.fn(),
-        onClose: vi.fn(),
-        onNewDraft: vi.fn(),
-      },
-    });
-
-    const newChat = screen.getByRole("button", { name: "New chat" });
-    expect(newChat).toHaveClass("sticky");
-  });
-
   it("shows visible 'New Chat' text when activeConversationId is null", () => {
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: null,
@@ -162,7 +132,7 @@ describe("TabBar", () => {
   });
 
   it("does not show 'New Chat' text when a real tab is active", () => {
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c1",
@@ -181,7 +151,7 @@ describe("TabBar", () => {
       { conversationId: "3f9a1b2c-1111", model: "m", title: "Alpha", workspaceId: "default" },
       { conversationId: "7c2db4e5-2222", model: "m", title: "Beta", workspaceId: "default" },
     ];
-    render(TabBar, {
+    render(TabList, {
       props: {
         tabs,
         activeConversationId: "3f9a1b2c-1111",
@@ -195,8 +165,8 @@ describe("TabBar", () => {
     expect(screen.getByText("7c2d")).toBeInTheDocument();
   });
 
-  it("renders fixed-width tabs", () => {
-    render(TabBar, {
+  it("renders each tab as a single vertical row (flex-col list, not a horizontal strip)", () => {
+    render(TabList, {
       props: {
         tabs: sampleTabs,
         activeConversationId: "c1",
@@ -206,8 +176,57 @@ describe("TabBar", () => {
       },
     });
 
-    for (const t of screen.getAllByRole("tab")) {
-      expect(t).toHaveClass("w-48");
-    }
+    // The scroll region containing the tab rows is a vertical flex column.
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs.length).toBeGreaterThan(0);
+    const region = tabs[0]?.parentElement;
+    expect(region).toHaveClass("flex-col");
+  });
+
+  it("caps the tab list region at 80vh so a long set scrolls internally", () => {
+    render(TabList, {
+      props: {
+        tabs: sampleTabs,
+        activeConversationId: "c1",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+      },
+    });
+
+    const tabs = screen.getAllByRole("tab");
+    const region = tabs[0]?.parentElement;
+    expect(region).toHaveClass("max-h-[80vh]");
+    expect(region).toHaveClass("overflow-y-auto");
+  });
+
+  it("calls onRename when a tab title is double-clicked and committed with Enter", async () => {
+    const onRename = vi.fn();
+    const user = userEvent.setup();
+
+    render(TabList, {
+      props: {
+        tabs: sampleTabs,
+        activeConversationId: "c1",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+        onRename,
+      },
+    });
+
+    const titleButtons = screen.getAllByRole("button");
+    // The inline-rename trigger is the title span (role=button) — find the one
+    // whose text matches the first tab's title.
+    const titleButton = titleButtons.find((b) => b.textContent === "First");
+    if (!titleButton) throw new Error("title button not found");
+    await user.dblClick(titleButton);
+
+    const input = screen.getByRole("textbox");
+    await user.clear(input);
+    await user.type(input, "Renamed{Enter}");
+
+    expect(onRename).toHaveBeenCalledTimes(1);
+    expect(onRename).toHaveBeenCalledWith("c1", "Renamed");
   });
 });

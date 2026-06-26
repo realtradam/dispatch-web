@@ -6,7 +6,6 @@ import {
   createTab,
   deriveTitle,
   initialState,
-  isStuckToEnd,
   MIN_HANDLE_LENGTH,
   newDraft,
   selectTab,
@@ -191,29 +190,6 @@ describe("deriveTitle", () => {
     const msg = "a".repeat(50);
     const result = deriveTitle(msg);
     expect(result).toBe(`${"a".repeat(40)}\u2026`);
-  });
-});
-
-describe("isStuckToEnd", () => {
-  it("is false when the strip does not overflow", () => {
-    expect(isStuckToEnd({ scrollLeft: 0, clientWidth: 500, scrollWidth: 500 })).toBe(false);
-    expect(isStuckToEnd({ scrollLeft: 0, clientWidth: 500, scrollWidth: 400 })).toBe(false);
-  });
-
-  it("is true when overflowing and scrolled to the left", () => {
-    expect(isStuckToEnd({ scrollLeft: 0, clientWidth: 500, scrollWidth: 1000 })).toBe(true);
-  });
-
-  it("is true when overflowing and scrolled to the middle", () => {
-    expect(isStuckToEnd({ scrollLeft: 250, clientWidth: 500, scrollWidth: 1000 })).toBe(true);
-  });
-
-  it("is false when overflowing but scrolled fully to the right", () => {
-    expect(isStuckToEnd({ scrollLeft: 500, clientWidth: 500, scrollWidth: 1000 })).toBe(false);
-  });
-
-  it("treats a 1px subpixel gap at the end as at-rest (epsilon)", () => {
-    expect(isStuckToEnd({ scrollLeft: 499, clientWidth: 500, scrollWidth: 1000 })).toBe(false);
   });
 });
 
