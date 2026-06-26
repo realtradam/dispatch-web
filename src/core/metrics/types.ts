@@ -5,28 +5,28 @@ export type { StepMetrics, TurnMetrics };
 
 /** A step being built from live events (may be incomplete). */
 export interface BuildingStep {
-	readonly stepId: string;
-	readonly usage: Usage | undefined;
-	readonly ttftMs: number | undefined;
-	readonly decodeMs: number | undefined;
-	readonly genTotalMs: number | undefined;
-	readonly complete: boolean;
+  readonly stepId: string;
+  readonly usage: Usage | undefined;
+  readonly ttftMs: number | undefined;
+  readonly decodeMs: number | undefined;
+  readonly genTotalMs: number | undefined;
+  readonly complete: boolean;
 }
 
 /** A turn being built from live events (in-flight). */
 export interface LiveTurn {
-	readonly turnId: string;
-	readonly done: boolean;
-	readonly durationMs: number | undefined;
-	readonly doneUsage: Usage | undefined;
-	/**
-	 * Context size carried on the turn's `done` event (the turn's FINAL step
-	 * `inputTokens + outputTokens` — current context occupancy). `undefined` when
-	 * the provider reported no per-step usage; never coerced to `0`.
-	 */
-	readonly doneContextSize: number | undefined;
-	readonly stepMap: ReadonlyMap<string, BuildingStep>;
-	readonly stepOrder: readonly string[];
+  readonly turnId: string;
+  readonly done: boolean;
+  readonly durationMs: number | undefined;
+  readonly doneUsage: Usage | undefined;
+  /**
+   * Context size carried on the turn's `done` event (the turn's FINAL step
+   * `inputTokens + outputTokens` — current context occupancy). `undefined` when
+   * the provider reported no per-step usage; never coerced to `0`.
+   */
+  readonly doneContextSize: number | undefined;
+  readonly stepMap: ReadonlyMap<string, BuildingStep>;
+  readonly stepOrder: readonly string[];
 }
 
 /**
@@ -36,62 +36,62 @@ export interface LiveTurn {
  * - `durable`: sealed turns keyed by `turnId` in the order they arrived.
  */
 export interface MetricsState {
-	readonly live: ReadonlyMap<string, LiveTurn>;
-	readonly liveOrder: readonly string[];
-	readonly durable: ReadonlyMap<string, TurnMetrics>;
-	readonly durableOrder: readonly string[];
+  readonly live: ReadonlyMap<string, LiveTurn>;
+  readonly liveOrder: readonly string[];
+  readonly durable: ReadonlyMap<string, TurnMetrics>;
+  readonly durableOrder: readonly string[];
 }
 
 /** Per-turn placement entry: completed steps so far + optional turn total. */
 export interface TurnMetricsEntry {
-	readonly turnId: string;
-	readonly steps: readonly StepMetrics[];
-	readonly total: TurnMetrics | null;
+  readonly turnId: string;
+  readonly steps: readonly StepMetrics[];
+  readonly total: TurnMetrics | null;
 }
 
 /** A row in the interleaved transcript: a render group, per-step metrics, or turn metrics. */
 export type MetricsRow =
-	| { readonly kind: "group"; readonly group: RenderGroup }
-	| { readonly kind: "step-metrics"; readonly step: StepMetrics; readonly index: number }
-	| {
-			readonly kind: "turn-metrics";
-			readonly turn: TurnMetrics;
-			/** 1-based turn number (the entry's position in the metrics array + 1). */
-			readonly turnNumber: number;
-			/** Cumulative usage across all finalized turns up to and including this one. */
-			readonly cumulativeUsage: Usage;
-			/**
-			 * Usage of the most recent EARLIER finalized turn, or `null` when this is the
-			 * first finalized turn. The baseline for cross-turn retention (expected cache).
-			 */
-			readonly prevTurnUsage: Usage | null;
-	  };
+  | { readonly kind: "group"; readonly group: RenderGroup }
+  | { readonly kind: "step-metrics"; readonly step: StepMetrics; readonly index: number }
+  | {
+      readonly kind: "turn-metrics";
+      readonly turn: TurnMetrics;
+      /** 1-based turn number (the entry's position in the metrics array + 1). */
+      readonly turnNumber: number;
+      /** Cumulative usage across all finalized turns up to and including this one. */
+      readonly cumulativeUsage: Usage;
+      /**
+       * Usage of the most recent EARLIER finalized turn, or `null` when this is the
+       * first finalized turn. The baseline for cross-turn retention (expected cache).
+       */
+      readonly prevTurnUsage: Usage | null;
+    };
 
 /** Formatted cache hit-rate view: percentage + colour severity + hit flag. */
 export interface CacheRateView {
-	/** Cache hit rate as a 0..100 integer percentage (`cacheReadTokens / inputTokens`). */
-	readonly pct: number;
-	/** Colour severity for a badge (maps to DaisyUI `badge-{level}`). */
-	readonly level: "success" | "warning" | "error";
-	/** Whether any input tokens were served from cache. */
-	readonly isHit: boolean;
+  /** Cache hit rate as a 0..100 integer percentage (`cacheReadTokens / inputTokens`). */
+  readonly pct: number;
+  /** Colour severity for a badge (maps to DaisyUI `badge-{level}`). */
+  readonly level: "success" | "warning" | "error";
+  /** Whether any input tokens were served from cache. */
+  readonly isHit: boolean;
 }
 
 /** Formatted per-step view for display. */
 export interface StepMetricsView {
-	readonly label: string;
-	readonly tokensLabel: string;
-	readonly tps: string | null;
-	readonly ttft: string | null;
-	readonly decode: string | null;
-	readonly genTotal: string | null;
+  readonly label: string;
+  readonly tokensLabel: string;
+  readonly tps: string | null;
+  readonly ttft: string | null;
+  readonly decode: string | null;
+  readonly genTotal: string | null;
 }
 
 /** Formatted per-turn view for display. */
 export interface TurnMetricsView {
-	readonly label: string;
-	readonly tokensLabel: string;
-	readonly breakdown: string;
-	readonly tps: string | null;
-	readonly duration: string | null;
+  readonly label: string;
+  readonly tokensLabel: string;
+  readonly breakdown: string;
+  readonly tps: string | null;
+  readonly duration: string | null;
 }

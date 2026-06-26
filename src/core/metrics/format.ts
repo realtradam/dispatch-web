@@ -2,19 +2,19 @@ import type { StepMetrics, TurnMetrics, Usage } from "@dispatch/wire";
 import type { CacheRateView, StepMetricsView, TurnMetricsView } from "./types";
 
 function formatTokens(n: number): string {
-	return n.toLocaleString("en-US");
+  return n.toLocaleString("en-US");
 }
 
 function formatDuration(ms: number | undefined): string | null {
-	if (ms === undefined || ms <= 0) return null;
-	if (ms < 1000) return `${Math.round(ms)}ms`;
-	return `${(ms / 1000).toFixed(1)}s`;
+  if (ms === undefined || ms <= 0) return null;
+  if (ms < 1000) return `${Math.round(ms)}ms`;
+  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 function formatTps(tps: number | null): string | null {
-	if (tps === null) return null;
-	if (tps < 10) return `${tps.toFixed(1)} tok/s`;
-	return `${Math.round(tps)} tok/s`;
+  if (tps === null) return null;
+  if (tps < 10) return `${tps.toFixed(1)} tok/s`;
+  return `${Math.round(tps)} tok/s`;
 }
 
 /**
@@ -24,8 +24,8 @@ function formatTps(tps: number | null): string | null {
  * Never renders `0` for the unknown case.
  */
 export function formatContextSize(n: number | undefined): string {
-	if (n === undefined) return "context size unknown";
-	return `${formatTokens(n)} tokens in context`;
+  if (n === undefined) return "context size unknown";
+  return `${formatTokens(n)} tokens in context`;
 }
 
 /**
@@ -33,13 +33,13 @@ export function formatContextSize(n: number | undefined): string {
  * thousands-separated numbers live elsewhere; this trades precision for width.
  */
 export function formatCompactTokens(n: number): string {
-	if (n < 1000) return `${n}`;
-	if (n < 1_000_000) {
-		const k = n / 1000;
-		return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
-	}
-	const m = n / 1_000_000;
-	return `${m >= 100 ? Math.round(m) : m.toFixed(1)}M`;
+  if (n < 1000) return `${n}`;
+  if (n < 1_000_000) {
+    const k = n / 1000;
+    return `${k >= 100 ? Math.round(k) : k.toFixed(1)}k`;
+  }
+  const m = n / 1_000_000;
+  return `${m >= 100 ? Math.round(m) : m.toFixed(1)}M`;
 }
 
 /**
@@ -52,51 +52,51 @@ export function formatCompactTokens(n: number): string {
  * reads non-zero. `percent` is `null` when `max` is unknown (no bar/denominator).
  */
 export interface ContextUsage {
-	readonly current: number;
-	readonly max: number | null;
-	readonly percent: number | null;
+  readonly current: number;
+  readonly max: number | null;
+  readonly percent: number | null;
 }
 
 export function computeContextUsage(
-	contextSize: number | undefined,
-	contextLimit: number | null | undefined,
+  contextSize: number | undefined,
+  contextLimit: number | null | undefined,
 ): ContextUsage {
-	const current = contextSize ?? 0;
-	const max = typeof contextLimit === "number" && contextLimit > 0 ? contextLimit : null;
-	const percent = max === null ? null : Math.max(0, Math.min(100, (current / max) * 100));
-	return { current, max, percent };
+  const current = contextSize ?? 0;
+  const max = typeof contextLimit === "number" && contextLimit > 0 ? contextLimit : null;
+  const percent = max === null ? null : Math.max(0, Math.min(100, (current / max) * 100));
+  return { current, max, percent };
 }
 
 /** Compute tokens-per-second. Returns null when elapsed time is absent or zero. */
 export function computeTps(outputTokens: number, elapsedMs: number | undefined): number | null {
-	if (elapsedMs === undefined || elapsedMs <= 0) return null;
-	return outputTokens / (elapsedMs / 1000);
+  if (elapsedMs === undefined || elapsedMs <= 0) return null;
+  return outputTokens / (elapsedMs / 1000);
 }
 
 function totalTokens(u: Usage): number {
-	return u.inputTokens + u.outputTokens;
+  return u.inputTokens + u.outputTokens;
 }
 
 function formatBreakdown(u: Usage): string {
-	let s = `${formatTokens(u.inputTokens)} in / ${formatTokens(u.outputTokens)} out`;
-	if (u.cacheReadTokens !== undefined && u.cacheReadTokens > 0) {
-		s += ` / ${formatTokens(u.cacheReadTokens)} cache`;
-	}
-	return s;
+  let s = `${formatTokens(u.inputTokens)} in / ${formatTokens(u.outputTokens)} out`;
+  if (u.cacheReadTokens !== undefined && u.cacheReadTokens > 0) {
+    s += ` / ${formatTokens(u.cacheReadTokens)} cache`;
+  }
+  return s;
 }
 
 /** Build a formatted view of a single step's metrics. */
 export function viewStepMetrics(step: StepMetrics, index: number): StepMetricsView {
-	const total = totalTokens(step.usage);
-	const tps = computeTps(step.usage.outputTokens, step.decodeMs ?? step.genTotalMs);
-	return {
-		label: `step ${index + 1}`,
-		tokensLabel: `${formatTokens(total)} tok`,
-		tps: formatTps(tps),
-		ttft: formatDuration(step.ttftMs),
-		decode: formatDuration(step.decodeMs),
-		genTotal: formatDuration(step.genTotalMs),
-	};
+  const total = totalTokens(step.usage);
+  const tps = computeTps(step.usage.outputTokens, step.decodeMs ?? step.genTotalMs);
+  return {
+    label: `step ${index + 1}`,
+    tokensLabel: `${formatTokens(total)} tok`,
+    tps: formatTps(tps),
+    ttft: formatDuration(step.ttftMs),
+    decode: formatDuration(step.decodeMs),
+    genTotal: formatDuration(step.genTotalMs),
+  };
 }
 
 /**
@@ -105,24 +105,24 @@ export function viewStepMetrics(step: StepMetrics, index: number): StepMetricsVi
  * missing data). Returns 0 when there are no input tokens.
  */
 export function computeCachePct(u: Usage): number {
-	const read = u.cacheReadTokens ?? 0;
-	if (u.inputTokens <= 0) return 0;
-	const rate = read / u.inputTokens;
-	const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
-	return Math.round(clamped * 100);
+  const read = u.cacheReadTokens ?? 0;
+  if (u.inputTokens <= 0) return 0;
+  const rate = read / u.inputTokens;
+  const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
+  return Math.round(clamped * 100);
 }
 
 /** Colour severity for a cache hit percentage (badge colour). */
 function cacheLevel(pct: number): "success" | "warning" | "error" {
-	if (pct >= 66) return "success";
-	if (pct >= 33) return "warning";
-	return "error";
+  if (pct >= 66) return "success";
+  if (pct >= 33) return "warning";
+  return "error";
 }
 
 /** Build a view of a cache hit rate (percentage + colour level + hit flag). */
 export function viewCacheRate(u: Usage): CacheRateView {
-	const pct = computeCachePct(u);
-	return { pct, level: cacheLevel(pct), isHit: (u.cacheReadTokens ?? 0) > 0 };
+  const pct = computeCachePct(u);
+  return { pct, level: cacheLevel(pct), isHit: (u.cacheReadTokens ?? 0) > 0 };
 }
 
 /**
@@ -135,13 +135,13 @@ export function viewCacheRate(u: Usage): CacheRateView {
  * prior turn cached nothing (denominator <= 0) — distinct from a real 0%.
  */
 export function computeExpectedCachePct(current: Usage, prev: Usage | null): number | null {
-	if (prev === null) return null;
-	const denom = (prev.cacheReadTokens ?? 0) + (prev.cacheWriteTokens ?? 0);
-	if (denom <= 0) return null;
-	const read = current.cacheReadTokens ?? 0;
-	const rate = read / denom;
-	const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
-	return Math.round(clamped * 100);
+  if (prev === null) return null;
+  const denom = (prev.cacheReadTokens ?? 0) + (prev.cacheWriteTokens ?? 0);
+  if (denom <= 0) return null;
+  const read = current.cacheReadTokens ?? 0;
+  const rate = read / denom;
+  const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
+  return Math.round(clamped * 100);
 }
 
 /**
@@ -149,27 +149,27 @@ export function computeExpectedCachePct(current: Usage, prev: Usage | null): num
  * or `null` when it can't be derived (see `computeExpectedCachePct`).
  */
 export function viewExpectedCache(current: Usage, prev: Usage | null): CacheRateView | null {
-	const pct = computeExpectedCachePct(current, prev);
-	if (pct === null) return null;
-	return { pct, level: cacheLevel(pct), isHit: (current.cacheReadTokens ?? 0) > 0 };
+  const pct = computeExpectedCachePct(current, prev);
+  if (pct === null) return null;
+  return { pct, level: cacheLevel(pct), isHit: (current.cacheReadTokens ?? 0) > 0 };
 }
 
 /** Build a formatted view of a turn's aggregate metrics. */
 export function viewTurnMetrics(turn: TurnMetrics, turnNumber?: number): TurnMetricsView {
-	const total = totalTokens(turn.usage);
-	let totalGenMs: number | undefined;
-	for (const step of turn.steps) {
-		const stepMs = step.decodeMs ?? step.genTotalMs;
-		if (stepMs !== undefined) {
-			totalGenMs = (totalGenMs ?? 0) + stepMs;
-		}
-	}
-	const tps = computeTps(turn.usage.outputTokens, totalGenMs);
-	return {
-		label: turnNumber !== undefined ? `turn ${turnNumber}` : "turn",
-		tokensLabel: `${formatTokens(total)} tok`,
-		breakdown: formatBreakdown(turn.usage),
-		tps: formatTps(tps),
-		duration: formatDuration(turn.durationMs),
-	};
+  const total = totalTokens(turn.usage);
+  let totalGenMs: number | undefined;
+  for (const step of turn.steps) {
+    const stepMs = step.decodeMs ?? step.genTotalMs;
+    if (stepMs !== undefined) {
+      totalGenMs = (totalGenMs ?? 0) + stepMs;
+    }
+  }
+  const tps = computeTps(turn.usage.outputTokens, totalGenMs);
+  return {
+    label: turnNumber !== undefined ? `turn ${turnNumber}` : "turn",
+    tokensLabel: `${formatTokens(total)} tok`,
+    breakdown: formatBreakdown(turn.usage),
+    tps: formatTps(tps),
+    duration: formatDuration(turn.durationMs),
+  };
 }

@@ -5,536 +5,536 @@ import { interleaveTurnMetrics } from "./place";
 import type { MetricsRow, TurnMetricsEntry } from "./types";
 
 function userGroup(seq: number, text: string): RenderGroup {
-	return {
-		kind: "single",
-		chunk: {
-			seq,
-			role: "user",
-			chunk: { type: "text", text },
-			provisional: false,
-		},
-	};
+  return {
+    kind: "single",
+    chunk: {
+      seq,
+      role: "user",
+      chunk: { type: "text", text },
+      provisional: false,
+    },
+  };
 }
 
 function assistantGroup(seq: number, text: string): RenderGroup {
-	return {
-		kind: "single",
-		chunk: {
-			seq,
-			role: "assistant",
-			chunk: { type: "text", text },
-			provisional: false,
-		},
-	};
+  return {
+    kind: "single",
+    chunk: {
+      seq,
+      role: "assistant",
+      chunk: { type: "text", text },
+      provisional: false,
+    },
+  };
 }
 
 function toolCallGroup(seq: number, stepId: string, toolCallId: string): RenderGroup {
-	return {
-		kind: "single",
-		chunk: {
-			seq,
-			role: "assistant",
-			chunk: {
-				type: "tool-call",
-				toolCallId,
-				toolName: "test",
-				input: {},
-				stepId: stepId as StepId,
-			},
-			provisional: false,
-		},
-	};
+  return {
+    kind: "single",
+    chunk: {
+      seq,
+      role: "assistant",
+      chunk: {
+        type: "tool-call",
+        toolCallId,
+        toolName: "test",
+        input: {},
+        stepId: stepId as StepId,
+      },
+      provisional: false,
+    },
+  };
 }
 
 function toolResultGroup(seq: number, stepId: string, toolCallId: string): RenderGroup {
-	return {
-		kind: "single",
-		chunk: {
-			seq,
-			role: "tool",
-			chunk: {
-				type: "tool-result",
-				toolCallId,
-				toolName: "test",
-				content: "",
-				isError: false,
-				stepId: stepId as StepId,
-			},
-			provisional: false,
-		},
-	};
+  return {
+    kind: "single",
+    chunk: {
+      seq,
+      role: "tool",
+      chunk: {
+        type: "tool-result",
+        toolCallId,
+        toolName: "test",
+        content: "",
+        isError: false,
+        stepId: stepId as StepId,
+      },
+      provisional: false,
+    },
+  };
 }
 
 function toolBatchGroup(stepId: string, toolCallIds: string[]): RenderGroup {
-	return {
-		kind: "tool-batch",
-		stepId,
-		entries: toolCallIds.map((id) => ({
-			call: {
-				type: "tool-call" as const,
-				toolCallId: id,
-				toolName: "test",
-				input: {},
-				stepId: stepId as StepId,
-			},
-			result: null,
-		})),
-		provisional: false,
-	};
+  return {
+    kind: "tool-batch",
+    stepId,
+    entries: toolCallIds.map((id) => ({
+      call: {
+        type: "tool-call" as const,
+        toolCallId: id,
+        toolName: "test",
+        input: {},
+        stepId: stepId as StepId,
+      },
+      result: null,
+    })),
+    provisional: false,
+  };
 }
 
 function makeStep(stepId: string, inputTokens: number, outputTokens: number): StepMetrics {
-	return {
-		stepId: stepId as StepId,
-		usage: { inputTokens, outputTokens },
-	};
+  return {
+    stepId: stepId as StepId,
+    usage: { inputTokens, outputTokens },
+  };
 }
 
 function makeTurn(
-	turnId: string,
-	inputTokens: number,
-	outputTokens: number,
-	steps: StepMetrics[] = [],
+  turnId: string,
+  inputTokens: number,
+  outputTokens: number,
+  steps: StepMetrics[] = [],
 ): TurnMetrics {
-	return {
-		turnId,
-		usage: { inputTokens, outputTokens },
-		steps,
-	};
+  return {
+    turnId,
+    usage: { inputTokens, outputTokens },
+    steps,
+  };
 }
 
 function makeEntry(
-	turnId: string,
-	inputTokens: number,
-	outputTokens: number,
-	steps: StepMetrics[] = [],
+  turnId: string,
+  inputTokens: number,
+  outputTokens: number,
+  steps: StepMetrics[] = [],
 ): TurnMetricsEntry {
-	return {
-		turnId,
-		steps,
-		total: makeTurn(turnId, inputTokens, outputTokens, steps),
-	};
+  return {
+    turnId,
+    steps,
+    total: makeTurn(turnId, inputTokens, outputTokens, steps),
+  };
 }
 
 function makeProgressiveEntry(turnId: string, steps: StepMetrics[]): TurnMetricsEntry {
-	return {
-		turnId,
-		steps,
-		total: null,
-	};
+  return {
+    turnId,
+    steps,
+    total: null,
+  };
 }
 
 function expectGroupAt(
-	rows: readonly { readonly kind: string }[],
-	index: number,
-	expected: RenderGroup,
+  rows: readonly { readonly kind: string }[],
+  index: number,
+  expected: RenderGroup,
 ): void {
-	const row = rows[index];
-	expect(row?.kind).toBe("group");
-	expect((row as { readonly group: RenderGroup } | undefined)?.group).toBe(expected);
+  const row = rows[index];
+  expect(row?.kind).toBe("group");
+  expect((row as { readonly group: RenderGroup } | undefined)?.group).toBe(expected);
 }
 
 function expectStepMetricsAt(
-	rows: readonly { readonly kind: string }[],
-	index: number,
-	expectedStepId: string,
-	expectedIndex: number,
+  rows: readonly { readonly kind: string }[],
+  index: number,
+  expectedStepId: string,
+  expectedIndex: number,
 ): void {
-	const row = rows[index];
-	expect(row?.kind).toBe("step-metrics");
-	const sm = row as { readonly step: StepMetrics; readonly index: number } | undefined;
-	expect(sm?.step.stepId).toBe(expectedStepId);
-	expect(sm?.index).toBe(expectedIndex);
+  const row = rows[index];
+  expect(row?.kind).toBe("step-metrics");
+  const sm = row as { readonly step: StepMetrics; readonly index: number } | undefined;
+  expect(sm?.step.stepId).toBe(expectedStepId);
+  expect(sm?.index).toBe(expectedIndex);
 }
 
 function expectTurnMetricsAt(
-	rows: readonly { readonly kind: string }[],
-	index: number,
-	expectedTurnId: string,
+  rows: readonly { readonly kind: string }[],
+  index: number,
+  expectedTurnId: string,
 ): void {
-	const row = rows[index];
-	expect(row?.kind).toBe("turn-metrics");
-	expect((row as { readonly turn: TurnMetrics } | undefined)?.turn.turnId).toBe(expectedTurnId);
+  const row = rows[index];
+  expect(row?.kind).toBe("turn-metrics");
+  expect((row as { readonly turn: TurnMetrics } | undefined)?.turn.turnId).toBe(expectedTurnId);
 }
 
 describe("interleaveTurnMetrics", () => {
-	it("no metrics: rows are all groups, unchanged order", () => {
-		const g1 = userGroup(1, "q");
-		const g2 = assistantGroup(2, "a");
-		const rows = interleaveTurnMetrics([g1, g2], []);
-		expect(rows).toHaveLength(2);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-	});
+  it("no metrics: rows are all groups, unchanged order", () => {
+    const g1 = userGroup(1, "q");
+    const g2 = assistantGroup(2, "a");
+    const rows = interleaveTurnMetrics([g1, g2], []);
+    expect(rows).toHaveLength(2);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+  });
 
-	it("head-aligned: segment i gets entries[i]", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolCallGroup(2, "s1", "c1");
-		const g3 = userGroup(3, "q2");
-		const g4 = toolCallGroup(4, "s2", "c2");
-		const step1 = makeStep("s1", 100, 50);
-		const step2 = makeStep("s2", 200, 80);
-		const rows = interleaveTurnMetrics(
-			[g1, g2, g3, g4],
-			[makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
-		);
+  it("head-aligned: segment i gets entries[i]", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolCallGroup(2, "s1", "c1");
+    const g3 = userGroup(3, "q2");
+    const g4 = toolCallGroup(4, "s2", "c2");
+    const step1 = makeStep("s1", 100, 50);
+    const step2 = makeStep("s2", 200, 80);
+    const rows = interleaveTurnMetrics(
+      [g1, g2, g3, g4],
+      [makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
+    );
 
-		expect(rows).toHaveLength(8);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
-		expectGroupAt(rows, 4, g3);
-		expectGroupAt(rows, 5, g4);
-		expectStepMetricsAt(rows, 6, "s2", 0);
-		expectTurnMetricsAt(rows, 7, "t2");
-	});
+    expect(rows).toHaveLength(8);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectTurnMetricsAt(rows, 3, "t1");
+    expectGroupAt(rows, 4, g3);
+    expectGroupAt(rows, 5, g4);
+    expectStepMetricsAt(rows, 6, "s2", 0);
+    expectTurnMetricsAt(rows, 7, "t2");
+  });
 
-	it("a trailing segment with no entry (in-flight turn) renders no metrics", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolCallGroup(2, "s1", "c1");
-		const g3 = userGroup(3, "q2");
-		const g4 = assistantGroup(4, "a2");
-		const step = makeStep("s1", 100, 50);
-		const rows = interleaveTurnMetrics([g1, g2, g3, g4], [makeEntry("t1", 100, 50, [step])]);
+  it("a trailing segment with no entry (in-flight turn) renders no metrics", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolCallGroup(2, "s1", "c1");
+    const g3 = userGroup(3, "q2");
+    const g4 = assistantGroup(4, "a2");
+    const step = makeStep("s1", 100, 50);
+    const rows = interleaveTurnMetrics([g1, g2, g3, g4], [makeEntry("t1", 100, 50, [step])]);
 
-		expect(rows).toHaveLength(6);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
-		expectGroupAt(rows, 4, g3);
-		expectGroupAt(rows, 5, g4);
-	});
+    expect(rows).toHaveLength(6);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectTurnMetricsAt(rows, 3, "t1");
+    expectGroupAt(rows, 4, g3);
+    expectGroupAt(rows, 5, g4);
+  });
 
-	it("single text-only turn: no step row (unanchored), turn-metrics at tail", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
-		const step = makeStep("s1", 100, 50);
-		const turn = makeEntry("t1", 100, 50, [step]);
-		const rows = interleaveTurnMetrics([g1, g2], [turn]);
+  it("single text-only turn: no step row (unanchored), turn-metrics at tail", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = assistantGroup(2, "a1");
+    const step = makeStep("s1", 100, 50);
+    const turn = makeEntry("t1", 100, 50, [step]);
+    const rows = interleaveTurnMetrics([g1, g2], [turn]);
 
-		expect(rows).toHaveLength(3);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectTurnMetricsAt(rows, 2, "t1");
-	});
+    expect(rows).toHaveLength(3);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectTurnMetricsAt(rows, 2, "t1");
+  });
 
-	it("tool step anchors inline after its tool-batch group", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolBatchGroup("t#0", ["c1", "c2"]);
-		const g3 = assistantGroup(3, "a1");
-		const step0 = makeStep("t#0", 100, 50);
-		const step1 = makeStep("t#1", 200, 80);
-		const turn = makeEntry("t1", 300, 130, [step0, step1]);
-		const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
+  it("tool step anchors inline after its tool-batch group", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolBatchGroup("t#0", ["c1", "c2"]);
+    const g3 = assistantGroup(3, "a1");
+    const step0 = makeStep("t#0", 100, 50);
+    const step1 = makeStep("t#1", 200, 80);
+    const turn = makeEntry("t1", 300, 130, [step0, step1]);
+    const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
 
-		expect(rows).toHaveLength(5);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "t#0", 0);
-		expectGroupAt(rows, 3, g3);
-		expectTurnMetricsAt(rows, 4, "t1");
-	});
+    expect(rows).toHaveLength(5);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "t#0", 0);
+    expectGroupAt(rows, 3, g3);
+    expectTurnMetricsAt(rows, 4, "t1");
+  });
 
-	it("single tool-call group anchors its step", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolCallGroup(2, "s1", "c1");
-		const g3 = assistantGroup(3, "a1");
-		const step = makeStep("s1", 100, 50);
-		const turn = makeEntry("t1", 100, 50, [step]);
-		const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
+  it("single tool-call group anchors its step", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolCallGroup(2, "s1", "c1");
+    const g3 = assistantGroup(3, "a1");
+    const step = makeStep("s1", 100, 50);
+    const turn = makeEntry("t1", 100, 50, [step]);
+    const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
 
-		expect(rows).toHaveLength(5);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectGroupAt(rows, 3, g3);
-		expectTurnMetricsAt(rows, 4, "t1");
-	});
+    expect(rows).toHaveLength(5);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectGroupAt(rows, 3, g3);
+    expectTurnMetricsAt(rows, 4, "t1");
+  });
 
-	it("single tool-result group anchors its step", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolResultGroup(2, "s1", "c1");
-		const g3 = assistantGroup(3, "a1");
-		const step = makeStep("s1", 100, 50);
-		const turn = makeEntry("t1", 100, 50, [step]);
-		const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
+  it("single tool-result group anchors its step", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolResultGroup(2, "s1", "c1");
+    const g3 = assistantGroup(3, "a1");
+    const step = makeStep("s1", 100, 50);
+    const turn = makeEntry("t1", 100, 50, [step]);
+    const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
 
-		expect(rows).toHaveLength(5);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectGroupAt(rows, 3, g3);
-		expectTurnMetricsAt(rows, 4, "t1");
-	});
+    expect(rows).toHaveLength(5);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectGroupAt(rows, 3, g3);
+    expectTurnMetricsAt(rows, 4, "t1");
+  });
 
-	it("multi-step: each tool step inline, unanchored text step skipped", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolBatchGroup("t#0", ["c1"]);
-		const g3 = assistantGroup(2, "thinking");
-		const g4 = toolBatchGroup("t#1", ["c2", "c3"]);
-		const g5 = assistantGroup(3, "a1");
-		const step0 = makeStep("t#0", 100, 50);
-		const step1 = makeStep("t#1", 200, 80);
-		const step2 = makeStep("t#2", 50, 20);
-		const turn = makeEntry("t1", 350, 150, [step0, step1, step2]);
-		const rows = interleaveTurnMetrics([g1, g2, g3, g4, g5], [turn]);
+  it("multi-step: each tool step inline, unanchored text step skipped", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolBatchGroup("t#0", ["c1"]);
+    const g3 = assistantGroup(2, "thinking");
+    const g4 = toolBatchGroup("t#1", ["c2", "c3"]);
+    const g5 = assistantGroup(3, "a1");
+    const step0 = makeStep("t#0", 100, 50);
+    const step1 = makeStep("t#1", 200, 80);
+    const step2 = makeStep("t#2", 50, 20);
+    const turn = makeEntry("t1", 350, 150, [step0, step1, step2]);
+    const rows = interleaveTurnMetrics([g1, g2, g3, g4, g5], [turn]);
 
-		expect(rows).toHaveLength(8);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "t#0", 0);
-		expectGroupAt(rows, 3, g3);
-		expectGroupAt(rows, 4, g4);
-		expectStepMetricsAt(rows, 5, "t#1", 1);
-		expectGroupAt(rows, 6, g5);
-		expectTurnMetricsAt(rows, 7, "t1");
-	});
+    expect(rows).toHaveLength(8);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "t#0", 0);
+    expectGroupAt(rows, 3, g3);
+    expectGroupAt(rows, 4, g4);
+    expectStepMetricsAt(rows, 5, "t#1", 1);
+    expectGroupAt(rows, 6, g5);
+    expectTurnMetricsAt(rows, 7, "t1");
+  });
 
-	it("multiple turns head-aligned with inline steps", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolBatchGroup("s1", ["c1"]);
-		const g3 = assistantGroup(2, "a1");
-		const g4 = userGroup(3, "q2");
-		const g5 = toolCallGroup(4, "s2", "c2");
-		const step1 = makeStep("s1", 100, 50);
-		const step2 = makeStep("s2", 200, 80);
-		const rows = interleaveTurnMetrics(
-			[g1, g2, g3, g4, g5],
-			[makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
-		);
+  it("multiple turns head-aligned with inline steps", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolBatchGroup("s1", ["c1"]);
+    const g3 = assistantGroup(2, "a1");
+    const g4 = userGroup(3, "q2");
+    const g5 = toolCallGroup(4, "s2", "c2");
+    const step1 = makeStep("s1", 100, 50);
+    const step2 = makeStep("s2", 200, 80);
+    const rows = interleaveTurnMetrics(
+      [g1, g2, g3, g4, g5],
+      [makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
+    );
 
-		expect(rows).toHaveLength(9);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectGroupAt(rows, 3, g3);
-		expectTurnMetricsAt(rows, 4, "t1");
-		expectGroupAt(rows, 5, g4);
-		expectGroupAt(rows, 6, g5);
-		expectStepMetricsAt(rows, 7, "s2", 0);
-		expectTurnMetricsAt(rows, 8, "t2");
-	});
+    expect(rows).toHaveLength(9);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectGroupAt(rows, 3, g3);
+    expectTurnMetricsAt(rows, 4, "t1");
+    expectGroupAt(rows, 5, g4);
+    expectGroupAt(rows, 6, g5);
+    expectStepMetricsAt(rows, 7, "s2", 0);
+    expectTurnMetricsAt(rows, 8, "t2");
+  });
 
-	it("unanchored step (stepId not in groups) is skipped — only turn-metrics", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
-		const step0 = makeStep("orphan", 100, 50);
-		const turn = makeEntry("t1", 100, 50, [step0]);
-		const rows = interleaveTurnMetrics([g1, g2], [turn]);
+  it("unanchored step (stepId not in groups) is skipped — only turn-metrics", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = assistantGroup(2, "a1");
+    const step0 = makeStep("orphan", 100, 50);
+    const turn = makeEntry("t1", 100, 50, [step0]);
+    const rows = interleaveTurnMetrics([g1, g2], [turn]);
 
-		expect(rows).toHaveLength(3);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectTurnMetricsAt(rows, 2, "t1");
-	});
+    expect(rows).toHaveLength(3);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectTurnMetricsAt(rows, 2, "t1");
+  });
 
-	it("fewer metrics than segments: trailing segments are bare", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolCallGroup(2, "s1", "c1");
-		const g3 = userGroup(3, "q2");
-		const g4 = assistantGroup(4, "a2");
-		const g5 = userGroup(5, "q3");
-		const g6 = assistantGroup(6, "a3");
-		const step = makeStep("s1", 300, 120);
-		const rows = interleaveTurnMetrics(
-			[g1, g2, g3, g4, g5, g6],
-			[makeEntry("t1", 300, 120, [step])],
-		);
+  it("fewer metrics than segments: trailing segments are bare", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolCallGroup(2, "s1", "c1");
+    const g3 = userGroup(3, "q2");
+    const g4 = assistantGroup(4, "a2");
+    const g5 = userGroup(5, "q3");
+    const g6 = assistantGroup(6, "a3");
+    const step = makeStep("s1", 300, 120);
+    const rows = interleaveTurnMetrics(
+      [g1, g2, g3, g4, g5, g6],
+      [makeEntry("t1", 300, 120, [step])],
+    );
 
-		expect(rows).toHaveLength(8);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
-		expectGroupAt(rows, 4, g3);
-		expectGroupAt(rows, 5, g4);
-		expectGroupAt(rows, 6, g5);
-		expectGroupAt(rows, 7, g6);
-	});
+    expect(rows).toHaveLength(8);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectTurnMetricsAt(rows, 3, "t1");
+    expectGroupAt(rows, 4, g3);
+    expectGroupAt(rows, 5, g4);
+    expectGroupAt(rows, 6, g5);
+    expectGroupAt(rows, 7, g6);
+  });
 
-	it("in-flight turn (no durationMs) still produces turn row", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolCallGroup(2, "s1", "c1");
-		const step = makeStep("s1", 100, 50);
-		const turn: TurnMetricsEntry = {
-			turnId: "t1",
-			steps: [step],
-			total: {
-				turnId: "t1",
-				usage: { inputTokens: 100, outputTokens: 50 },
-				steps: [step],
-			},
-		};
-		const rows = interleaveTurnMetrics([g1, g2], [turn]);
+  it("in-flight turn (no durationMs) still produces turn row", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolCallGroup(2, "s1", "c1");
+    const step = makeStep("s1", 100, 50);
+    const turn: TurnMetricsEntry = {
+      turnId: "t1",
+      steps: [step],
+      total: {
+        turnId: "t1",
+        usage: { inputTokens: 100, outputTokens: 50 },
+        steps: [step],
+      },
+    };
+    const rows = interleaveTurnMetrics([g1, g2], [turn]);
 
-		expect(rows).toHaveLength(4);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectTurnMetricsAt(rows, 3, "t1");
-		const metricsRow = rows[3] as { readonly turn: TurnMetrics } | undefined;
-		expect(metricsRow?.turn.durationMs).toBeUndefined();
-	});
+    expect(rows).toHaveLength(4);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectTurnMetricsAt(rows, 3, "t1");
+    const metricsRow = rows[3] as { readonly turn: TurnMetrics } | undefined;
+    expect(metricsRow?.turn.durationMs).toBeUndefined();
+  });
 
-	it("leading non-turn groups emit as plain group rows", () => {
-		const g0 = assistantGroup(1, "system msg");
-		const g1 = userGroup(2, "q1");
-		const g2 = toolCallGroup(3, "s1", "c1");
-		const step = makeStep("s1", 100, 50);
-		const rows = interleaveTurnMetrics([g0, g1, g2], [makeEntry("t1", 100, 50, [step])]);
+  it("leading non-turn groups emit as plain group rows", () => {
+    const g0 = assistantGroup(1, "system msg");
+    const g1 = userGroup(2, "q1");
+    const g2 = toolCallGroup(3, "s1", "c1");
+    const step = makeStep("s1", 100, 50);
+    const rows = interleaveTurnMetrics([g0, g1, g2], [makeEntry("t1", 100, 50, [step])]);
 
-		expect(rows).toHaveLength(5);
-		expectGroupAt(rows, 0, g0);
-		expect(rows[1]?.kind).toBe("group");
-		expect(rows[2]?.kind).toBe("group");
-		expectStepMetricsAt(rows, 3, "s1", 0);
-		expectTurnMetricsAt(rows, 4, "t1");
-	});
+    expect(rows).toHaveLength(5);
+    expectGroupAt(rows, 0, g0);
+    expect(rows[1]?.kind).toBe("group");
+    expect(rows[2]?.kind).toBe("group");
+    expectStepMetricsAt(rows, 3, "s1", 0);
+    expectTurnMetricsAt(rows, 4, "t1");
+  });
 
-	it("more metrics than segments: unmatched entry emits standalone turn-metrics", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolCallGroup(2, "s1", "c1");
-		const step1 = makeStep("s1", 100, 50);
-		const step2 = makeStep("s2", 200, 80);
-		const rows = interleaveTurnMetrics(
-			[g1, g2],
-			[makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
-		);
+  it("more metrics than segments: unmatched entry emits standalone turn-metrics", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolCallGroup(2, "s1", "c1");
+    const step1 = makeStep("s1", 100, 50);
+    const step2 = makeStep("s2", 200, 80);
+    const rows = interleaveTurnMetrics(
+      [g1, g2],
+      [makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
+    );
 
-		// Unmatched entry (t2) emits a standalone turn-metrics row at the top.
-		expect(rows).toHaveLength(5);
-		expectTurnMetricsAt(rows, 0, "t2");
-		expectGroupAt(rows, 1, g1);
-		expectGroupAt(rows, 2, g2);
-		expectStepMetricsAt(rows, 3, "s1", 0);
-		expectTurnMetricsAt(rows, 4, "t1");
-	});
+    // Unmatched entry (t2) emits a standalone turn-metrics row at the top.
+    expect(rows).toHaveLength(5);
+    expectTurnMetricsAt(rows, 0, "t2");
+    expectGroupAt(rows, 1, g1);
+    expectGroupAt(rows, 2, g2);
+    expectStepMetricsAt(rows, 3, "s1", 0);
+    expectTurnMetricsAt(rows, 4, "t1");
+  });
 
-	it("turn with no steps emits only turn-metrics (no step-metrics)", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
-		const rows = interleaveTurnMetrics([g1, g2], [makeEntry("t1", 100, 50)]);
+  it("turn with no steps emits only turn-metrics (no step-metrics)", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = assistantGroup(2, "a1");
+    const rows = interleaveTurnMetrics([g1, g2], [makeEntry("t1", 100, 50)]);
 
-		expect(rows).toHaveLength(3);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectTurnMetricsAt(rows, 2, "t1");
-	});
+    expect(rows).toHaveLength(3);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectTurnMetricsAt(rows, 2, "t1");
+  });
 
-	it("progressive: entry with steps but total=null emits step rows and NO turn-metrics row", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolBatchGroup("s1", ["c1"]);
-		const g3 = assistantGroup(2, "a1");
-		const step1 = makeStep("s1", 100, 50);
-		const entry = makeProgressiveEntry("t1", [step1]);
-		const rows = interleaveTurnMetrics([g1, g2, g3], [entry]);
+  it("progressive: entry with steps but total=null emits step rows and NO turn-metrics row", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolBatchGroup("s1", ["c1"]);
+    const g3 = assistantGroup(2, "a1");
+    const step1 = makeStep("s1", 100, 50);
+    const entry = makeProgressiveEntry("t1", [step1]);
+    const rows = interleaveTurnMetrics([g1, g2, g3], [entry]);
 
-		expect(rows).toHaveLength(4);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectGroupAt(rows, 3, g3);
-	});
+    expect(rows).toHaveLength(4);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectGroupAt(rows, 3, g3);
+  });
 
-	it("entry with total emits step rows + a turn-metrics row", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = toolBatchGroup("s1", ["c1"]);
-		const g3 = assistantGroup(2, "a1");
-		const step1 = makeStep("s1", 100, 50);
-		const entry = makeEntry("t1", 100, 50, [step1]);
-		const rows = interleaveTurnMetrics([g1, g2, g3], [entry]);
+  it("entry with total emits step rows + a turn-metrics row", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = toolBatchGroup("s1", ["c1"]);
+    const g3 = assistantGroup(2, "a1");
+    const step1 = makeStep("s1", 100, 50);
+    const entry = makeEntry("t1", 100, 50, [step1]);
+    const rows = interleaveTurnMetrics([g1, g2, g3], [entry]);
 
-		expect(rows).toHaveLength(5);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-		expectStepMetricsAt(rows, 2, "s1", 0);
-		expectGroupAt(rows, 3, g3);
-		expectTurnMetricsAt(rows, 4, "t1");
-	});
+    expect(rows).toHaveLength(5);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectGroupAt(rows, 3, g3);
+    expectTurnMetricsAt(rows, 4, "t1");
+  });
 
-	it("progressive multi-step: unanchored steps skipped, no turn-metrics", () => {
-		const g1 = userGroup(1, "q1");
-		const g2 = assistantGroup(2, "a1");
-		const step0 = makeStep("s1", 100, 50);
-		const step1 = makeStep("s2", 200, 80);
-		const entry = makeProgressiveEntry("t1", [step0, step1]);
-		const rows = interleaveTurnMetrics([g1, g2], [entry]);
+  it("progressive multi-step: unanchored steps skipped, no turn-metrics", () => {
+    const g1 = userGroup(1, "q1");
+    const g2 = assistantGroup(2, "a1");
+    const step0 = makeStep("s1", 100, 50);
+    const step1 = makeStep("s2", 200, 80);
+    const entry = makeProgressiveEntry("t1", [step0, step1]);
+    const rows = interleaveTurnMetrics([g1, g2], [entry]);
 
-		expect(rows).toHaveLength(2);
-		expectGroupAt(rows, 0, g1);
-		expectGroupAt(rows, 1, g2);
-	});
+    expect(rows).toHaveLength(2);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+  });
 });
 
 describe("interleaveTurnMetrics — cumulative usage (cache total)", () => {
-	function turnMetricsRows(rows: readonly MetricsRow[]) {
-		return rows.filter((r): r is Extract<MetricsRow, { kind: "turn-metrics" }> => {
-			return r.kind === "turn-metrics";
-		});
-	}
+  function turnMetricsRows(rows: readonly MetricsRow[]) {
+    return rows.filter((r): r is Extract<MetricsRow, { kind: "turn-metrics" }> => {
+      return r.kind === "turn-metrics";
+    });
+  }
 
-	function cacheEntry(
-		turnId: string,
-		inputTokens: number,
-		outputTokens: number,
-		cacheReadTokens: number,
-	): TurnMetricsEntry {
-		const total: TurnMetrics = {
-			turnId,
-			usage: { inputTokens, outputTokens, cacheReadTokens },
-			steps: [],
-		};
-		return { turnId, steps: [], total };
-	}
+  function cacheEntry(
+    turnId: string,
+    inputTokens: number,
+    outputTokens: number,
+    cacheReadTokens: number,
+  ): TurnMetricsEntry {
+    const total: TurnMetrics = {
+      turnId,
+      usage: { inputTokens, outputTokens, cacheReadTokens },
+      steps: [],
+    };
+    return { turnId, steps: [], total };
+  }
 
-	it("turn-metrics row carries this turn's usage and the running cumulative", () => {
-		const rows = interleaveTurnMetrics(
-			[userGroup(1, "q1"), assistantGroup(2, "a1")],
-			[makeEntry("t1", 1000, 100)],
-		);
-		const tm = turnMetricsRows(rows);
-		expect(tm).toHaveLength(1);
-		expect(tm[0]?.turn.turnId).toBe("t1");
-		expect(tm[0]?.cumulativeUsage).toEqual({ inputTokens: 1000, outputTokens: 100 });
-	});
+  it("turn-metrics row carries this turn's usage and the running cumulative", () => {
+    const rows = interleaveTurnMetrics(
+      [userGroup(1, "q1"), assistantGroup(2, "a1")],
+      [makeEntry("t1", 1000, 100)],
+    );
+    const tm = turnMetricsRows(rows);
+    expect(tm).toHaveLength(1);
+    expect(tm[0]?.turn.turnId).toBe("t1");
+    expect(tm[0]?.cumulativeUsage).toEqual({ inputTokens: 1000, outputTokens: 100 });
+  });
 
-	it("accumulates cache read + input across turns (chat total)", () => {
-		const rows = interleaveTurnMetrics(
-			[userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
-			[cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
-		);
-		const tm = turnMetricsRows(rows);
-		expect(tm).toHaveLength(2);
-		// turn 1: only its own usage
-		expect(tm[0]?.cumulativeUsage.inputTokens).toBe(2669);
-		expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(384);
-		// turn 2: sum of both (input 5406, cacheRead 2944 → matches the backend's 54% example)
-		expect(tm[1]?.cumulativeUsage.inputTokens).toBe(5406);
-		expect(tm[1]?.cumulativeUsage.cacheReadTokens).toBe(2944);
-	});
+  it("accumulates cache read + input across turns (chat total)", () => {
+    const rows = interleaveTurnMetrics(
+      [userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
+      [cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
+    );
+    const tm = turnMetricsRows(rows);
+    expect(tm).toHaveLength(2);
+    // turn 1: only its own usage
+    expect(tm[0]?.cumulativeUsage.inputTokens).toBe(2669);
+    expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(384);
+    // turn 2: sum of both (input 5406, cacheRead 2944 → matches the backend's 54% example)
+    expect(tm[1]?.cumulativeUsage.inputTokens).toBe(5406);
+    expect(tm[1]?.cumulativeUsage.cacheReadTokens).toBe(2944);
+  });
 
-	it("an in-flight (total=null) turn does not contribute to the cumulative", () => {
-		const rows = interleaveTurnMetrics(
-			[userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
-			[cacheEntry("t1", 1000, 10, 500), makeProgressiveEntry("t2", [makeStep("s1", 200, 5)])],
-		);
-		const tm = turnMetricsRows(rows);
-		// only the finalized turn emits a turn-metrics row; its cumulative is just itself
-		expect(tm).toHaveLength(1);
-		expect(tm[0]?.cumulativeUsage.inputTokens).toBe(1000);
-		expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(500);
-	});
+  it("an in-flight (total=null) turn does not contribute to the cumulative", () => {
+    const rows = interleaveTurnMetrics(
+      [userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
+      [cacheEntry("t1", 1000, 10, 500), makeProgressiveEntry("t2", [makeStep("s1", 200, 5)])],
+    );
+    const tm = turnMetricsRows(rows);
+    // only the finalized turn emits a turn-metrics row; its cumulative is just itself
+    expect(tm).toHaveLength(1);
+    expect(tm[0]?.cumulativeUsage.inputTokens).toBe(1000);
+    expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(500);
+  });
 
-	it("carries the prior finalized turn's usage as the retention baseline", () => {
-		const rows = interleaveTurnMetrics(
-			[userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
-			[cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
-		);
-		const tm = turnMetricsRows(rows);
-		// first finalized turn has no earlier baseline
-		expect(tm[0]?.prevTurnUsage).toBeNull();
-		// second turn's baseline is the first turn's usage
-		expect(tm[1]?.prevTurnUsage?.inputTokens).toBe(2669);
-		expect(tm[1]?.prevTurnUsage?.cacheReadTokens).toBe(384);
-	});
+  it("carries the prior finalized turn's usage as the retention baseline", () => {
+    const rows = interleaveTurnMetrics(
+      [userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
+      [cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
+    );
+    const tm = turnMetricsRows(rows);
+    // first finalized turn has no earlier baseline
+    expect(tm[0]?.prevTurnUsage).toBeNull();
+    // second turn's baseline is the first turn's usage
+    expect(tm[1]?.prevTurnUsage?.inputTokens).toBe(2669);
+    expect(tm[1]?.prevTurnUsage?.cacheReadTokens).toBe(384);
+  });
 });

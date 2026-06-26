@@ -3,18 +3,18 @@ import type { AccumulatingChunk, ProvisionalChunk, TranscriptState } from "./typ
 
 /** The initial empty transcript state. */
 export function initialState(): TranscriptState {
-	return {
-		committed: [],
-		provisional: [],
-		accumulating: null,
-		currentTurnId: null,
-		latestUsage: null,
-		sealedTurnId: null,
-		hiddenBeforeSeq: 0,
-		hiddenThinkingCount: 0,
-		generating: false,
-		providerRetry: null,
-	};
+  return {
+    committed: [],
+    provisional: [],
+    accumulating: null,
+    currentTurnId: null,
+    latestUsage: null,
+    sealedTurnId: null,
+    hiddenBeforeSeq: 0,
+    hiddenThinkingCount: 0,
+    generating: false,
+    providerRetry: null,
+  };
 }
 
 /**
@@ -25,21 +25,21 @@ export function initialState(): TranscriptState {
  * server's replay re-asserts `generating` via the replayed `turn-start`.
  */
 export function clearGenerating(state: TranscriptState): TranscriptState {
-	if (!state.generating) return state;
-	// Also drop a stale `provider-retry` banner — a retry pending at disconnect
-	// is stale once we re-subscribe (provider-retry events are not replayed), so
-	// a finished turn must not keep showing a "retrying…" banner forever.
-	return { ...state, generating: false, providerRetry: null };
+  if (!state.generating) return state;
+  // Also drop a stale `provider-retry` banner — a retry pending at disconnect
+  // is stale once we re-subscribe (provider-retry events are not replayed), so
+  // a finished turn must not keep showing a "retrying…" banner forever.
+  return { ...state, generating: false, providerRetry: null };
 }
 
 function flushAccumulating(
-	provisional: readonly ProvisionalChunk[],
-	acc: AccumulatingChunk | null,
+  provisional: readonly ProvisionalChunk[],
+  acc: AccumulatingChunk | null,
 ): readonly ProvisionalChunk[] {
-	if (acc === null) return provisional;
-	const chunk: Chunk =
-		acc.kind === "text" ? { type: "text", text: acc.text } : { type: "thinking", text: acc.text };
-	return [...provisional, { role: "assistant", chunk }];
+  if (acc === null) return provisional;
+  const chunk: Chunk =
+    acc.kind === "text" ? { type: "text", text: acc.text } : { type: "thinking", text: acc.text };
+  return [...provisional, { role: "assistant", chunk }];
 }
 
 /**
@@ -53,50 +53,50 @@ function flushAccumulating(
  * unloaded. Restoring earlier history goes through `restoreEarlier` instead.
  */
 export function applyHistory(
-	state: TranscriptState,
-	chunks: readonly StoredChunk[],
+  state: TranscriptState,
+  chunks: readonly StoredChunk[],
 ): TranscriptState {
-	const seqMap = new Map<number, StoredChunk>();
-	for (const c of state.committed) seqMap.set(c.seq, c);
-	let addedNew = false;
-	for (const c of chunks) {
-		if (c.seq < state.hiddenBeforeSeq) continue;
-		if (!seqMap.has(c.seq)) addedNew = true;
-		seqMap.set(c.seq, c);
-	}
-	const committed = Array.from(seqMap.values()).sort((a, b) => a.seq - b.seq);
+  const seqMap = new Map<number, StoredChunk>();
+  for (const c of state.committed) seqMap.set(c.seq, c);
+  let addedNew = false;
+  for (const c of chunks) {
+    if (c.seq < state.hiddenBeforeSeq) continue;
+    if (!seqMap.has(c.seq)) addedNew = true;
+    seqMap.set(c.seq, c);
+  }
+  const committed = Array.from(seqMap.values()).sort((a, b) => a.seq - b.seq);
 
-	if (state.sealedTurnId !== null) {
-		return {
-			...state,
-			committed,
-			provisional: [],
-			accumulating: null,
-			sealedTurnId: null,
-		};
-	}
+  if (state.sealedTurnId !== null) {
+    return {
+      ...state,
+      committed,
+      provisional: [],
+      accumulating: null,
+      sealedTurnId: null,
+    };
+  }
 
-	// During generation: if new committed chunks arrived, the provisional
-	// array may contain duplicates — the optimistic echo from `appendUserMessage`
-	// is now backed by a committed chunk (CR-6: user message persisted at turn
-	// start). Remove provisional chunks that match the last committed chunk
-	// (role + chunk content), keeping only the accumulating (streaming) chunk.
-	if (addedNew && state.generating && state.provisional.length > 0) {
-		const lastCommitted = committed[committed.length - 1];
-		if (lastCommitted !== undefined) {
-			const provisional = state.provisional.filter((p) => {
-				if (p.role !== lastCommitted.role) return true;
-				if (p.chunk.type !== lastCommitted.chunk.type) return true;
-				if (p.chunk.type === "text" && lastCommitted.chunk.type === "text") {
-					return p.chunk.text !== lastCommitted.chunk.text;
-				}
-				return true;
-			});
-			return { ...state, committed, provisional, accumulating: state.accumulating };
-		}
-	}
+  // During generation: if new committed chunks arrived, the provisional
+  // array may contain duplicates — the optimistic echo from `appendUserMessage`
+  // is now backed by a committed chunk (CR-6: user message persisted at turn
+  // start). Remove provisional chunks that match the last committed chunk
+  // (role + chunk content), keeping only the accumulating (streaming) chunk.
+  if (addedNew && state.generating && state.provisional.length > 0) {
+    const lastCommitted = committed[committed.length - 1];
+    if (lastCommitted !== undefined) {
+      const provisional = state.provisional.filter((p) => {
+        if (p.role !== lastCommitted.role) return true;
+        if (p.chunk.type !== lastCommitted.chunk.type) return true;
+        if (p.chunk.type === "text" && lastCommitted.chunk.type === "text") {
+          return p.chunk.text !== lastCommitted.chunk.text;
+        }
+        return true;
+      });
+      return { ...state, committed, provisional, accumulating: state.accumulating };
+    }
+  }
 
-	return { ...state, committed };
+  return { ...state, committed };
 }
 
 /**
@@ -126,179 +126,179 @@ export function applyHistory(
  * below, so the clearing logic stays centralized in one place.
  */
 function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
-	switch (event.type) {
-		case "status":
-		case "tool-output":
-			return state;
+  switch (event.type) {
+    case "status":
+    case "tool-output":
+      return state;
 
-		case "turn-start":
-			return { ...state, currentTurnId: event.turnId, generating: true };
+    case "turn-start":
+      return { ...state, currentTurnId: event.turnId, generating: true };
 
-		case "user-message": {
-			// The turn's USER prompt, surfaced on the event stream (backend CR-3) so a
-			// WATCHER/late-joiner renders it mid-turn instead of waiting for seal. The
-			// SENDER already echoed its own prompt optimistically (`appendUserMessage`),
-			// so DE-DUP: skip if the trailing provisional chunk is already an identical
-			// user text chunk. A pure watcher has no such echo → it appends and renders.
-			if (event.text.length === 0) return state;
-			const last = state.provisional[state.provisional.length - 1];
-			if (
-				last !== undefined &&
-				last.role === "user" &&
-				last.chunk.type === "text" &&
-				last.chunk.text === event.text
-			) {
-				return { ...state, generating: true };
-			}
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			return {
-				...state,
-				provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
-				accumulating: null,
-				generating: true,
-			};
-		}
+    case "user-message": {
+      // The turn's USER prompt, surfaced on the event stream (backend CR-3) so a
+      // WATCHER/late-joiner renders it mid-turn instead of waiting for seal. The
+      // SENDER already echoed its own prompt optimistically (`appendUserMessage`),
+      // so DE-DUP: skip if the trailing provisional chunk is already an identical
+      // user text chunk. A pure watcher has no such echo → it appends and renders.
+      if (event.text.length === 0) return state;
+      const last = state.provisional[state.provisional.length - 1];
+      if (
+        last !== undefined &&
+        last.role === "user" &&
+        last.chunk.type === "text" &&
+        last.chunk.text === event.text
+      ) {
+        return { ...state, generating: true };
+      }
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      return {
+        ...state,
+        provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
+        accumulating: null,
+        generating: true,
+      };
+    }
 
-		case "text-delta": {
-			const acc = state.accumulating;
-			if (acc !== null && acc.kind === "text") {
-				return {
-					...state,
-					accumulating: { kind: "text", text: acc.text + event.delta },
-					generating: true,
-				};
-			}
-			const provisional = flushAccumulating(state.provisional, acc);
-			return {
-				...state,
-				provisional,
-				accumulating: { kind: "text", text: event.delta },
-				generating: true,
-			};
-		}
+    case "text-delta": {
+      const acc = state.accumulating;
+      if (acc !== null && acc.kind === "text") {
+        return {
+          ...state,
+          accumulating: { kind: "text", text: acc.text + event.delta },
+          generating: true,
+        };
+      }
+      const provisional = flushAccumulating(state.provisional, acc);
+      return {
+        ...state,
+        provisional,
+        accumulating: { kind: "text", text: event.delta },
+        generating: true,
+      };
+    }
 
-		case "reasoning-delta": {
-			const acc = state.accumulating;
-			if (acc !== null && acc.kind === "thinking") {
-				return {
-					...state,
-					accumulating: { kind: "thinking", text: acc.text + event.delta },
-					generating: true,
-				};
-			}
-			const provisional = flushAccumulating(state.provisional, acc);
-			return {
-				...state,
-				provisional,
-				accumulating: { kind: "thinking", text: event.delta },
-				generating: true,
-			};
-		}
+    case "reasoning-delta": {
+      const acc = state.accumulating;
+      if (acc !== null && acc.kind === "thinking") {
+        return {
+          ...state,
+          accumulating: { kind: "thinking", text: acc.text + event.delta },
+          generating: true,
+        };
+      }
+      const provisional = flushAccumulating(state.provisional, acc);
+      return {
+        ...state,
+        provisional,
+        accumulating: { kind: "thinking", text: event.delta },
+        generating: true,
+      };
+    }
 
-		case "tool-call": {
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			const chunk: Chunk = {
-				type: "tool-call",
-				toolCallId: event.toolCallId,
-				toolName: event.toolName,
-				input: event.input,
-				stepId: event.stepId,
-			};
-			return {
-				...state,
-				provisional: [...provisional, { role: "assistant", chunk }],
-				accumulating: null,
-				generating: true,
-			};
-		}
+    case "tool-call": {
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      const chunk: Chunk = {
+        type: "tool-call",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        input: event.input,
+        stepId: event.stepId,
+      };
+      return {
+        ...state,
+        provisional: [...provisional, { role: "assistant", chunk }],
+        accumulating: null,
+        generating: true,
+      };
+    }
 
-		case "tool-result": {
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			const chunk: Chunk = {
-				type: "tool-result",
-				toolCallId: event.toolCallId,
-				toolName: event.toolName,
-				content: event.content,
-				isError: event.isError,
-				stepId: event.stepId,
-			};
-			return {
-				...state,
-				provisional: [...provisional, { role: "tool", chunk }],
-				accumulating: null,
-				generating: true,
-			};
-		}
+    case "tool-result": {
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      const chunk: Chunk = {
+        type: "tool-result",
+        toolCallId: event.toolCallId,
+        toolName: event.toolName,
+        content: event.content,
+        isError: event.isError,
+        stepId: event.stepId,
+      };
+      return {
+        ...state,
+        provisional: [...provisional, { role: "tool", chunk }],
+        accumulating: null,
+        generating: true,
+      };
+    }
 
-		case "error": {
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			const chunk: Chunk =
-				event.code !== undefined
-					? { type: "error", message: event.message, code: event.code }
-					: { type: "error", message: event.message };
-			return {
-				...state,
-				provisional: [...provisional, { role: "assistant", chunk }],
-				accumulating: null,
-				generating: false,
-			};
-		}
+    case "error": {
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      const chunk: Chunk =
+        event.code !== undefined
+          ? { type: "error", message: event.message, code: event.code }
+          : { type: "error", message: event.message };
+      return {
+        ...state,
+        provisional: [...provisional, { role: "assistant", chunk }],
+        accumulating: null,
+        generating: false,
+      };
+    }
 
-		case "usage":
-			return { ...state, latestUsage: event.usage };
+    case "usage":
+      return { ...state, latestUsage: event.usage };
 
-		case "step-complete":
-			// Timing metadata — no content chunk; handled by the telemetry reducer.
-			return state;
+    case "step-complete":
+      // Timing metadata — no content chunk; handled by the telemetry reducer.
+      return state;
 
-		case "done": {
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			return {
-				...state,
-				provisional,
-				accumulating: null,
-				generating: false,
-			};
-		}
+    case "done": {
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      return {
+        ...state,
+        provisional,
+        accumulating: null,
+        generating: false,
+      };
+    }
 
-		case "turn-sealed": {
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			return {
-				...state,
-				provisional,
-				accumulating: null,
-				sealedTurnId: event.turnId,
-				generating: false,
-			};
-		}
+    case "turn-sealed": {
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      return {
+        ...state,
+        provisional,
+        accumulating: null,
+        sealedTurnId: event.turnId,
+        generating: false,
+      };
+    }
 
-		case "steering": {
-			// A steering message drained from the queue at a tool-result boundary
-			// (the model sees it alongside the tool results). Append a user bubble
-			// to the provisional transcript; the turn is still in flight. The queue
-			// surface clears separately on drain (a different channel) — no de-dup
-			// here (unlike `user-message`, steering is never optimistically echoed
-			// into the transcript by the sender).
-			if (event.text.length === 0) return state;
-			const provisional = flushAccumulating(state.provisional, state.accumulating);
-			return {
-				...state,
-				provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
-				accumulating: null,
-				generating: true,
-			};
-		}
+    case "steering": {
+      // A steering message drained from the queue at a tool-result boundary
+      // (the model sees it alongside the tool results). Append a user bubble
+      // to the provisional transcript; the turn is still in flight. The queue
+      // surface clears separately on drain (a different channel) — no de-dup
+      // here (unlike `user-message`, steering is never optimistically echoed
+      // into the transcript by the sender).
+      if (event.text.length === 0) return state;
+      const provisional = flushAccumulating(state.provisional, state.accumulating);
+      return {
+        ...state,
+        provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
+        accumulating: null,
+        generating: true,
+      };
+    }
 
-		case "provider-retry": {
-			// TRANSIENT: a retryable provider error is being retried with backoff.
-			// Coalesce — the latest attempt + delay replaces any previous, so a
-			// single updating "retrying…" banner shows the newest. NOT a chunk: it
-			// never enters provisional/committed, so it can never pollute the prompt
-			// or be replayed on a reload. The turn is still in flight, so `generating`
-			// (already true from `turn-start`) is left untouched.
-			return { ...state, providerRetry: event };
-		}
-	}
+    case "provider-retry": {
+      // TRANSIENT: a retryable provider error is being retried with backoff.
+      // Coalesce — the latest attempt + delay replaces any previous, so a
+      // single updating "retrying…" banner shows the newest. NOT a chunk: it
+      // never enters provisional/committed, so it can never pollute the prompt
+      // or be replayed on a reload. The turn is still in flight, so `generating`
+      // (already true from `turn-start`) is left untouched.
+      return { ...state, providerRetry: event };
+    }
+  }
 }
 
 /**
@@ -313,23 +313,23 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
  */
 // Events that clear a showing provider-retry banner (content resumed or turn ended).
 const RETRY_CLEARING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
-	"turn-start",
-	"text-delta",
-	"reasoning-delta",
-	"tool-call",
-	"tool-result",
-	"error",
-	"done",
-	"turn-sealed",
+  "turn-start",
+  "text-delta",
+  "reasoning-delta",
+  "tool-call",
+  "tool-result",
+  "error",
+  "done",
+  "turn-sealed",
 ]);
 
 export function foldEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
-	const next = reduceEvent(state, event);
-	if (event.type === "provider-retry") return next; // set by reduceEvent; not a clearing event
-	if (RETRY_CLEARING_EVENTS.has(event.type) && state.providerRetry !== null) {
-		return { ...next, providerRetry: null };
-	}
-	return next;
+  const next = reduceEvent(state, event);
+  if (event.type === "provider-retry") return next; // set by reduceEvent; not a clearing event
+  if (RETRY_CLEARING_EVENTS.has(event.type) && state.providerRetry !== null) {
+    return { ...next, providerRetry: null };
+  }
+  return next;
 }
 
 /**
@@ -339,11 +339,11 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
  * the authoritative committed chunks after a turn seals.
  */
 export function appendUserMessage(state: TranscriptState, text: string): TranscriptState {
-	const provisional = flushAccumulating(state.provisional, state.accumulating);
-	const userChunk: Chunk = { type: "text", text };
-	return {
-		...state,
-		provisional: [...provisional, { role: "user", chunk: userChunk }],
-		accumulating: null,
-	};
+  const provisional = flushAccumulating(state.provisional, state.accumulating);
+  const userChunk: Chunk = { type: "text", text };
+  return {
+    ...state,
+    provisional: [...provisional, { role: "user", chunk: userChunk }],
+    accumulating: null,
+  };
 }
