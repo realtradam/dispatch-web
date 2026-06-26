@@ -8,6 +8,15 @@
 > **Orchestrator:** SNAPSHOT of `transport-contract@0.22.0` (MCP status + computers). Regenerate whenever
 > it changes.
 >
+> **2026-06-26 delta (vision handoff — ADDITIVE, NO version bump):** adds the vision/image surface.
+> `ChatRequest` (+ `ChatSendMessage`/`QueueRequest`) gains an optional `images?: readonly ImageInput[]`
+> (each entry: `{ url, mimeType? }` — a base64 data URL or `http(s)://` URL; validated non-array/no-url/
+> empty-url → 400, empty array treated as absent). `ModelMetadata` gains `vision?: boolean` (true when the
+> model natively accepts images; absent → the server's vision handoff transcribes images to text before the
+> model sees them). `ImageChunk`/`ImageInput` are `@dispatch/wire` types (re-exported here). A non-vision
+> model's persisted user message keeps the original `image` chunk AND adds a `text` transcription chunk
+> (`[Image analysis (via <model>)]: …`) in the SAME message — render both. See `backend-handoff.md` §2j.
+>
 > **2026-06-25 delta (SSH handoff #2 — ADDITIVE to `transport-contract@0.22.0`, NO version bump):** adds the
 > computer HTTP API types: `ComputerListResponse` (`GET /computers`), `ComputerResponse` (`GET /computers/:alias`),
 > `ComputerStatusResponse` (`GET /computers/:alias/status`), `TestComputerResponse` (`POST /computers/:alias/test`),
@@ -59,8 +68,11 @@
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
 import type {
 	AgentEvent,
+	Computer,
+	ComputerEntry,
 	ConversationMeta,
 	ConversationStatus,
+	ImageInput,
 	QueuedMessage,
 	ReasoningEffort,
 	StoredChunk,
@@ -72,8 +84,12 @@ import type {
 export type {
 	AgentEvent,
 	CompactionResult,
+	Computer,
+	ComputerEntry,
 	ConversationMeta,
 	ConversationStatus,
+	ImageChunk,
+	ImageInput,
 	QueuedMessage,
 	ReasoningEffort,
 	StepMetrics,
@@ -99,6 +115,21 @@ export interface ChatRequest {
 
 	/** The user's message text for this turn. */
 	readonly message: string;
+
+	/**
+	 * Images attached to this turn (e.g. a user-pasted screenshot). Each entry's
+	 * `url` is a base64 data URL (`data:image/…;base64,…`) or an `http(s)://`
+	 * URL. The server converts these to `image` chunks on the persisted user
+	 * message. For a VISION-capable model (e.g. kimi), the images are passed
+	 * through to the provider natively. For a NON-vision model (e.g. glm-5.2),
+	 * the server's vision handoff transcribes each image to a text description
+	 * (via a vision-capable model) and feeds that text instead — so a text-only
+	 * model can still reason about the image's contents. Optional — omit for a
+	 * text-only turn (backward compatible). Validation: non-array `images` →
+	 * 400; an image without `url` → 400; empty `url` → 400. An empty array is
+	 * accepted and treated as absent.
+	 */
+	readonly images?: readonly ImageInput[];
 
 	/**
 	 * The model to use, as a model name in `<credentialName>/<model>` form — one
@@ -157,6 +188,14 @@ export interface ModelsResponse {
 /** Per-model metadata returned alongside the model catalog. */
 export interface ModelMetadata {
 	readonly contextWindow?: number;
+	/**
+	 * Whether this model can natively accept image input (vision/multimodal).
+	 * When `true`, image chunks in a user message are passed through to the
+	 * provider. When `false`/absent, the server's vision handoff transcribes
+	 * images to text before the model sees them. A client may use this to show
+	 * a vision badge in the model picker. Optional — absent when unknown.
+	 */
+	readonly vision?: boolean;
 }
 
 /**

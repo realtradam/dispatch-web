@@ -35,7 +35,7 @@ import type {
   WarmResponse,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
-import type { ComputerEntry, ConversationStatus } from "@dispatch/wire";
+import type { ComputerEntry, ConversationStatus, ImageInput } from "@dispatch/wire";
 import { untrack } from "svelte";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
@@ -160,7 +160,14 @@ export interface AppStore {
   readonly storage: Storage | undefined;
   /** The current spec for one surface by id (discovery-by-id), or null if absent. */
   surface(surfaceId: string): SurfaceSpec | null;
-  send(text: string): void;
+  /**
+   * Send a user message (start a turn). Forwards any staged `images`
+   * (`ImageInput[]` — base64 data URLs / https URLs) on the `chat.send` op;
+   * the server passes them to a vision-capable model natively or transcribes
+   * them via vision handoff for a non-vision model. Omitted on the wire when
+   * none are staged. On a draft, promotes to a tab first.
+   */
+  send(text: string, images?: readonly ImageInput[]): void;
   /**
    * Enqueue a steering message onto the focused conversation's queue
    * (`chat.queue` WS op). While a turn is generating, the message is delivered
@@ -1149,7 +1156,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       return getSurfaceSpec(protocol, surfaceId);
     },
 
-    send(text: string): void {
+    send(text: string, images?: readonly ImageInput[]): void {
       if (tabsStore.activeConversationId === null) {
         // Draft: promote to tab on first send
         const conversationId = draftConversationId;
@@ -1177,9 +1184,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         void refreshReasoningEffort();
         void refreshCompactPercent();
         // Now send on the promoted store
-        chatStores.get(conversationId)?.send(text);
+        chatStores.get(conversationId)?.send(text, images);
       } else {
-        activeChat.send(text);
+        activeChat.send(text, images);
       }
     },
 

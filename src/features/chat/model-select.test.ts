@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { joinModelName, modelKeys, modelsForKey, splitModelName } from "./model-select";
+import {
+  isVisionModel,
+  joinModelName,
+  modelKeys,
+  modelsForKey,
+  splitModelName,
+} from "./model-select";
 
 describe("splitModelName", () => {
   it("splits on the first slash", () => {
@@ -54,5 +60,30 @@ describe("modelsForKey", () => {
 
   it("returns empty for an unknown key", () => {
     expect(modelsForKey(["openai/gpt-4"], "anthropic")).toEqual([]);
+  });
+});
+
+describe("isVisionModel", () => {
+  it("returns true when modelInfo[name].vision is true", () => {
+    const info = { "kimi/k2": { vision: true } };
+    expect(isVisionModel(info, "kimi/k2")).toBe(true);
+  });
+
+  it("returns false when vision is false", () => {
+    const info = { "umans/glm-5.2": { vision: false } };
+    expect(isVisionModel(info, "umans/glm-5.2")).toBe(false);
+  });
+
+  it("returns false when vision is absent (unknown)", () => {
+    const info = { "umans/glm-5.2": { contextWindow: 128000 } };
+    expect(isVisionModel(info, "umans/glm-5.2")).toBe(false);
+  });
+
+  it("returns false for a model with no metadata entry at all", () => {
+    expect(isVisionModel({}, "unknown/model")).toBe(false);
+  });
+
+  it("returns false for an empty modelInfo map", () => {
+    expect(isVisionModel({}, "kimi/k2")).toBe(false);
   });
 });

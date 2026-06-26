@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ReasoningEffort } from "@dispatch/transport-contract";
+	import type { ImageInput, ReasoningEffort } from "@dispatch/transport-contract";
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import { tick } from "svelte";
 	import Table from "../components/Table.svelte";
@@ -241,8 +241,8 @@
 		store.invoke(msg.surfaceId, msg.actionId, msg.payload);
 	}
 
-	function handleSend(text: string) {
-		store.send(text);
+	function handleSend(text: string, images?: readonly ImageInput[]): void {
+		store.send(text, images);
 	}
 
 	function handleQueue(text: string) {
@@ -587,7 +587,12 @@
 {#snippet viewContent(kind: string)}
 	{#if kind === "model"}
 		<div class="flex flex-col gap-3">
-			<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
+			<ModelSelector
+			models={store.models}
+			selected={store.activeModel}
+			onSelect={handleSelectModel}
+			modelInfo={store.modelInfo}
+		/>
 			<!-- Keyed on the workspace conversation (active tab OR draft) so the inputs
 			     re-mount per conversation — incl. switching between drafts — and can't
 			     bleed across tabs. Editable for a draft too (cwd + effort apply from turn 1). -->

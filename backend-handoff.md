@@ -5,10 +5,11 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2i ADDED — Heartbeat next-run countdown timer: FE shows a live "Next run in Xm Ys" countdown
-from a 1s clock; opens 1 backend ask CR-HB-3: new `GET /workspaces/:id/heartbeat/next-run` → `{ nextRunAt: ISO|null }`.
-FE falls back to an approximation (latest run + interval) until the endpoint ships. typecheck 0/0, 865 tests green, biome
-clean, build OK. §2h/§2g/§2f unchanged.)_
+_Last updated: 2026-06-26 (§2j ADDED — Vision & vision handoff: image paste in the composer, `image` chunks
+rendered in the transcript, and a vision badge in the model picker. Additive to `wire@0.12.0` /
+`transport-contract@0.22.0` (NO version bump): new `ImageChunk` in the `Chunk` union + `ImageInput`;
+`ChatRequest.images` (`ChatSendMessage` carries it; `ChatQueueMessage` does NOT — steering is text-only);
+`ModelMetadata.vision`. typecheck 0/0, 901 tests green (+34), biome clean, build OK. §2i unchanged.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -713,6 +714,86 @@ REST surface, not a transport-contract type; the FE owns the `HeartbeatNextRunRe
 can only be confirmed against a running backend with CR-HB-3 shipped (enable the heartbeat, watch "Next run in …" tick
 down, confirm it matches when a run actually fires). Until CR-HB-3 ships, the FE shows the APPROXIMATE countdown
 (latest run + interval) — flagged as the known gap.
+
+---
+
+## 2j. Vision & vision handoff → **CONSUMED ✅ (backend shipped; FE built + verified)**
+
+The backend shipped image/vision support: a user can attach images to a chat message, vision-capable
+models receive them natively, and non-vision models get an auto-transcribed text description (the
+"vision handoff"). The FE now pastes/picks/drops images in the composer, renders `image` chunks in the
+transcript, and shows a vision badge in the model picker. Additive to `wire@0.12.0` /
+`transport-contract@0.22.0` (**NO version bump** — `ImageChunk`/`ImageInput` were added to the existing
+versions; the FE's `file:` dep picks them up automatically, no re-pin needed).
+
+**New wire/transport types consumed + re-mirrored:**
+- `ImageChunk` (`{ type: "image", url, mimeType? }`) — a NEW `Chunk` variant. `url` is a base64 data URL
+  (`data:image/…;base64,…`) OR an `http(s)://` URL. `ImageInput` (`{ url, mimeType? }`) is the transport-
+  facing input shape (`ChatRequest.images`); the orchestrator converts each into an `ImageChunk` on the
+  persisted user message.
+- `ChatRequest.images?: readonly ImageInput[]` (so `ChatSendMessage` — which `extends ChatRequest` —
+  carries it on `chat.send`). `ChatQueueMessage` (steering) does NOT carry `images` — steering is
+  text-only (correctly: a mid-turn injection has no image surface).
+- `ModelMetadata.vision?: boolean` — `true` when the model natively accepts images; absent/`false` → the
+  server's vision handoff transcribes images to text before the model sees them.
+- Re-mirrored `.dispatch/wire.reference.md` (added `ImageChunk` to the `Chunk` union + the `ImageChunk`/
+  `ImageInput` interfaces) and `.dispatch/transport-contract.reference.md` (added `images` to `ChatRequest`,
+  `vision` to `ModelMetadata`, + `ImageChunk`/`ImageInput`/`Computer`/`ComputerEntry` to the re-export).
+
+**FE (DONE + verified):**
+- **Core (`core/chunks`):** the `assertChunkExhaustive` conformance guard caught the new `image` variant
+  (its purpose) → added the `case "image"` (this was the build break). `appendUserMessage(state, text,
+  images?)` now echoes a `[text, image, image, …]` user run (text first, then images in order; images-only
+  when text is empty). The `user-message` event carries ONLY text (never images — images arrive via history/
+  loadSince + the optimistic echo), so its de-dup was generalized: it now scans the trailing provisional
+  USER run for a matching text chunk (not just the last chunk — which would be an image when images were
+  pasted, causing a duplicate text bubble). `applyHistory`'s during-generation de-dup was generalized to
+  match a multi-chunk user echo against the trailing committed user run by content equality
+  (`chunkContentEquals` — text/thinking/image/error/system/tool-call/tool-result), dropping the whole echo
+  only when fully backed (a partial match is kept until turn-seal drops all provisional wholesale). New
+  pure helpers `chunkContentEquals` + `trailingRun` (both internal). +16 reducer tests.
+- **Transcript (`ChatView.svelte`):** a user `image` chunk renders as an `<img>` (lazy + async-decoded,
+  max-h-80) inside the user bubble, using the chunk's `url` directly. A non-vision model's persisted user
+  message keeps the original `image` chunk AND a `text` transcription (`[Image analysis (via <model>)]: …`)
+  in the SAME message — both render (image, then analysis text). The `read_image` tool call/result
+  renders like any other tool (its `toolName` is generic — no special-casing). +3 ChatView tests.
+- **Composer (`Composer.svelte`):** image paste (clipboard `paste` — extracts image `File` items,
+  `preventDefault` only when an image is present so text paste still works), an attach-image button +
+  hidden `<input type=file accept=image/* multiple>`, and drag-drop onto the form. Files are read to
+  base64 data URLs (`FileReader.readAsDataURL`), capped at 8 MiB, staged as thumbnail previews with
+  remove buttons. `onSend` signature widened to `(text, images?)`; an image-only send (empty text) is
+  allowed; `images` is OMITTED on the wire (not `[]`) when none are staged (backward compatible). Steering
+  (`onQueue`) never forwards images. +6 Composer tests.
+- **Store wiring:** `ChatStore.send(text, images?)` forwards `images` on the `chat.send` WS op + echoes
+  them; `AppStore.send(text, images?)` threads images through the draft→tab promotion; `App.svelte`'s
+  `handleSend(text, images?)` passes them through. The model catalog already captured `modelInfo` (now
+  with `vision`); `GET /models` is unchanged. +5 store/app tests.
+- **Model picker (`ModelSelector.svelte` + `model-select.ts`):** new pure `isVisionModel(modelInfo,
+  fullName)`; the model dropdown marks vision-capable models (`" · vision"`), and an indicator below shows
+  "Vision — this model sees images natively" vs the handoff hint "Pasted images are auto-described". Wired
+  `modelInfo={store.modelInfo}` from `App.svelte`. +8 model-select/ModelSelector tests.
+
+**Invariants held:**
+- `chat.send` STILL omits `cwd` (the persisted cwd wins) — only `images` was added to the message.
+- The `user-message` event still carries only text; images are NEVER expected on it (a watcher fetches
+  them from history). The de-dup was made robust to the multi-chunk echo rather than reaching for images
+  on the event.
+- `providerRetry`/`generating` unchanged; `image` is a normal committed/provisional chunk (it IS in the
+  `Chunk.type` union, unlike the transient `provider-retry`), so it persists + replays on reload.
+- The `read_image` tool is rendered generically (no surface-id special-casing — the tool-name dispatch is
+  already identity-free).
+
+**Verification:** `svelte-check` 0/0; vitest **901/901** (run TWICE — no cross-test pollution; +34 new:
+16 reducer, 3 ChatView, 6 Composer, 5 store/app, 4 model-select), biome clean, `vite build` succeeds (the
+one CSS warning is PRE-EXISTING — `[file:path]`/`[heartbeat:elapsed]` attribute selectors, unrelated).
+**Live probe NOT run:** the backend was not reachable headless at verify time (it is the user's process;
+never booted headless). The full data path (paste → data URL → `chat.send` `images` → reducer echo →
+transcript render; `GET /models` `vision` → badge; history `image` chunk → render) is covered by unit +
+component + store tests. To confirm end-to-end: start the backend, paste an image into the composer with
+a vision model selected (e.g. any `kimi/*`), send, confirm the image renders + the model responds to it;
+then switch to a non-vision model (e.g. `umans/glm-5.2`), paste an image, send, confirm the image renders
+AND a `[Image analysis (via …)]` text bubble appears (the handoff transcription); confirm the vision
+badge shows/hides per model in the picker.
 
 ---
 

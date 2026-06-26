@@ -128,9 +128,32 @@ describe("classifies every Chunk type", () => {
       },
       { type: "error" as const, message: "e" },
       { type: "system" as const, text: "s" },
+      { type: "image" as const, url: "data:image/png;base64,AAAA", mimeType: "image/png" },
     ];
     const labels = chunks.map(assertChunkExhaustive);
-    expect(labels).toEqual(["text", "thinking", "tool-call", "tool-result", "error", "system"]);
+    expect(labels).toEqual([
+      "text",
+      "thinking",
+      "tool-call",
+      "tool-result",
+      "error",
+      "system",
+      "image",
+    ]);
+  });
+
+  it("covers all 7 Chunk variants", () => {
+    // Keeps the exhaustive guard honest: a new Chunk.type variant must be added
+    // both here and to `assertChunkExhaustive` or the `satisfies never` errors.
+    expect([
+      "text",
+      "thinking",
+      "tool-call",
+      "tool-result",
+      "error",
+      "system",
+      "image",
+    ] as const).toHaveLength(7);
   });
 });
 
@@ -221,6 +244,21 @@ describe("ChatSendMessage shape is constructible", () => {
     expect(msg.conversationId).toBe("c1");
     expect(msg.model).toBe("default/gpt-4");
     expect(msg.cwd).toBe("/tmp");
+  });
+
+  it("constructs a ChatSendMessage with pasted images", () => {
+    const msg: ChatSendMessage = {
+      type: "chat.send",
+      conversationId: "c1",
+      message: "what's in this image?",
+      images: [
+        { url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+        { url: "https://example.com/cat.jpg" },
+      ],
+    };
+    expect(msg.images).toHaveLength(2);
+    expect(msg.images?.[0]?.mimeType).toBe("image/png");
+    expect(msg.images?.[1]?.mimeType).toBeUndefined();
   });
 });
 
