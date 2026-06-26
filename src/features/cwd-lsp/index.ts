@@ -1,14 +1,14 @@
 export type {
-	CwdSaveResult,
-	LoadLspStatus,
-	LspStatusResult,
-	SaveCwd,
+  CwdSaveResult,
+  LoadLspStatus,
+  LspStatusResult,
+  SaveCwd,
 } from "./logic/view-model";
 export { default as CwdField } from "./ui/CwdField.svelte";
 export { default as LspStatusView } from "./ui/LspStatusView.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */
 export const manifest = {
-	name: "cwd-lsp",
-	description: "Per-conversation working directory + language-server status",
+  name: "cwd-lsp",
+  description: "Per-conversation working directory + language-server status",
 } as const;

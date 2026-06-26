@@ -10,14 +10,14 @@
  */
 
 export interface ViewPanel {
-	readonly id: number;
-	/** Selected view-kind id, or `null` while the panel still reads "Select a view". */
-	readonly kind: string | null;
+  readonly id: number;
+  /** Selected view-kind id, or `null` while the panel still reads "Select a view". */
+  readonly kind: string | null;
 }
 
 export interface PanelsState {
-	readonly panels: readonly ViewPanel[];
-	readonly nextId: number;
+  readonly panels: readonly ViewPanel[];
+  readonly nextId: number;
 }
 
 /**
@@ -25,25 +25,25 @@ export interface PanelsState {
  * a single preset panel, or `[null]` for one empty "Select a view" panel.
  */
 export function initialPanels(kinds: readonly (string | null)[] = [null]): PanelsState {
-	let nextId = 0;
-	const panels = kinds.map((kind) => ({ id: nextId++, kind }));
-	return { panels, nextId };
+  let nextId = 0;
+  const panels = kinds.map((kind) => ({ id: nextId++, kind }));
+  return { panels, nextId };
 }
 
 export function addPanel(state: PanelsState, kind: string | null = null): PanelsState {
-	return {
-		panels: [...state.panels, { id: state.nextId, kind }],
-		nextId: state.nextId + 1,
-	};
+  return {
+    panels: [...state.panels, { id: state.nextId, kind }],
+    nextId: state.nextId + 1,
+  };
 }
 
 export function removePanel(state: PanelsState, id: number): PanelsState {
-	return { ...state, panels: state.panels.filter((p) => p.id !== id) };
+  return { ...state, panels: state.panels.filter((p) => p.id !== id) };
 }
 
 export function selectKind(state: PanelsState, id: number, kind: string | null): PanelsState {
-	return {
-		...state,
-		panels: state.panels.map((p) => (p.id === id ? { ...p, kind } : p)),
-	};
+  return {
+    ...state,
+    panels: state.panels.map((p) => (p.id === id ? { ...p, kind } : p)),
+  };
 }

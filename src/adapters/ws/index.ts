@@ -1,123 +1,123 @@
 import type {
-	ChatDeltaMessage,
-	ChatErrorMessage,
-	ConversationCompactedMessage,
-	ConversationOpenMessage,
-	ConversationStatusChangedMessage,
-	WsClientMessage,
+  ChatDeltaMessage,
+  ChatErrorMessage,
+  ConversationCompactedMessage,
+  ConversationOpenMessage,
+  ConversationStatusChangedMessage,
+  WsClientMessage,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { nextBackoffMs, parseServerMessage, serialize } from "./logic";
 
 export interface WebSocketLike {
-	send(data: string): void;
-	close(): void;
-	onopen: (() => void) | null;
-	onmessage: ((ev: { data: string }) => void) | null;
-	onclose: ((ev: { code: number; reason: string }) => void) | null;
+  send(data: string): void;
+  close(): void;
+  onopen: (() => void) | null;
+  onmessage: ((ev: { data: string }) => void) | null;
+  onclose: ((ev: { code: number; reason: string }) => void) | null;
 }
 
 export interface SurfaceSocketOptions {
-	url: string;
-	onMessage: (msg: SurfaceServerMessage) => void;
-	onChat?: (msg: ChatDeltaMessage | ChatErrorMessage) => void;
-	/** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
-	onConversationOpen?: (msg: ConversationOpenMessage) => void;
-	/** Broadcast when a conversation's lifecycle status changes (active/idle/closed). */
-	onConversationStatusChanged?: (msg: ConversationStatusChangedMessage) => void;
-	/** Broadcast when a conversation's history has been compacted (reload needed). */
-	onConversationCompacted?: (msg: ConversationCompactedMessage) => void;
-	onReopen?: () => void;
-	socketFactory?: (url: string) => WebSocketLike;
+  url: string;
+  onMessage: (msg: SurfaceServerMessage) => void;
+  onChat?: (msg: ChatDeltaMessage | ChatErrorMessage) => void;
+  /** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
+  onConversationOpen?: (msg: ConversationOpenMessage) => void;
+  /** Broadcast when a conversation's lifecycle status changes (active/idle/closed). */
+  onConversationStatusChanged?: (msg: ConversationStatusChangedMessage) => void;
+  /** Broadcast when a conversation's history has been compacted (reload needed). */
+  onConversationCompacted?: (msg: ConversationCompactedMessage) => void;
+  onReopen?: () => void;
+  socketFactory?: (url: string) => WebSocketLike;
 }
 
 export interface SurfaceSocketHandle {
-	send(msg: WsClientMessage): void;
-	close(): void;
+  send(msg: WsClientMessage): void;
+  close(): void;
 }
 
 export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHandle {
-	const factory =
-		opts.socketFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
+  const factory =
+    opts.socketFactory ?? ((url: string) => new WebSocket(url) as unknown as WebSocketLike);
 
-	let socket: WebSocketLike | null = null;
-	let disposed = false;
-	let reconnectAttempt = 0;
-	let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
-	let isOpen = false;
-	const queue: string[] = [];
+  let socket: WebSocketLike | null = null;
+  let disposed = false;
+  let reconnectAttempt = 0;
+  let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let isOpen = false;
+  const queue: string[] = [];
 
-	function connect(isReconnect: boolean): void {
-		socket = factory(opts.url);
-		isOpen = false;
+  function connect(isReconnect: boolean): void {
+    socket = factory(opts.url);
+    isOpen = false;
 
-		socket.onopen = () => {
-			if (disposed) return;
-			isOpen = true;
-			reconnectAttempt = 0;
-			for (const raw of queue.splice(0)) {
-				socket?.send(raw);
-			}
-			if (isReconnect) {
-				opts.onReopen?.();
-			}
-		};
+    socket.onopen = () => {
+      if (disposed) return;
+      isOpen = true;
+      reconnectAttempt = 0;
+      for (const raw of queue.splice(0)) {
+        socket?.send(raw);
+      }
+      if (isReconnect) {
+        opts.onReopen?.();
+      }
+    };
 
-		socket.onmessage = (ev) => {
-			if (disposed) return;
-			const msg = parseServerMessage(ev.data);
-			if (msg !== null) {
-				if (msg.type === "chat.delta" || msg.type === "chat.error") {
-					opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage);
-				} else if (msg.type === "conversation.open") {
-					opts.onConversationOpen?.(msg as ConversationOpenMessage);
-				} else if (msg.type === "conversation.statusChanged") {
-					opts.onConversationStatusChanged?.(msg as ConversationStatusChangedMessage);
-				} else if (msg.type === "conversation.compacted") {
-					opts.onConversationCompacted?.(msg as ConversationCompactedMessage);
-				} else {
-					opts.onMessage(msg as SurfaceServerMessage);
-				}
-			}
-		};
+    socket.onmessage = (ev) => {
+      if (disposed) return;
+      const msg = parseServerMessage(ev.data);
+      if (msg !== null) {
+        if (msg.type === "chat.delta" || msg.type === "chat.error") {
+          opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage);
+        } else if (msg.type === "conversation.open") {
+          opts.onConversationOpen?.(msg as ConversationOpenMessage);
+        } else if (msg.type === "conversation.statusChanged") {
+          opts.onConversationStatusChanged?.(msg as ConversationStatusChangedMessage);
+        } else if (msg.type === "conversation.compacted") {
+          opts.onConversationCompacted?.(msg as ConversationCompactedMessage);
+        } else {
+          opts.onMessage(msg as SurfaceServerMessage);
+        }
+      }
+    };
 
-		socket.onclose = () => {
-			if (disposed) return;
-			isOpen = false;
-			scheduleReconnect();
-		};
-	}
+    socket.onclose = () => {
+      if (disposed) return;
+      isOpen = false;
+      scheduleReconnect();
+    };
+  }
 
-	function scheduleReconnect(): void {
-		const delay = nextBackoffMs(reconnectAttempt);
-		reconnectAttempt++;
-		reconnectTimer = setTimeout(() => {
-			reconnectTimer = null;
-			if (disposed) return;
-			connect(true);
-		}, delay);
-	}
+  function scheduleReconnect(): void {
+    const delay = nextBackoffMs(reconnectAttempt);
+    reconnectAttempt++;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      if (disposed) return;
+      connect(true);
+    }, delay);
+  }
 
-	connect(false);
+  connect(false);
 
-	return {
-		send(msg: WsClientMessage): void {
-			if (disposed) return;
-			const raw = serialize(msg);
-			if (isOpen) {
-				socket?.send(raw);
-			} else {
-				queue.push(raw);
-			}
-		},
-		close(): void {
-			disposed = true;
-			if (reconnectTimer !== null) {
-				clearTimeout(reconnectTimer);
-				reconnectTimer = null;
-			}
-			socket?.close();
-			socket = null;
-		},
-	};
+  return {
+    send(msg: WsClientMessage): void {
+      if (disposed) return;
+      const raw = serialize(msg);
+      if (isOpen) {
+        socket?.send(raw);
+      } else {
+        queue.push(raw);
+      }
+    },
+    close(): void {
+      disposed = true;
+      if (reconnectTimer !== null) {
+        clearTimeout(reconnectTimer);
+        reconnectTimer = null;
+      }
+      socket?.close();
+      socket = null;
+    },
+  };
 }

@@ -4,247 +4,247 @@ import { buildInvoke, groupRenderFields, planSurface } from "./plan";
 import type { FieldView } from "./types";
 
 const makeSpec = (...fields: SurfaceField[]): SurfaceSpec => ({
-	id: "test-surface",
-	region: "test",
-	title: "Test Surface",
-	fields,
+  id: "test-surface",
+  region: "test",
+  title: "Test Surface",
+  fields,
 });
 
 describe("planSurface", () => {
-	it("maps a toggle field to a ToggleFieldView", () => {
-		const plan = planSurface(
-			makeSpec({ kind: "toggle", label: "Dark mode", value: true, action: { actionId: "dm" } }),
-		);
-		expect(plan.fields).toEqual([
-			{ kind: "toggle", label: "Dark mode", value: true, action: { actionId: "dm" } },
-		]);
-	});
+  it("maps a toggle field to a ToggleFieldView", () => {
+    const plan = planSurface(
+      makeSpec({ kind: "toggle", label: "Dark mode", value: true, action: { actionId: "dm" } }),
+    );
+    expect(plan.fields).toEqual([
+      { kind: "toggle", label: "Dark mode", value: true, action: { actionId: "dm" } },
+    ]);
+  });
 
-	it("maps a progress field to a ProgressFieldView", () => {
-		const plan = planSurface(makeSpec({ kind: "progress", label: "Loading", value: 0.42 }));
-		expect(plan.fields).toEqual([{ kind: "progress", label: "Loading", value: 0.42 }]);
-	});
+  it("maps a progress field to a ProgressFieldView", () => {
+    const plan = planSurface(makeSpec({ kind: "progress", label: "Loading", value: 0.42 }));
+    expect(plan.fields).toEqual([{ kind: "progress", label: "Loading", value: 0.42 }]);
+  });
 
-	it("maps a selector field to a SelectorFieldView", () => {
-		const plan = planSurface(
-			makeSpec({
-				kind: "selector",
-				label: "Model",
-				value: "gpt-4",
-				options: [
-					{ value: "gpt-4", label: "GPT-4" },
-					{ value: "gpt-3.5", label: "GPT-3.5" },
-				],
-				action: { actionId: "set-model" },
-			}),
-		);
-		expect(plan.fields).toEqual([
-			{
-				kind: "selector",
-				label: "Model",
-				value: "gpt-4",
-				options: [
-					{ value: "gpt-4", label: "GPT-4" },
-					{ value: "gpt-3.5", label: "GPT-3.5" },
-				],
-				action: { actionId: "set-model" },
-			},
-		]);
-	});
+  it("maps a selector field to a SelectorFieldView", () => {
+    const plan = planSurface(
+      makeSpec({
+        kind: "selector",
+        label: "Model",
+        value: "gpt-4",
+        options: [
+          { value: "gpt-4", label: "GPT-4" },
+          { value: "gpt-3.5", label: "GPT-3.5" },
+        ],
+        action: { actionId: "set-model" },
+      }),
+    );
+    expect(plan.fields).toEqual([
+      {
+        kind: "selector",
+        label: "Model",
+        value: "gpt-4",
+        options: [
+          { value: "gpt-4", label: "GPT-4" },
+          { value: "gpt-3.5", label: "GPT-3.5" },
+        ],
+        action: { actionId: "set-model" },
+      },
+    ]);
+  });
 
-	it("maps a stat field to a StatFieldView", () => {
-		const plan = planSurface(makeSpec({ kind: "stat", label: "Tokens", value: "1,234" }));
-		expect(plan.fields).toEqual([{ kind: "stat", label: "Tokens", value: "1,234" }]);
-	});
+  it("maps a stat field to a StatFieldView", () => {
+    const plan = planSurface(makeSpec({ kind: "stat", label: "Tokens", value: "1,234" }));
+    expect(plan.fields).toEqual([{ kind: "stat", label: "Tokens", value: "1,234" }]);
+  });
 
-	it("maps a number field to a NumberFieldView, carrying optional hints", () => {
-		const plan = planSurface(
-			makeSpec({
-				kind: "number",
-				label: "Interval",
-				value: 240,
-				min: 1,
-				step: 1,
-				unit: "s",
-				action: { actionId: "cache-warming/set-interval" },
-			}),
-		);
-		expect(plan.fields).toEqual([
-			{
-				kind: "number",
-				label: "Interval",
-				value: 240,
-				min: 1,
-				step: 1,
-				unit: "s",
-				action: { actionId: "cache-warming/set-interval" },
-			},
-		]);
-	});
+  it("maps a number field to a NumberFieldView, carrying optional hints", () => {
+    const plan = planSurface(
+      makeSpec({
+        kind: "number",
+        label: "Interval",
+        value: 240,
+        min: 1,
+        step: 1,
+        unit: "s",
+        action: { actionId: "cache-warming/set-interval" },
+      }),
+    );
+    expect(plan.fields).toEqual([
+      {
+        kind: "number",
+        label: "Interval",
+        value: 240,
+        min: 1,
+        step: 1,
+        unit: "s",
+        action: { actionId: "cache-warming/set-interval" },
+      },
+    ]);
+  });
 
-	it("omits absent number hints (no max key when undefined)", () => {
-		const plan = planSurface(
-			makeSpec({
-				kind: "number",
-				label: "Interval",
-				value: 240,
-				min: 1,
-				action: { actionId: "set" },
-			}),
-		);
-		const field = plan.fields[0];
-		expect(field).not.toHaveProperty("max");
-		expect(field).not.toHaveProperty("step");
-		expect(field).not.toHaveProperty("unit");
-	});
+  it("omits absent number hints (no max key when undefined)", () => {
+    const plan = planSurface(
+      makeSpec({
+        kind: "number",
+        label: "Interval",
+        value: 240,
+        min: 1,
+        action: { actionId: "set" },
+      }),
+    );
+    const field = plan.fields[0];
+    expect(field).not.toHaveProperty("max");
+    expect(field).not.toHaveProperty("step");
+    expect(field).not.toHaveProperty("unit");
+  });
 
-	it("maps a button field to a ButtonFieldView", () => {
-		const plan = planSurface(
-			makeSpec({ kind: "button", label: "Retry", action: { actionId: "retry" } }),
-		);
-		expect(plan.fields).toEqual([
-			{ kind: "button", label: "Retry", action: { actionId: "retry" } },
-		]);
-	});
+  it("maps a button field to a ButtonFieldView", () => {
+    const plan = planSurface(
+      makeSpec({ kind: "button", label: "Retry", action: { actionId: "retry" } }),
+    );
+    expect(plan.fields).toEqual([
+      { kind: "button", label: "Retry", action: { actionId: "retry" } },
+    ]);
+  });
 
-	it("preserves field order", () => {
-		const plan = planSurface(
-			makeSpec(
-				{ kind: "stat", label: "A", value: "1" },
-				{ kind: "toggle", label: "B", value: false, action: { actionId: "b" } },
-				{ kind: "progress", label: "C", value: 0.5 },
-				{ kind: "button", label: "D", action: { actionId: "d" } },
-			),
-		);
-		expect(plan.fields.map((f) => ("label" in f ? f.label : null))).toEqual(["A", "B", "C", "D"]);
-	});
+  it("preserves field order", () => {
+    const plan = planSurface(
+      makeSpec(
+        { kind: "stat", label: "A", value: "1" },
+        { kind: "toggle", label: "B", value: false, action: { actionId: "b" } },
+        { kind: "progress", label: "C", value: 0.5 },
+        { kind: "button", label: "D", action: { actionId: "d" } },
+      ),
+    );
+    expect(plan.fields.map((f) => ("label" in f ? f.label : null))).toEqual(["A", "B", "C", "D"]);
+  });
 
-	it("drops unknown field kinds gracefully", () => {
-		const plan = planSurface(
-			makeSpec({ kind: "stat", label: "Known", value: "ok" }, {
-				kind: "future-kind" as "stat",
-				label: "Unknown",
-				value: "?",
-			} as SurfaceField),
-		);
-		expect(plan.fields).toHaveLength(1);
-		const first = plan.fields[0];
-		expect(first && "label" in first ? first.label : null).toBe("Known");
-	});
+  it("drops unknown field kinds gracefully", () => {
+    const plan = planSurface(
+      makeSpec({ kind: "stat", label: "Known", value: "ok" }, {
+        kind: "future-kind" as "stat",
+        label: "Unknown",
+        value: "?",
+      } as SurfaceField),
+    );
+    expect(plan.fields).toHaveLength(1);
+    const first = plan.fields[0];
+    expect(first && "label" in first ? first.label : null).toBe("Known");
+  });
 
-	it("carries custom fields through verbatim, preserving order", () => {
-		const plan = planSurface(
-			makeSpec(
-				{ kind: "stat", label: "Before", value: "1" },
-				{ kind: "custom", rendererId: "chart", payload: { data: [1, 2, 3] } },
-				{ kind: "stat", label: "After", value: "2" },
-			),
-		);
-		expect(plan.fields).toHaveLength(3);
-		expect(plan.fields[1]).toEqual({
-			kind: "custom",
-			rendererId: "chart",
-			payload: { data: [1, 2, 3] },
-		});
-	});
+  it("carries custom fields through verbatim, preserving order", () => {
+    const plan = planSurface(
+      makeSpec(
+        { kind: "stat", label: "Before", value: "1" },
+        { kind: "custom", rendererId: "chart", payload: { data: [1, 2, 3] } },
+        { kind: "stat", label: "After", value: "2" },
+      ),
+    );
+    expect(plan.fields).toHaveLength(3);
+    expect(plan.fields[1]).toEqual({
+      kind: "custom",
+      rendererId: "chart",
+      payload: { data: [1, 2, 3] },
+    });
+  });
 
-	it("returns empty fields for an empty spec", () => {
-		const plan = planSurface(makeSpec());
-		expect(plan.fields).toEqual([]);
-	});
+  it("returns empty fields for an empty spec", () => {
+    const plan = planSurface(makeSpec());
+    expect(plan.fields).toEqual([]);
+  });
 
-	it("keeps every custom field (render-time decides whether to show each)", () => {
-		const plan = planSurface(
-			makeSpec(
-				{ kind: "custom", rendererId: "x", payload: null },
-				{ kind: "custom", rendererId: "y", payload: 42 },
-			),
-		);
-		expect(plan.fields.map((f) => f.kind)).toEqual(["custom", "custom"]);
-	});
+  it("keeps every custom field (render-time decides whether to show each)", () => {
+    const plan = planSurface(
+      makeSpec(
+        { kind: "custom", rendererId: "x", payload: null },
+        { kind: "custom", rendererId: "y", payload: 42 },
+      ),
+    );
+    expect(plan.fields.map((f) => f.kind)).toEqual(["custom", "custom"]);
+  });
 });
 
 describe("groupRenderFields", () => {
-	const stat = (label: string, value: string): FieldView => ({ kind: "stat", label, value });
-	const toggle = (label: string): FieldView => ({
-		kind: "toggle",
-		label,
-		value: false,
-		action: { actionId: label },
-	});
+  const stat = (label: string, value: string): FieldView => ({ kind: "stat", label, value });
+  const toggle = (label: string): FieldView => ({
+    kind: "toggle",
+    label,
+    value: false,
+    action: { actionId: label },
+  });
 
-	it("coalesces consecutive stats into a single stats group", () => {
-		const groups = groupRenderFields([stat("a", "1"), stat("b", "2"), stat("c", "3")]);
-		expect(groups).toHaveLength(1);
-		expect(groups[0]).toEqual({
-			type: "stats",
-			stats: [
-				{ kind: "stat", label: "a", value: "1" },
-				{ kind: "stat", label: "b", value: "2" },
-				{ kind: "stat", label: "c", value: "3" },
-			],
-		});
-	});
+  it("coalesces consecutive stats into a single stats group", () => {
+    const groups = groupRenderFields([stat("a", "1"), stat("b", "2"), stat("c", "3")]);
+    expect(groups).toHaveLength(1);
+    expect(groups[0]).toEqual({
+      type: "stats",
+      stats: [
+        { kind: "stat", label: "a", value: "1" },
+        { kind: "stat", label: "b", value: "2" },
+        { kind: "stat", label: "c", value: "3" },
+      ],
+    });
+  });
 
-	it("keeps non-stat fields as standalone groups and preserves order", () => {
-		const groups = groupRenderFields([stat("a", "1"), toggle("t"), stat("b", "2")]);
-		expect(groups.map((g) => g.type)).toEqual(["stats", "field", "stats"]);
-		const first = groups[0];
-		const last = groups[2];
-		if (first?.type !== "stats" || last?.type !== "stats") throw new Error("bad grouping");
-		expect(first.stats.map((s) => s.label)).toEqual(["a"]);
-		expect(last.stats.map((s) => s.label)).toEqual(["b"]);
-	});
+  it("keeps non-stat fields as standalone groups and preserves order", () => {
+    const groups = groupRenderFields([stat("a", "1"), toggle("t"), stat("b", "2")]);
+    expect(groups.map((g) => g.type)).toEqual(["stats", "field", "stats"]);
+    const first = groups[0];
+    const last = groups[2];
+    if (first?.type !== "stats" || last?.type !== "stats") throw new Error("bad grouping");
+    expect(first.stats.map((s) => s.label)).toEqual(["a"]);
+    expect(last.stats.map((s) => s.label)).toEqual(["b"]);
+  });
 
-	it("starts a new stats run after an interrupting field", () => {
-		const groups = groupRenderFields([stat("a", "1"), stat("b", "2"), toggle("t"), stat("c", "3")]);
-		expect(groups.map((g) => g.type)).toEqual(["stats", "field", "stats"]);
-	});
+  it("starts a new stats run after an interrupting field", () => {
+    const groups = groupRenderFields([stat("a", "1"), stat("b", "2"), toggle("t"), stat("c", "3")]);
+    expect(groups.map((g) => g.type)).toEqual(["stats", "field", "stats"]);
+  });
 
-	it("returns no groups for an empty field list", () => {
-		expect(groupRenderFields([])).toEqual([]);
-	});
+  it("returns no groups for an empty field list", () => {
+    expect(groupRenderFields([])).toEqual([]);
+  });
 });
 
 describe("buildInvoke", () => {
-	it("builds an invoke message for a toggle field", () => {
-		const field = { kind: "toggle" as const, label: "T", value: false, action: { actionId: "t" } };
-		const msg = buildInvoke("s1", field, true);
-		expect(msg).toEqual({ type: "invoke", surfaceId: "s1", actionId: "t", payload: true });
-	});
+  it("builds an invoke message for a toggle field", () => {
+    const field = { kind: "toggle" as const, label: "T", value: false, action: { actionId: "t" } };
+    const msg = buildInvoke("s1", field, true);
+    expect(msg).toEqual({ type: "invoke", surfaceId: "s1", actionId: "t", payload: true });
+  });
 
-	it("builds an invoke message for a selector field", () => {
-		const field = {
-			kind: "selector" as const,
-			label: "S",
-			value: "a",
-			options: [],
-			action: { actionId: "sel" },
-		};
-		const msg = buildInvoke("s1", field, "b");
-		expect(msg).toEqual({ type: "invoke", surfaceId: "s1", actionId: "sel", payload: "b" });
-	});
+  it("builds an invoke message for a selector field", () => {
+    const field = {
+      kind: "selector" as const,
+      label: "S",
+      value: "a",
+      options: [],
+      action: { actionId: "sel" },
+    };
+    const msg = buildInvoke("s1", field, "b");
+    expect(msg).toEqual({ type: "invoke", surfaceId: "s1", actionId: "sel", payload: "b" });
+  });
 
-	it("builds an invoke message without payload for a button field", () => {
-		const field = { kind: "button" as const, label: "B", action: { actionId: "btn" } };
-		const msg = buildInvoke("s1", field);
-		expect(msg).toEqual({ type: "invoke", surfaceId: "s1", actionId: "btn" });
-	});
+  it("builds an invoke message without payload for a button field", () => {
+    const field = { kind: "button" as const, label: "B", action: { actionId: "btn" } };
+    const msg = buildInvoke("s1", field);
+    expect(msg).toEqual({ type: "invoke", surfaceId: "s1", actionId: "btn" });
+  });
 
-	it("omits payload key when value is undefined", () => {
-		const field = { kind: "button" as const, label: "B", action: { actionId: "btn" } };
-		const msg = buildInvoke("s1", field, undefined);
-		expect(msg).not.toHaveProperty("payload");
-	});
+  it("omits payload key when value is undefined", () => {
+    const field = { kind: "button" as const, label: "B", action: { actionId: "btn" } };
+    const msg = buildInvoke("s1", field, undefined);
+    expect(msg).not.toHaveProperty("payload");
+  });
 
-	it("uses the field's actionId, not a surface-level id", () => {
-		const field = {
-			kind: "toggle" as const,
-			label: "X",
-			value: true,
-			action: { actionId: "custom-action-123" },
-		};
-		const msg = buildInvoke("surf", field, false);
-		expect(msg.actionId).toBe("custom-action-123");
-	});
+  it("uses the field's actionId, not a surface-level id", () => {
+    const field = {
+      kind: "toggle" as const,
+      label: "X",
+      value: true,
+      action: { actionId: "custom-action-123" },
+    };
+    const msg = buildInvoke("surf", field, false);
+    expect(msg.actionId).toBe("custom-action-123");
+  });
 });
