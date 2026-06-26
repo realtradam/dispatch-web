@@ -7,7 +7,7 @@ export type {
 	SystemPromptVariablesResult,
 	VariableGroup,
 } from "./logic/view-model";
-export { buildTag, groupVariables, insertTag } from "./logic/view-model";
+export { buildTag, groupVariables, insertTag, isDynamicVariable } from "./logic/view-model";
 export { default as SystemPromptBuilder } from "./ui/SystemPromptBuilder.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */

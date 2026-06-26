@@ -680,6 +680,7 @@
 			saveConfig={saveHeartbeatConfig}
 			loadRuns={loadHeartbeatRuns}
 			stopRun={stopHeartbeatRun}
+			loadVariables={loadSystemPromptVariablesPrompt}
 			onOpenRun={(run) => (heartbeatRun = run)}
 		/>
 	{/if}

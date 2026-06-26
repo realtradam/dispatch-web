@@ -5,10 +5,10 @@
 > **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-25 (§2f ADDED — Heartbeat feature shipped: workspace autonomous-agent config + run
-history + live run-chat modal; new `src/features/heartbeat/` feature library + `watchConversation`/`unwatchConversation`
-on the store; 837/837 tests green, typecheck 0/0, biome clean, build OK. The heartbeat API is a plain REST surface —
-NOT a transport-contract type — so the FE owns the types locally; see §2f for the contract-swap note)._
+_Last updated: 2026-06-26 (§2g ADDED — Heartbeat follow-up UI: prompt editor modal (reuses `GET /system-prompt/variables`;
+opens 1 backend ask CR-HB-1: confirm/implement `[type:name]` variable resolution in the heartbeat system/task prompts)
++ hours/minutes interval timer (FE-only conversion, no backend change). typecheck 0/0, tests green, biome clean, build OK).
+§2f (the initial heartbeat slice) is unchanged._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -501,6 +501,89 @@ affordance, future). The heartbeat UI follows the codebase's ESTABLISHED convent
 "views" pervasively (`viewKinds`, `ViewSidebar`, `viewContent`, "Model view"/"LSP view"/"Settings view"). The feature
 module itself is named `heartbeat` (a feature module). No new term was coined. If the reserved-"view" cleanup happens
 later, the heartbeat view kind renames in lockstep with the rest.
+
+---
+
+## 2g. Heartbeat follow-up UI — prompt editor modal + hours/minutes timer → **FE BUILT; 1 BACKEND ASK**
+
+A follow-up to §2f (branch `feature/heartbeat`, uncommitted-to-this-handoff commit). Two UI changes on the heartbeat
+config panel, each analyzed below for backend impact. **One needs a backend change (variable resolution in the
+heartbeat prompts); the other needs none.**
+
+### Change A — Prompt editor modal (replaces the two textareas) → **1 BACKEND ASK (CR-HB-1)**
+
+The config panel's two inline textareas (system prompt + task prompt) are replaced by a single "Edit prompts" button
+that opens a full-width modal (`src/features/heartbeat/ui/PromptEditor.svelte`):
+- LEFT side: two stacked text editors (top = system prompt, bottom = task prompt).
+- RIGHT side: the variable palette (grouped by type, same `[type:name]` tag insertion as the global system-prompt
+  builder). Clicking a variable inserts `[type:name]` at the cursor of whichever textarea is focused.
+- Save persists both prompts via the existing `PUT /workspaces/:id/heartbeat` with `{ systemPrompt, taskPrompt }`
+  (a partial patch — no new endpoint, no data-shape change).
+
+**What the FE reuses (NO new endpoint needed):**
+- The variable palette is sourced from the EXISTING global `GET /system-prompt/variables` endpoint — the SAME one the
+  global System Prompt builder uses. The heartbeat feature imports the pure helpers (`buildTag`, `groupVariables`,
+  `insertTag`, `isDynamicVariable`) from `features/system-prompt` (its public `index.ts` — `isDynamicVariable` was added
+  to that export in this slice, an additive cross-unit seam change). So there is **no new variable source or endpoint**;
+  the heartbeat prompt editor offers the exact same variable tags the global system prompt does.
+- The persisted strings carry literal `[type:name]` placeholders (plain text), exactly like the global template.
+
+**CR-HB-1 — Resolve `[type:name]` variables in the heartbeat system/task prompts → ASK (needs backend confirmation + likely implementation):**
+
+The global system-prompt template is resolved by the backend: `[type:name]` placeholders (e.g. `[system:os]`,
+`[system:date]`, `[file:path]`, `[if system:wsl]…`) are substituted with their resolved values at construction time
+(once per conversation at first turn, then persisted for prompt-cache safety). **The critical question: does the
+backend apply this SAME variable resolution to the heartbeat's `systemPrompt` and `taskPrompt` fields?**
+
+- If YES (the heartbeat prompts already flow through the same resolver as the global template): **no backend change
+  needed** — the FE just inserts the same `[type:name]` tags and the backend resolves them. Confirm + close.
+- If NO (the heartbeat prompts are inserted into the model turn as raw text, so `[system:os]` would reach the model
+  literally as the string `[system:os]` rather than the resolved OS string): **the backend should resolve `[type:name]`
+  placeholders in the heartbeat `systemPrompt` + `taskPrompt` using the SAME resolver/variable set as the global
+  system prompt** (so a variable inserted in either place resolves identically). This is the expected gap — the heartbeat
+  prompts are a NEW surface that predates the variable system, so they likely bypass the resolver.
+
+  - Resolution timing: mirror the global template's behavior — resolve once when a heartbeat run's turn is constructed
+    (NOT on every interval tick, to stay prompt-cache-safe; a stable resolved prompt keeps the cache warm across runs).
+    If the heartbeat re-resolves per-run anyway (intervals may want fresh `[system:time]`), that's a backend product
+    decision — the FE doesn't care WHEN it resolves, only THAT `[type:name]` becomes its value.
+  - Variable set: the SAME catalog `GET /system-prompt/variables` returns (system/file/prompt/git groups). No
+    heartbeat-specific variables are required for this slice.
+  - No wire/transport-contract/ui-contract change needed — this is a backend behavior change (the prompt strings are
+    still `string`; the FE is unaffected once the backend resolves them).
+
+**Optional future enhancement (NOT required now):** heartbeat-specific variables (e.g. `[heartbeat:runCount]`,
+`[heartbeat:lastResult]`, `[heartbeat:elapsed]`). The FE's prompt editor would offer these if `GET /system-prompt/variables`
+(or a new `GET /workspaces/:id/heartbeat/variables`) returned them. Defer until there's a product need.
+
+### Change B — Hours + minutes interval timer → **NO backend change needed**
+
+The interval input is split into two fields: an HOURS input (left) + a MINUTES input (right, 0–59). The conversion is
+entirely FE-side:
+- On load: the backend's single `intervalMinutes` is split into `{ hours, minutes }` via the pure `splitInterval`
+  helper (`Math.floor(total/60)` hours, remainder minutes).
+- On save: the FE recombines via `joinInterval(hours, minutes)` → `hours*60 + minutes` (clamped to the 1–1440 range
+  = 1 min–24 h) and sends a SINGLE `intervalMinutes` integer to `PUT /workspaces/:id/heartbeat`.
+
+So **the backend's `intervalMinutes` field is UNCHANGED** — still one integer of total minutes. The hours/minutes split
+is pure FE presentation. No endpoint, data-shape, or behavior change. (The existing clamp to 1–1440 also stands; a
+0h0m entry clamps to 1 minute — the FE guards this, and the backend's own validation should too, but that's pre-existing.)
+
+### FE summary (this slice)
+- `src/features/heartbeat/logic/view-model.ts`: `HeartbeatFormState` now carries `intervalHours` + `intervalMinutes`
+  (0–59); new pure `splitInterval`/`joinInterval` round-trip helpers; `formFromConfig`/`patchFromForm`/`formDiffers`
+  updated to split/recombine. +4 tests (split/join round-trip, form split, differs-after-edit).
+- `src/features/heartbeat/ui/PromptEditor.svelte` (new): two-pane modal (system+task editors left, variable palette
+  right), focus-aware variable insertion, Save/Reset. Reuses `features/system-prompt`'s pure helpers.
+- `src/features/heartbeat/ui/HeartbeatView.svelte`: two textareas → "Edit prompts" button + modal; interval → hours+minutes inputs.
+- `src/features/system-prompt/index.ts`: added `isDynamicVariable` to the public exports (additive — needed by the
+  heartbeat editor's dynamic `file:<path>` row).
+- `src/app/App.svelte`: passes `loadVariables={loadSystemPromptVariablesPrompt}` to `HeartbeatView`.
+
+**Verification:** typecheck 0/0, tests green, biome clean, build OK (see the commit). The variable-resolution behavior
+(CR-HB-1) can only be confirmed end-to-end against a running backend with variable-laden heartbeat prompts — a human
+should set `[system:os]` in a heartbeat prompt via the new editor, trigger a run, and confirm the resolved value (not the
+literal `[system:os]`) appears in the model's context / run transcript.
 
 ---
 

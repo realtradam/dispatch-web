@@ -20,16 +20,19 @@ export {
 	formatRunTime,
 	formDiffers,
 	formFromConfig,
+	joinInterval,
 	normalizeHeartbeatConfig,
 	normalizeHeartbeatRuns,
 	normalizeInterval,
 	patchFromForm,
 	relativeLabel,
+	splitInterval,
 	statusLabelFor,
 	viewRun,
 	viewRuns,
 } from "./logic/view-model";
 export { default as HeartbeatView } from "./ui/HeartbeatView.svelte";
+export { default as PromptEditor } from "./ui/PromptEditor.svelte";
 export { default as RunModal } from "./ui/RunModal.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */
