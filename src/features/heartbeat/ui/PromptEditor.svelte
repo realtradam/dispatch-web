@@ -57,20 +57,13 @@
 	let system = $state(untrack(() => systemPrompt));
 	let task = $state(untrack(() => taskPrompt));
 
-	// The raw persisted override at open (for the "inheriting" indicator + the
-	// reset baseline). Empty = the heartbeat is inheriting the global default.
-	const rawLoadedSystem = untrack(() => systemPrompt);
+	// The raw persisted override at open + after each save (the diff baseline for
+	// the system field). Empty = the heartbeat is inheriting the global default.
+	// REACTIVE so a successful save can update it to the newly-persisted value —
+	// otherwise `systemBaseline` stays pinned to the open-time value and
+	// `hasChanges` never clears (the "Save flickers and reverts" bug).
+	let loadedSystemRaw = $state(untrack(() => systemPrompt));
 	let loadedTask = $state(untrack(() => taskPrompt));
-
-	/** Once the default loads, pre-fill an inheriting system prompt with it
-	 *  (only if the user hasn't edited away from the raw override yet). */
-	let defaultApplied = $state(false);
-	$effect(() => {
-		if (!defaultApplied && defaultPrompt !== "" && isInheritingSystemPrompt(rawLoadedSystem)) {
-			system = defaultPrompt;
-			defaultApplied = true;
-		}
-	});
 
 	let variables = $state<readonly SystemPromptVariable[]>([]);
 	let varsLoading = $state(false);
@@ -88,10 +81,11 @@
 	let taskEl = $state<HTMLTextAreaElement | null>(null);
 
 	const groups = $derived(groupVariables(variables));
-	/** The baseline system text to diff against: the effective prompt at open
-	 *  (override, or the default when inheriting) — so a pre-filled default does
-	 *  NOT register as an unsaved change. */
-	const systemBaseline = $derived(effectiveSystemPrompt(rawLoadedSystem, defaultPrompt));
+	/** The baseline system text to diff against: the effective prompt at open +
+	 *  after the last save (override, or the default when inheriting) — so a
+	 *  pre-filled default does NOT register as an unsaved change, and a saved
+	 *  edit clears `hasChanges` (the baseline tracks the persisted value). */
+	const systemBaseline = $derived(effectiveSystemPrompt(loadedSystemRaw, defaultPrompt));
 	const hasChanges = $derived(system !== systemBaseline || task !== loadedTask);
 	/** Whether the current text matches the default (i.e. saving would inherit). */
 	const inheriting = $derived(system === defaultPrompt && defaultPrompt !== "");
@@ -118,6 +112,14 @@
 		defaultLoading = false;
 		if (result.ok) {
 			defaultPrompt = result.template;
+			// Pre-fill an inheriting (empty) override with the global default so the
+			// user can see + tweak what will run — but ONLY if they haven't edited
+			// the system field yet (system still equals the open-time raw override).
+			// Done here (not in a reactive $effect) so a late-loading default can't
+			// clobber an in-flight edit.
+			if (isInheritingSystemPrompt(loadedSystemRaw) && system === loadedSystemRaw) {
+				system = defaultPrompt;
+			}
 		}
 		// A failed default load is non-fatal: the editor still works with the
 		// raw override; only the "inherit" affordance is unavailable.
@@ -135,6 +137,11 @@
 		saving = false;
 		if (result === null) return;
 		if (result.ok) {
+			// Advance the diff baseline to the persisted value so `hasChanges`
+			// clears (systemBaseline recomputes off loadedSystemRaw). Without this
+			// the baseline stays pinned to the open-time value and the Save button
+			// never settles ("flickers and reverts to unsaved").
+			loadedSystemRaw = systemToPersist;
 			loadedTask = task;
 			justSaved = true;
 			onSaved(systemToPersist, task);

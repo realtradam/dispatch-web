@@ -275,7 +275,7 @@ describe("system-prompt inheritance (override ⇄ global default)", () => {
 
 	it("persistedSystemPrompt: a distinct edit → the override verbatim", () => {
 		expect(persistedSystemPrompt("custom", DEFAULT)).toBe("custom");
-		expect(persistedSystemPrompt(DEFAULT + "\nmore", DEFAULT)).toBe(DEFAULT + "\nmore");
+		expect(persistedSystemPrompt(`${DEFAULT}\nmore`, DEFAULT)).toBe(`${DEFAULT}\nmore`);
 	});
 
 	it("round-trip: inherit → display default → reset (no edit) → persist inherit", () => {
