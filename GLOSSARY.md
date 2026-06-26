@@ -1,4 +1,4 @@
-# Glossary — canonical vocabulary (dispatch-web)
+# Glossary — canonical vocabulary (frontend)
 
 > One name per concept. Shared backend terms are adopted VERBATIM (no drift).
 > New term? The orchestrator proposes the standard name and the user confirms
