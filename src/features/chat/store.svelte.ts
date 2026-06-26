@@ -4,7 +4,7 @@ import type {
   ChatQueueMessage,
   ChatSendMessage,
 } from "@dispatch/transport-contract";
-import type { ChatMessage, StoredChunk, TurnProviderRetryEvent } from "@dispatch/wire";
+import type { ChatMessage, ImageInput, StoredChunk, TurnProviderRetryEvent } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "../../core/chunks";
 import {
   appendUserMessage,
@@ -109,7 +109,14 @@ export interface ChatStore {
    */
   readonly thinkingKeyBase: number;
   handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
-  send(text: string): void;
+  /**
+   * Send a user message (start a turn via `chat.send`). Optimistically echoes
+   * the text + any `images` as provisional user chunks (`[text, image, …]` in
+   * order), then forwards them on the WS `chat.send` op. `images` is omitted on
+   * the wire when none are staged (text-only, backward compatible). An
+   * images-only send (empty text) is allowed — the message text is `""`.
+   */
+  send(text: string, images?: readonly ImageInput[]): void;
   /**
    * Enqueue a steering message onto the conversation's queue (`chat.queue`
    * WS op). While a turn is generating, the message is delivered mid-turn at
@@ -312,8 +319,8 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       }
     },
 
-    send(text: string): void {
-      transcript = appendUserMessage(transcript, text);
+    send(text: string, images?: readonly ImageInput[]): void {
+      transcript = appendUserMessage(transcript, text, images);
       maybeTrim();
       const msg: ChatSendMessage = {
         type: "chat.send",
@@ -321,6 +328,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
         message: text,
         ...(_model !== undefined ? { model: _model } : {}),
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
+        ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
       };
       deps.transport.send(msg);
     },

@@ -95,11 +95,21 @@
 
 {#snippet chunkRow(rendered: RenderedChunk)}
   {#if rendered.role === "user"}
-    <!-- User: a speech bubble, left-aligned -->
+    <!-- User: a speech bubble, left-aligned. A user message may be multi-chunk
+         ([text, image, image, …]); each chunk renders in its own bubble (the
+         image's url is a base64 data URL or an https URL — render it directly). -->
     <div class="chat chat-start">
       <div class="chat-bubble chat-bubble-primary">
         {#if rendered.chunk.type === "text"}
           <p>{rendered.chunk.text}</p>
+        {:else if rendered.chunk.type === "image"}
+          <img
+            src={rendered.chunk.url}
+            alt={rendered.chunk.mimeType ?? "pasted image"}
+            loading="lazy"
+            decoding="async"
+            class="max-h-80 max-w-full rounded"
+          />
         {/if}
       </div>
     </div>

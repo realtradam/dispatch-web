@@ -423,6 +423,34 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("sending from draft forwards staged images on chat.send", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    ws.sent.length = 0;
+
+    const images = [
+      { url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+      { url: "https://example.com/x.jpg" },
+    ];
+    store.send("describe these", images);
+
+    const msgs = parseSent(ws);
+    const chatSend = msgs.find((m) => (m as { type: string }).type === "chat.send") as
+      | { type: string; message: string; images?: { url: string }[] }
+      | undefined;
+    expect(chatSend).toBeTruthy();
+    expect(chatSend?.images).toEqual(images);
+    // The optimistic echo includes the image chunks.
+    expect(store.activeChat.chunks.some((c) => c.chunk.type === "image")).toBe(true);
+
+    store.dispose();
+  });
+
   it("an incoming chat.delta renders in the transcript", () => {
     const ws = fakeSocket();
     const store = createAppStore({

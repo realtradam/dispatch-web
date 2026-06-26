@@ -1,8 +1,19 @@
 <script lang="ts">
+  import type { ImageInput } from "@dispatch/wire";
   import { computeContextUsage, formatCompactTokens } from "../../../core/metrics";
 
   const FALLBACK_CONTEXT_WINDOW = 1_000_000;
   const MAX_LINES = 7;
+  /** Accept only raster images (the provider image-content formats). */
+  const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
+  /** Reject images larger than this before base64-encoding (keeps payloads sane). */
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+
+  /** A staged image awaiting send: a stable id + the `ImageInput` to forward. */
+  interface StagedImage {
+    readonly id: string;
+    readonly input: ImageInput;
+  }
 
   let {
     onSend,
@@ -12,12 +23,18 @@
     contextWindow = undefined,
     status = "idle",
   }: {
-    onSend: (text: string) => void;
+    /**
+     * Send a message (start a turn via `chat.send`). Carries any staged images
+     * as `ImageInput[]` (base64 data URLs or https URLs); the store forwards
+     * them on the WS `chat.send` op / `POST /chat` body. `images` is omitted
+     * (not an empty array) when none are staged, so the wire stays text-only.
+     */
+    onSend: (text: string, images?: ImageInput[]) => void;
     /**
      * Enqueue a steering message (`chat.queue`). When provided AND the status
      * is `running`, the send button becomes a "Queue" button that steers the
-     * in-flight turn instead of starting a new one. When absent, `onSend` is
-     * used regardless (tests / non-steering contexts).
+     * in-flight turn instead of starting a new one. Steering is text-only —
+     * it never carries images (a mid-turn injection has no image surface).
      */
     onQueue?: (text: string) => void;
     /** Stop the in-flight generation (`POST /conversations/:id/stop`). */
@@ -32,24 +49,35 @@
   } = $props();
 
   let text = $state("");
+  let images = $state<StagedImage[]>([]);
   let inputEl: HTMLTextAreaElement | undefined;
+  let fileInputEl: HTMLInputElement | undefined;
+  let dragOver = $state(false);
 
   const hasText = $derived(text.trim().length > 0);
+  const hasImages = $derived(images.length > 0);
+  const canSend = $derived(hasText || hasImages);
   const effectiveMax = $derived(contextWindow ?? FALLBACK_CONTEXT_WINDOW);
   const usage = $derived(computeContextUsage(contextSize, effectiveMax));
   const hasUsage = $derived(contextSize !== undefined);
 
   // One button, three modes:
   // - idle → "Send" (starts a turn via chat.send)
-  // - running + text → "Queue" (steers via chat.queue)
+  // - running + text/images → "Queue" (steers via chat.queue — text only)
   // - running + empty → "Stop" (aborts via POST /stop)
+  // Steering never carries images: when running with images staged but no text,
+  // fall back to "Send" semantics is wrong mid-turn — instead queue the text part
+  // only (images stay staged). Simplest correct rule: queue is text-only and only
+  // offered with text; images-without-text while running is an unusual case that
+  // still sends (the server auto-starts/resolves). Keep the three-mode logic
+  // driven by text presence for the queue vs stop split.
   const buttonMode = $derived.by<"send" | "queue" | "stop">(() => {
-    if (status === "running" && !hasText && onStop !== undefined) return "stop";
+    if (status === "running" && !hasText && !hasImages && onStop !== undefined) return "stop";
     if (status === "running" && hasText && onQueue !== undefined) return "queue";
     return "send";
   });
   const placeholder = $derived(
-    status === "running" ? "Steer the conversation..." : "Type a message...",
+    status === "running" ? "Steer the conversation..." : "Type a message, paste or drop an image…",
   );
 
   // As the window fills, escalate color: calm → warning → danger.
@@ -80,15 +108,97 @@
     resize();
   });
 
+  /** Read a File into a base64 data URL (`data:image/…;base64,…`). */
+  function fileToDataUrl(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => {
+        if (typeof reader.result === "string") resolve(reader.result);
+        else reject(new Error("unreadable image"));
+      };
+      reader.onerror = () => reject(reader.error ?? new Error("read failed"));
+      reader.readAsDataURL(file);
+    });
+  }
+
+  let imgSeq = 0;
+  /** Stage a File as an image (skip non-images / oversized). Returns whether staged. */
+  async function stageFile(file: File): Promise<boolean> {
+    if (!file.type.startsWith("image/")) return false;
+    if (file.size > MAX_IMAGE_BYTES) return false;
+    const url = await fileToDataUrl(file);
+    // Prefer the file's declared MIME; fall back to the data URL's prefix.
+    const mimeType = file.type || undefined;
+    const id = `img-${Date.now()}-${imgSeq++}`;
+    images = [...images, { id, input: { url, ...(mimeType ? { mimeType } : {}) } }];
+    return true;
+  }
+
+  function removeImage(id: string): void {
+    images = images.filter((img) => img.id !== id);
+  }
+
+  /** Handle a paste anywhere in the form: extract image items from the clipboard. */
+  async function handlePaste(e: ClipboardEvent): Promise<void> {
+    const items = e.clipboardData?.items;
+    if (items === undefined) return;
+    let hadImage = false;
+    const staged: File[] = [];
+    for (const item of items) {
+      if (item.kind === "file" && item.type.startsWith("image/")) {
+        const file = item.getAsFile();
+        if (file !== null) {
+          staged.push(file);
+          hadImage = true;
+        }
+      }
+    }
+    if (!hadImage) return; // let the default text paste proceed
+    e.preventDefault(); // suppress pasting the image as a filename string
+    for (const file of staged) {
+      await stageFile(file);
+    }
+  }
+
+  /** File-picker <input type="file"> change. */
+  async function handleFilePick(e: Event): Promise<void> {
+    const target = e.currentTarget as HTMLInputElement;
+    const files = target.files;
+    if (files === null) return;
+    for (const file of files) {
+      await stageFile(file);
+    }
+    target.value = ""; // reset so picking the same file again re-fires change
+  }
+
+  /** Drop images onto the composer. */
+  async function handleDrop(e: DragEvent): Promise<void> {
+    dragOver = false;
+    const files = e.dataTransfer?.files;
+    if (files === undefined || files.length === 0) return;
+    const hadImage = Array.from(files).some((f) => f.type.startsWith("image/"));
+    if (!hadImage) return;
+    e.preventDefault();
+    for (const file of files) {
+      await stageFile(file);
+    }
+  }
+
   function handleSubmit(): void {
     const trimmed = text.trim();
-    if (trimmed.length === 0) return;
+    // Allow a send with images even when text is empty (an image-only turn).
+    if (trimmed.length === 0 && !hasImages) return;
     if (buttonMode === "queue") {
+      // Steering is text-only — never forward images.
       onQueue?.(trimmed);
     } else {
-      onSend(trimmed);
+      const toSend: ImageInput[] | undefined = hasImages
+        ? images.map((img) => img.input)
+        : undefined;
+      onSend(trimmed, toSend);
     }
     text = "";
+    images = [];
   }
 
   function handleKeydown(e: KeyboardEvent): void {
@@ -105,17 +215,68 @@
     e.preventDefault();
     handleSubmit();
   }}
+  ondrop={handleDrop}
+  ondragover={(e) => {
+    if (e.dataTransfer?.types?.includes("Files")) {
+      e.preventDefault();
+      dragOver = true;
+    }
+  }}
+  ondragleave={() => (dragOver = false)}
 >
-  <!-- Top bar: expanding textarea + single context-aware button -->
+  <!-- Top bar: expanding textarea + image-attach button + single context-aware button -->
   <div class="flex items-end gap-2 px-4 pt-3 pb-2">
-    <textarea
-      bind:this={inputEl}
-      class="textarea textarea-bordered flex-1 resize-none leading-normal !min-h-0 h-auto"
-      bind:value={text}
-      onkeydown={handleKeydown}
-      {placeholder}
-      rows="1"
-      aria-label="Message input"></textarea>
+    <div
+      class="flex-1"
+      onpaste={handlePaste}
+      class:border-2={dragOver}
+      class:border-primary={dragOver}
+      class:border-dashed={dragOver}
+      class:rounded={dragOver}
+    >
+      <textarea
+        bind:this={inputEl}
+        class="textarea textarea-bordered w-full resize-none leading-normal !min-h-0 h-auto"
+        bind:value={text}
+        onkeydown={handleKeydown}
+        {placeholder}
+        rows="1"
+        aria-label="Message input"></textarea>
+    </div>
+
+    <!-- Hidden file picker (images only; multiple). -->
+    <input
+      bind:this={fileInputEl}
+      type="file"
+      accept={IMAGE_ACCEPT}
+      multiple
+      class="hidden"
+      onchange={handleFilePick}
+    />
+    <!-- Attach image button (opens the file picker). -->
+    <button
+      class="btn btn-ghost btn-square shrink-0"
+      type="button"
+      aria-label="Attach image"
+      title="Attach image"
+      onclick={() => fileInputEl?.click()}
+    >
+      <svg
+        xmlns="http://www.w3.org/2000/svg"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+        class="h-5 w-5"
+      >
+        <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+        <circle cx="8.5" cy="8.5" r="1.5"></circle>
+        <polyline points="21 15 16 10 5 21"></polyline>
+      </svg>
+    </button>
+
     {#if buttonMode === "stop"}
       <button
         class="btn btn-error w-20 shrink-0"
@@ -126,11 +287,46 @@
         Stop
       </button>
     {:else}
-      <button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!hasText}>
+      <button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!canSend}>
         {buttonMode === "queue" ? "Queue" : "Send"}
       </button>
     {/if}
   </div>
+
+  <!-- Staged image thumbnails (previews) with remove buttons. -->
+  {#if hasImages}
+    <div class="flex flex-wrap gap-2 px-4 pb-1">
+      {#each images as img (img.id)}
+        <div class="group relative h-20 w-20 shrink-0 overflow-hidden rounded border border-base-300">
+          <img
+            src={img.input.url}
+            alt={img.input.mimeType ?? "staged image"}
+            class="h-full w-full object-cover"
+          />
+          <button
+            class="btn btn-circle btn-xs absolute right-0 top-0 bg-base-100/80 hover:bg-error hover:text-error-content"
+            type="button"
+            aria-label="Remove image"
+            onclick={() => removeImage(img.id)}
+          >
+            <svg
+              xmlns="http://www.w3.org/2000/svg"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              stroke-width="3"
+              stroke-linecap="round"
+              stroke-linejoin="round"
+              class="h-3 w-3"
+            >
+              <line x1="18" y1="6" x2="6" y2="18"></line>
+              <line x1="6" y1="6" x2="18" y2="18"></line>
+            </svg>
+          </button>
+        </div>
+      {/each}
+    </div>
+  {/if}
 
   <!-- Bottom status bar: status icon · context-window fill · token count -->
   <div class="flex items-center gap-2 px-4 pb-2 text-xs text-base-content/50">
