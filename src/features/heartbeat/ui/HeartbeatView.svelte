@@ -133,22 +133,32 @@
 
 	// ── Runs list (polls while mounted) ───────────────────────────────────────
 	let runs = $state<readonly HeartbeatRunView[]>([]);
-	let runsLoading = $state(false);
+	/** True after the first successful load (gates the "No runs yet" empty state
+	 *  WITHOUT flashing it before the initial fetch resolves). The per-poll
+	 *  loading is intentionally INVISIBLE — it's near-instant and a visible
+	 *  loading indicator caused the sidebar to flicker every poll (height shift). */
+	let hasLoadedRuns = $state(false);
 	let runsError = $state<string | null>(null);
 	let stoppingId = $state<string | null>(null);
 	let stopError = $state<string | null>(null);
 	let pollHandle: ReturnType<typeof setInterval> | null = null;
+	/** Re-entrancy guard for background polling (no UI — prevents overlapping fetches). */
+	let refreshInFlight = false;
 
 	const RUN_POLL_MS = 4000;
 
 	async function refreshRuns(): Promise<void> {
-		runsLoading = true;
-		runsError = null;
+		if (refreshInFlight) return;
+		refreshInFlight = true;
 		const result = await loadRuns();
-		runsLoading = false;
+		refreshInFlight = false;
 		if (result === null) return;
 		if (result.ok) {
 			runs = viewRuns(result.runs);
+			// Clear the error only on success so it stays visible (stable, no
+			// flicker) during an in-flight retry rather than vanishing mid-poll.
+			runsError = null;
+			hasLoadedRuns = true;
 		} else {
 			runsError = result.error;
 		}
@@ -373,23 +383,16 @@
 			<button
 				type="button"
 				class="btn btn-ghost btn-xs"
-				disabled={runsLoading}
 				onclick={() => refreshRuns()}
 				aria-label="Refresh heartbeat runs"
 			>
-				{#if runsLoading}
-					<span class="loading loading-spinner loading-xs"></span>
-				{:else}
-					Refresh
-				{/if}
+				Refresh
 			</button>
 		</div>
 
 		{#if runsError}
 			<p class="text-xs text-error">{runsError}</p>
-		{:else if runs.length === 0 && !runsLoading}
-			<p class="text-xs opacity-60">No runs yet. Enable the heartbeat to start the loop.</p>
-		{:else}
+		{:else if runs.length > 0}
 			<ul class="flex max-h-72 flex-col gap-1 overflow-y-auto">
 				{#each runsView as run (run.id)}
 					<li>
@@ -433,6 +436,10 @@
 			{#if stopError}
 				<p class="text-xs text-error">{stopError}</p>
 			{/if}
+		{:else if hasLoadedRuns}
+			<!-- Loaded with zero runs (not the pre-first-load gap). No loading
+			     indicator — polling is near-instant and a visible one flickered. -->
+			<p class="text-xs opacity-60">No runs yet. Enable the heartbeat to start the loop.</p>
 		{/if}
 	</section>
 </div>
