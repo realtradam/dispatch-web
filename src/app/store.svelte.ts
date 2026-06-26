@@ -55,6 +55,15 @@ import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore } from "../features/chat";
 import type { ConversationCache } from "../features/conversation-cache";
 import { createConversationCache } from "../features/conversation-cache";
+import type {
+	HeartbeatConfig,
+	HeartbeatConfigPatch,
+	HeartbeatConfigResult,
+	HeartbeatRun,
+	HeartbeatRunsResult,
+	HeartbeatStopResult,
+} from "../features/heartbeat";
+import { normalizeHeartbeatConfig, normalizeHeartbeatRuns } from "../features/heartbeat";
 import type { Tab, TabsState } from "../features/tabs";
 import { createTabsStore, deriveTitle, type TabsStore } from "../features/tabs";
 import { resolveHttpUrl } from "./resolve-http-url";
@@ -306,6 +315,44 @@ export interface AppStore {
 	 */
 	attachUnloadGate(gate: () => boolean): void;
 	/**
+	 * Load the active workspace's heartbeat config
+	 * (`GET /workspaces/:id/heartbeat`). Workspace-scoped (NOT per-conversation):
+	 * the backend runs an autonomous agent loop on a configured interval, writing
+	 * each run into a dedicated conversation. The config covers the system/task
+	 * prompts, model, reasoning effort, interval, and an enabled flag.
+	 */
+	heartbeatConfig(): Promise<HeartbeatConfigResult>;
+	/**
+	 * Persist a partial heartbeat config patch
+	 * (`PUT /workspaces/:id/heartbeat`). The backend merges the patch onto the
+	 * stored config; returns the full updated config.
+	 */
+	setHeartbeatConfig(patch: HeartbeatConfigPatch): Promise<HeartbeatConfigResult>;
+	/**
+	 * Load the active workspace's heartbeat run history
+	 * (`GET /workspaces/:id/heartbeat/runs`). Each run references the conversation
+	 * it wrote to — open one via {@link watchConversation} to see its chat live.
+	 */
+	heartbeatRuns(): Promise<HeartbeatRunsResult>;
+	/**
+	 * Stop a running heartbeat run (`POST /workspaces/:id/heartbeat/runs/:runId/stop`).
+	 * The run's in-flight turn seals (its conversation keeps streaming until it
+	 * ends); the run's status flips to `stopped` (visible on the next runs poll).
+	 */
+	stopHeartbeatRun(runId: string): Promise<HeartbeatStopResult>;
+	/**
+	 * Open a "watch" on a conversation for a modal viewer (the heartbeat run-chat
+	 * modal): ensures a live {@link ChatStore} for the conversation, subscribing
+	 * to its turn stream (`chat.subscribe`) + loading history. Reuses the open
+	 * tab's store if the conversation is already a tab; otherwise creates an
+	 * EPHEMERAL watch store (separate from tabs — never opens a tab). Deltas are
+	 * routed to it automatically. Pair every open with {@link unwatchConversation}
+	 * on close to unsubscribe + dispose the ephemeral store.
+	 */
+	watchConversation(conversationId: string): ChatStore;
+	/** Dispose + unsubscribe a watch opened by {@link watchConversation}. */
+	unwatchConversation(conversationId: string): void;
+	/**
 	 * A critical error that blocks normal operation (e.g. the cross-device tab
 	 * restore fetch failed). When non-null, a full-screen modal is shown with the
 	 * error details. Cleared by `clearFatalError` (the modal's dismiss button).
@@ -422,6 +469,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	const metricsSync = createMetricsSync(httpBase, fetchImpl);
 
 	const chatStores = new Map<string, ChatStore>();
+
+	// Ephemeral chat stores for MODAL viewers (the heartbeat run-chat modal): a
+	// watch on a conversation's live turn stream WITHOUT opening a tab. Separate
+	// from `chatStores` (tabs) so closing a modal never disturbs the tab strip,
+	// and a tab's conversation reuses its own store (see `watchConversation`).
+	// Deltas are routed here in addition to `chatStores`.
+	const watchStores = new Map<string, ChatStore>();
 
 	function createChatFor(conversationId: string, model: string, workspaceId: string): ChatStore {
 		return createChatStore({
@@ -592,7 +646,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 		}
 
 		if (targetId !== undefined) {
-			const store = chatStores.get(targetId);
+			const store = chatStores.get(targetId) ?? watchStores.get(targetId);
 			if (store !== undefined) {
 				store.handleDelta(msg);
 				return;
@@ -601,6 +655,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
 		// fallback: try all stores (chat.error without conversationId)
 		for (const store of chatStores.values()) {
+			store.handleDelta(msg);
+		}
+		for (const store of watchStores.values()) {
 			store.handleDelta(msg);
 		}
 	}
@@ -620,6 +677,44 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 	/** Stop watching a conversation's turn events (`chat.unsubscribe`). Never stops the turn. */
 	function unsubscribeChat(conversationId: string): void {
 		socket?.send({ type: "chat.unsubscribe", conversationId });
+	}
+
+	/**
+	 * Open a "watch" on a conversation for a modal viewer (the heartbeat run-chat
+	 * modal). Returns a live {@link ChatStore} for the conversation's turn stream.
+	 * If the conversation is already an open TAB, reuses its store (it is already
+	 * subscribed + streaming); otherwise creates an EPHEMERAL watch store in
+	 * `watchStores` (separate from tabs — never opens a tab), subscribes to its
+	 * live turn stream, and loads history. Deltas route to it via `handleChatMessage`.
+	 * Pair with {@link unwatchConversation} on close.
+	 */
+	function watchConversation(conversationId: string): ChatStore {
+		// An open tab already has a live store + subscription — reuse it.
+		const tabStore = chatStores.get(conversationId);
+		if (tabStore !== undefined) return tabStore;
+		const existing = watchStores.get(conversationId);
+		if (existing !== undefined) return existing;
+		const store = createChatFor(conversationId, activeModel, activeWorkspaceId);
+		watchStores.set(conversationId, store);
+		void store.load();
+		subscribeChat(conversationId);
+		return store;
+	}
+
+	/**
+	 * Dispose + unsubscribe a watch opened by {@link watchConversation}. A no-op if
+	 * the conversation was (or became) an open TAB — the tab owns its store +
+	 * subscription, so nothing is torn down (closing the modal must not disturb the
+	 * tab strip). Only the ephemeral watch store is disposed + unsubscribed.
+	 */
+	function unwatchConversation(conversationId: string): void {
+		// A tab reuses its own store — leave it (and its subscription) intact.
+		if (chatStores.has(conversationId)) return;
+		const store = watchStores.get(conversationId);
+		if (store === undefined) return;
+		store.dispose();
+		watchStores.delete(conversationId);
+		unsubscribeChat(conversationId);
 	}
 
 	/**
@@ -875,6 +970,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			for (const tab of tabsStore.tabs) {
 				subscribeChat(tab.conversationId);
 				chatStores.get(tab.conversationId)?.resync();
+			}
+			// Re-attach to every MODAL watch too (a run-chat modal open across a
+			// reconnect keeps streaming). Watch stores are separate from tabs.
+			for (const [watchId, watchStore] of watchStores) {
+				subscribeChat(watchId);
+				watchStore.resync();
 			}
 		},
 	};
@@ -1450,6 +1551,112 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 			}
 		},
 
+		async heartbeatConfig(): Promise<HeartbeatConfigResult> {
+			// Workspace-scoped (NOT per-conversation): use the active workspace id.
+			const wsId = untrack(() => activeWorkspaceId);
+			try {
+				const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat`);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Heartbeat config failed (HTTP ${res.status})`,
+					};
+				}
+				// Normalize the untyped JSON at the network seam (pure helper) so a
+				// malformed/partial response can never crash the renderer.
+				const config: HeartbeatConfig = normalizeHeartbeatConfig(await res.json());
+				return { ok: true, config };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Heartbeat config request failed",
+				};
+			}
+		},
+
+		async setHeartbeatConfig(patch: HeartbeatConfigPatch): Promise<HeartbeatConfigResult> {
+			const wsId = untrack(() => activeWorkspaceId);
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat`,
+					{
+						method: "PUT",
+						headers: { "content-type": "application/json" },
+						body: JSON.stringify(patch),
+					},
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Set heartbeat config failed (HTTP ${res.status})`,
+					};
+				}
+				const config: HeartbeatConfig = normalizeHeartbeatConfig(await res.json());
+				return { ok: true, config };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Set heartbeat config request failed",
+				};
+			}
+		},
+
+		async heartbeatRuns(): Promise<HeartbeatRunsResult> {
+			const wsId = untrack(() => activeWorkspaceId);
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat/runs`,
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Heartbeat runs failed (HTTP ${res.status})`,
+					};
+				}
+				const runs: readonly HeartbeatRun[] = normalizeHeartbeatRuns(await res.json());
+				return { ok: true, runs };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Heartbeat runs request failed",
+				};
+			}
+		},
+
+		async stopHeartbeatRun(runId: string): Promise<HeartbeatStopResult> {
+			const wsId = untrack(() => activeWorkspaceId);
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat/runs/${encodeURIComponent(runId)}/stop`,
+					{ method: "POST" },
+				);
+				if (!res.ok) {
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Stop heartbeat run failed (HTTP ${res.status})`,
+					};
+				}
+				return { ok: true };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Stop heartbeat run request failed",
+				};
+			}
+		},
+
+		watchConversation(conversationId: string): ChatStore {
+			return watchConversation(conversationId);
+		},
+
+		unwatchConversation(conversationId: string): void {
+			unwatchConversation(conversationId);
+		},
+
 		async loadSystemPrompt(): Promise<SystemPromptLoadResult> {
 			try {
 				const res = await fetchImpl(`${httpBase}/system-prompt`);
@@ -1531,6 +1738,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				store.dispose();
 			}
 			chatStores.clear();
+			for (const store of watchStores.values()) {
+				store.dispose();
+			}
+			watchStores.clear();
 			draftStore.dispose();
 			socket?.close();
 			socket = null;

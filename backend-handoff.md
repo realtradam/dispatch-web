@@ -5,11 +5,10 @@
 > **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-25 (§2d RESOLVED — backend merged `dev` into `feature/ssh-support`, merge `de022ce`;
-`TurnProviderRetryEvent`/`provider-retry` is now present alongside the SSH types; FE re-synced both `file:` deps +
-`bun run typecheck` is GREEN — 0 errors — with ZERO further FE code changes, exactly as predicted. The full SSH
-computer feature (handoff #2, §2e) + the wire-type break (handoff #1) are unchanged; the merge only added
-`provider-retry` on top. FE is now fully green: typecheck 0/0, 795/795 tests, biome clean, build OK)._
+_Last updated: 2026-06-25 (§2f ADDED — Heartbeat feature shipped: workspace autonomous-agent config + run
+history + live run-chat modal; new `src/features/heartbeat/` feature library + `watchConversation`/`unwatchConversation`
+on the store; 837/837 tests green, typecheck 0/0, biome clean, build OK. The heartbeat API is a plain REST surface —
+NOT a transport-contract type — so the FE owns the types locally; see §2f for the contract-swap note)._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -443,6 +442,65 @@ reports **0 errors from the computer feature**. (The pre-existing §2d `provider
 now RESOLVED via the backend `dev`→`feature/ssh-support` merge `de022ce`; `bun run typecheck` is fully GREEN.)
 Live probe NOT run (the backend `ssh` extension isn't live yet → `GET /computers` returns `[]` end-to-end; a live probe +
 human confirm of the dropdown/badge/test should run once `ssh` is wired + the `provider-retry` divergence is merged).
+
+---
+
+## 2f. Heartbeat (workspace autonomous-agent loop) → **CONSUMED ✅ (backend shipped; FE built)**
+
+The backend shipped a workspace-scoped **heartbeat** — an autonomous agent loop that periodically runs a turn in a
+dedicated conversation using a configured system prompt, task prompt, model, reasoning effort, and interval. The FE
+exposes the config, run history, and a per-run live chat in a new sidebar **Heartbeat** view (branch `feature/heartbeat`).
+
+**Backend API (plain REST — NOT a transport-contract type):**
+- `GET /workspaces/:id/heartbeat` → `{ enabled, systemPrompt, taskPrompt, intervalMinutes, model, reasoningEffort }`
+- `PUT /workspaces/:id/heartbeat` (partial body) → updated config
+- `GET /workspaces/:id/heartbeat/runs` → `{ runs: [{ id, conversationId, triggeredAt, status }] }` (`status: running|completed|stopped`)
+- `POST /workspaces/:id/heartbeat/runs/:runId/stop` → `{ ok: true }`
+
+**Contract note (important):** the heartbeat shapes are NOT in `@dispatch/transport-contract` / `@dispatch/wire`
+(verified: no `heartbeat` symbol in either `dist/`). So the FE owns the types locally in `src/features/heartbeat/logic/types.ts`
+(consumer-defines-port, mirroring the `mcp`/`computer` result-type pattern) and coerces the untyped JSON at the network
+seam via pure `normalizeHeartbeatConfig`/`normalizeHeartbeatRuns` (a malformed/partial response can never crash the
+renderer). **If the backend later promotes these to a shared contract package, swap the local types for the imports +
+re-mirror `.dispatch/*.reference.md`.** No contract version bump on the FE side (no `file:` dep re-pin needed).
+
+**FE (DONE + verified):**
+- New feature library `src/features/heartbeat/`: pure `logic/view-model.ts` (`viewRun`/`viewRuns`/`badgeForStatus`/
+  `statusLabelFor`/`formatRunTime`/`relativeLabel`/config-form helpers `formFromConfig`/`patchFromForm`/`formDiffers`/
+  `normalizeInterval` (1–1440 clamp)/network normalizers + `effortOptions` re-exported from `features/chat`) — 35
+  view-model tests green; `ui/HeartbeatView.svelte` (config panel: enable toggle (saves immediately), system + task
+  prompt textareas, model dropdown, reasoning-effort dropdown, interval input, Save button with `hasChanges` guard;
+  scrolling runs list polling every 4s with a spinner when running + per-row Stop) + `ui/RunModal.svelte` (fullscreen
+  modal that reuses `features/chat`'s `ChatView` to render the run's conversation; live-streams via the store's
+  `watchConversation`/`chat.subscribe` while `generating`, with a Stop button → `POST .../runs/:runId/stop`);
+  `index.ts` (`HeartbeatView`/`RunModal`/`manifest`/types). The reasoning-effort ladder is REUSED from `features/chat`
+  (sanctioned cross-feature import through its public exports) — no drift.
+- `AppStore` (`src/app/store.svelte.ts`): `heartbeatConfig`/`setHeartbeatConfig`/`heartbeatRuns`/`stopHeartbeatRun`
+  (workspace-scoped; read `activeWorkspaceId` with `untrack`) + **`watchConversation`/`unwatchConversation`** — a new
+  "watch" mechanism for the modal: reuses an open tab's `ChatStore` (already subscribed) or creates an EPHEMERAL watch
+  store in a new `watchStores` map (separate from tabs — never opens a tab) + subscribes via `chat.subscribe` + loads
+  history; deltas route to it (the `handleChatMessage` hot path now also checks `watchStores`); `onReopen` re-subscribes
+  + resyncs watch stores; `dispose` disposes them. `unwatchConversation` is a no-op for a tab conversation (it keeps its
+  store + stream) — only the ephemeral watch store is disposed + unsubscribed.
+- Wired into `src/app/App.svelte`: `"heartbeat"` view kind (in `viewKinds`), `heartbeatManifest` in `loadedModules`,
+  thin adapter functions, the `viewContent` snippet branch, + `{#key heartbeatRun.id}` RunModal render when a run is
+  selected.
+- Store tests (`src/app/store.test.ts`): +7 — config load/PUT-merge/error, runs load, stop POST, watch subscribe +
+  live-delta routing, tab-reuse (no extra subscribe) + unwatch no-op for a tab.
+- Also fixed a PRE-EXISTING `WorkspaceCard.test.ts` typo (`onNavigate` shorthand used before declaration →
+  `onNavigate: vi.fn()`) that was red on the branch HEAD independent of heartbeat.
+
+**Verification:** 837/837 tests green (run TWICE — no cross-test pollution; the watch stores are plain `Map`s, not
+shared globals, but the methodology's double-run is honored); `svelte-check` 0 errors; biome clean; `vite build`
+succeeds. Live probe NOT run (the backend's heartbeat loop + endpoints were not reachable headless at verify time; the
+unit + store tests fully cover the data path + the WS routing seam). To confirm end-to-end: start the backend, open the
+Heartbeat sidebar view, toggle enable, edit+Save the config, watch a run appear + stream live in the modal, click Stop.
+
+**Vocabulary note (heads-up, not blocking):** `GLOSSARY.md` marks **"view"** as RESERVED (old-Dispatch sidebar
+affordance, future). The heartbeat UI follows the codebase's ESTABLISHED convention — sidebar panels are already called
+"views" pervasively (`viewKinds`, `ViewSidebar`, `viewContent`, "Model view"/"LSP view"/"Settings view"). The feature
+module itself is named `heartbeat` (a feature module). No new term was coined. If the reserved-"view" cleanup happens
+later, the heartbeat view kind renames in lockstep with the rest.
 
 ---
 

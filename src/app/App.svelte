@@ -60,6 +60,16 @@
 		type TestComputerResult,
 	} from "../features/computer";
 	import {
+		HeartbeatView,
+		manifest as heartbeatManifest,
+		RunModal,
+		type HeartbeatConfigResult,
+		type HeartbeatRunView,
+		type HeartbeatRunsResult,
+		type HeartbeatStopResult,
+	} from "../features/heartbeat";
+	import type { ChatStore } from "../features/chat";
+	import {
 		SystemPromptBuilder,
 		type LoadSystemPrompt as LoadSystemPromptAlias,
 		type LoadSystemPromptVariables as LoadSystemPromptVariablesAlias,
@@ -95,6 +105,7 @@
 		{ id: "cache-warming", label: "Cache Warming" },
 		{ id: "tasks", label: "Tasks" },
 		{ id: "compaction", label: "Compaction" },
+		{ id: "heartbeat", label: "Heartbeat" },
 		{ id: "system-prompt", label: "System Prompt" },
 		{ id: "settings", label: "Settings" },
 	] as const;
@@ -130,6 +141,7 @@
 		smartScrollManifest,
 		settingsManifest,
 		systemPromptManifest,
+		heartbeatManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -216,6 +228,9 @@
 	const storedSidebarOpen = sidebarOpenStore.load();
 	let sidebarOpen = $state(storedSidebarOpen ?? (typeof window !== "undefined" ? window.innerWidth >= WIDE_BREAKPOINT : true));
 	let systemPromptModalOpen = $state(false);
+	// The heartbeat run currently open in the fullscreen run-chat modal (null =
+	// closed). Holds a snapshot run view; the modal re-mounts per run (keyed).
+	let heartbeatRun = $state<HeartbeatRunView | null>(null);
 
 	$effect(() => {
 		sidebarOpenStore.save(sidebarOpen);
@@ -360,6 +375,38 @@
 		store.loadSystemPromptVariables();
 
 	const saveSystemPromptPrompt: SaveSystemPromptAlias = (template) => store.setSystemPrompt(template);
+
+	// Adapt the store's heartbeat results to the heartbeat feature's ports. The
+	// store returns the feature's result types directly (the API is a plain REST
+	// surface, not a transport-contract type), so the adapter is a thin passthrough
+	// (kept for structural consistency with cwd-lsp/mcp/computer — see AGENTS.md
+	// "contracts are the cross-unit surface").
+	async function loadHeartbeatConfig(): Promise<HeartbeatConfigResult> {
+		return store.heartbeatConfig();
+	}
+
+	async function saveHeartbeatConfig(
+		patch: Parameters<typeof store.setHeartbeatConfig>[0],
+	): Promise<HeartbeatConfigResult> {
+		return store.setHeartbeatConfig(patch);
+	}
+
+	async function loadHeartbeatRuns(): Promise<HeartbeatRunsResult> {
+		return store.heartbeatRuns();
+	}
+
+	async function stopHeartbeatRun(runId: string): Promise<HeartbeatStopResult> {
+		return store.stopHeartbeatRun(runId);
+	}
+
+	// Run-chat modal: open a live watch on the run's conversation (the store owns
+	// the ChatStore + the `chat.subscribe` stream), and tear it down on close.
+	function openRunChat(conversationId: string): ChatStore {
+		return store.watchConversation(conversationId);
+	}
+	function closeRunChat(conversationId: string): void {
+		store.unwatchConversation(conversationId);
+	}
 </script>
 
 <main class="relative flex h-screen overflow-hidden">
@@ -517,6 +564,21 @@
 	/>
 {/if}
 
+{#if heartbeatRun !== null}
+	<!-- Keyed per run so switching runs (or re-opening) re-mounts the modal — a
+	     fresh watch store lifecycle per run. The modal owns the live watch
+	     (openChat/closeChat) and the Stop button. -->
+	{#key heartbeatRun.id}
+		<RunModal
+			run={heartbeatRun}
+			openChat={openRunChat}
+			closeChat={closeRunChat}
+			stopRun={stopHeartbeatRun}
+			onClose={() => (heartbeatRun = null)}
+		/>
+	{/key}
+{/if}
+
 {#snippet viewContent(kind: string)}
 	{#if kind === "model"}
 		<div class="flex flex-col gap-3">
@@ -609,5 +671,16 @@
 		<div class="flex flex-col gap-3">
 			<ChatLimitField chatLimit={store.chatLimit} save={saveChatLimit} />
 		</div>
+	{:else if kind === "heartbeat"}
+		<!-- Workspace-scoped autonomous-agent heartbeat (config + run history).
+		     Not conversation-scoped (no {#key}); the config + runs are per-workspace. -->
+		<HeartbeatView
+			models={store.models}
+			loadConfig={loadHeartbeatConfig}
+			saveConfig={saveHeartbeatConfig}
+			loadRuns={loadHeartbeatRuns}
+			stopRun={stopHeartbeatRun}
+			onOpenRun={(run) => (heartbeatRun = run)}
+		/>
 	{/if}
 {/snippet}
