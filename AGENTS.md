@@ -3,7 +3,7 @@
 > Loaded every session — the single source of truth for working in this repo: the
 > build constitution (code rules) + the workflow. Non-obvious, project-specific rules
 > only — if a fresh frontier model could infer it from the code, it is NOT here (P6).
-> Full design + rationale: `../dispatch-backend/notes/frontend-design.md` (and the
+> Full design + rationale: `../backend/notes/frontend-design.md` (and the
 > backend's `notes/restructure-plan.md` §1 for P1–P8).
 >
 > **You are the single agent for this repo.** You plan, author the cross-unit
@@ -13,7 +13,7 @@
 
 ## What this is
 The **web frontend** for Dispatch — a SEPARATE repo from the backend
-(`../dispatch-backend`). It is a **thin shell + pure feature libraries + a surface
+(`../backend`). It is a **thin shell + pure feature libraries + a surface
 host**, NOT a default-SvelteKit ball of mud. It consumes the backend's typed
 contracts (`@dispatch/ui-contract` + the wire types) over HTTP + a WebSocket. The app
 is a COMPOSITION of feature modules + surfaces, assembled at the composition root
@@ -23,7 +23,7 @@ effects / no ambient state / typed contracts / asymmetric testing.
 
 ## Stack
 Bun + Vite + Svelte 5 (runes) + TypeScript (strict). Biome for lint/format
-(tabs, double quotes, semicolons, width 100) — **biome covers `.ts`/`.js` ONLY;
+(2-space indent, double quotes, semicolons, width 100) — **biome covers `.ts`/`.js` ONLY;
 `.svelte` correctness is `svelte-check`'s job** (biome can't read Svelte template
 semantics — it flags template-used vars as unused). Vitest + `@testing-library/
 svelte` for tests.
@@ -37,7 +37,7 @@ src/adapters/   injected browser effects: WS client, fetch, IndexedDB, history
 .dispatch/      mirrored backend contracts (*.reference.md) + rules/
 reports/ (gitignored)
 ```
-Backend (SEPARATE repo, contracts only): `../dispatch-backend` — consume
+Backend (SEPARATE repo, contracts only): `../backend` — consume
 `@dispatch/ui-contract` (`file:` dep) + the wire types. Do NOT edit it.
 
 ## The non-negotiable rules
@@ -91,7 +91,7 @@ effects backed by a shared global (`fake-indexeddb`, `localStorage`) to catch cr
 pollution. After a slice that touches the wire or browser effects, run a LIVE probe (below).
 
 ## Backend seam (cross-repo)
-The backend is `../dispatch-backend` (separate repo; `lsp references` does NOT span the
+The backend is `../backend` (separate repo; `lsp references` does NOT span the
 boundary). You consume `@dispatch/ui-contract` + the wire/transport types as pinned `file:`
 deps. **Read the in-repo mirrors `.dispatch/*.reference.md`, never `node_modules/@dispatch/*`**
 (they symlink out of the repo); regenerate the relevant mirror whenever a contract changes.
@@ -143,7 +143,7 @@ live view (subscribe/reconnect + the user prompt on the event stream), and the c
 show-earlier server backfill; `hasOlder` from the 1-based gap-free seq contract), and the
 reasoning-effort selector (Model view, under the provider/model dropdowns; sticky per-conversation
 `GET`/`PUT /reasoning-effort`, `null` ⇒ "high (default)"). Plan in
-`../dispatch-backend/notes/frontend-design.md` §10.
+`../backend/notes/frontend-design.md` §10.
 
 ## Reports
 Optionally record a finished milestone in `reports/<name>.md` (gitignored): what you built,

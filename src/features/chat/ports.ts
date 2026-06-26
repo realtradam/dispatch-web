@@ -1,8 +1,8 @@
 import type {
-	ChatQueueMessage,
-	ChatSendMessage,
-	ConversationHistoryResponse,
-	ConversationMetricsResponse,
+  ChatQueueMessage,
+  ChatSendMessage,
+  ConversationHistoryResponse,
+  ConversationMetricsResponse,
 } from "@dispatch/transport-contract";
 
 /**
@@ -11,7 +11,7 @@ import type {
  * auto-starts a turn if idle).
  */
 export interface ChatTransport {
-	send(msg: ChatSendMessage | ChatQueueMessage): void;
+  send(msg: ChatSendMessage | ChatQueueMessage): void;
 }
 
 /**
@@ -19,10 +19,10 @@ export interface ChatTransport {
  * Both must be POSITIVE integers when present (the server 400s otherwise).
  */
 export interface HistoryWindow {
-	/** Return only the NEWEST `limit` chunks of the selection (still ascending). */
-	readonly limit?: number;
-	/** Exclusive upper bound: only chunks with `seq < beforeSeq` (backfill paging). */
-	readonly beforeSeq?: number;
+  /** Return only the NEWEST `limit` chunks of the selection (still ascending). */
+  readonly limit?: number;
+  /** Exclusive upper bound: only chunks with `seq < beforeSeq` (backfill paging). */
+  readonly beforeSeq?: number;
 }
 
 /**
@@ -34,9 +34,9 @@ export interface HistoryWindow {
  * satisfies this naturally).
  */
 export type HistorySync = (
-	conversationId: string,
-	sinceSeq: number,
-	window?: HistoryWindow,
+  conversationId: string,
+  sinceSeq: number,
+  window?: HistoryWindow,
 ) => Promise<ConversationHistoryResponse>;
 
 /** Injected metrics-sync port — fetches persisted per-turn metrics from the server. */

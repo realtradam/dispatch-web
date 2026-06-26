@@ -16,33 +16,33 @@
 export type TodoStatus = "pending" | "in_progress" | "completed" | "cancelled";
 
 export interface TodoItem {
-	readonly content: string;
-	readonly status: TodoStatus;
+  readonly content: string;
+  readonly status: TodoStatus;
 }
 
 export interface TodoData {
-	readonly todos: readonly TodoItem[];
+  readonly todos: readonly TodoItem[];
 }
 
 const STATUSES = new Set<string>(["pending", "in_progress", "completed", "cancelled"]);
 
 function isTodoItem(v: unknown): v is TodoItem {
-	if (typeof v !== "object" || v === null) return false;
-	const o = v as Record<string, unknown>;
-	return typeof o.content === "string" && typeof o.status === "string" && STATUSES.has(o.status);
+  if (typeof v !== "object" || v === null) return false;
+  const o = v as Record<string, unknown>;
+  return typeof o.content === "string" && typeof o.status === "string" && STATUSES.has(o.status);
 }
 
 export function parseTodoPayload(payload: unknown): TodoData | null {
-	if (typeof payload !== "object" || payload === null) return null;
-	const obj = payload as Record<string, unknown>;
-	const raw = obj.todos;
-	if (!Array.isArray(raw)) return null;
-	const todos: TodoItem[] = [];
-	for (const entry of raw) {
-		if (!isTodoItem(entry)) return null;
-		todos.push(entry);
-	}
-	return { todos };
+  if (typeof payload !== "object" || payload === null) return null;
+  const obj = payload as Record<string, unknown>;
+  const raw = obj.todos;
+  if (!Array.isArray(raw)) return null;
+  const todos: TodoItem[] = [];
+  for (const entry of raw) {
+    if (!isTodoItem(entry)) return null;
+    todos.push(entry);
+  }
+  return { todos };
 }
 
 /** The `rendererId` the `todo` extension's `custom` surface field uses. */

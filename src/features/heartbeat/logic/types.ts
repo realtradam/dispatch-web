@@ -24,20 +24,20 @@ export type HeartbeatRunStatus = "running" | "completed" | "stopped";
 
 /** The workspace's heartbeat configuration (`GET /workspaces/:id/heartbeat`). */
 export interface HeartbeatConfig {
-	/** Whether the autonomous loop is enabled (running on the interval). */
-	readonly enabled: boolean;
-	readonly systemPrompt: string;
-	readonly taskPrompt: string;
-	/** Minutes between runs. */
-	readonly intervalMinutes: number;
-	/** The model name (`<credential>/<model>`) the heartbeat runs with. */
-	readonly model: string;
-	/**
-	 * The heartbeat's reasoning effort, or null when never set (the server
-	 * default `"high"` then applies) — mirrors the per-conversation knob's
-	 * resolution chain.
-	 */
-	readonly reasoningEffort: ReasoningEffort | null;
+  /** Whether the autonomous loop is enabled (running on the interval). */
+  readonly enabled: boolean;
+  readonly systemPrompt: string;
+  readonly taskPrompt: string;
+  /** Minutes between runs. */
+  readonly intervalMinutes: number;
+  /** The model name (`<credential>/<model>`) the heartbeat runs with. */
+  readonly model: string;
+  /**
+   * The heartbeat's reasoning effort, or null when never set (the server
+   * default `"high"` then applies) — mirrors the per-conversation knob's
+   * resolution chain.
+   */
+  readonly reasoningEffort: ReasoningEffort | null;
 }
 
 /**
@@ -45,22 +45,22 @@ export interface HeartbeatConfig {
  * optional — the backend merges the patch onto the stored config.
  */
 export interface HeartbeatConfigPatch {
-	readonly enabled?: boolean;
-	readonly systemPrompt?: string;
-	readonly taskPrompt?: string;
-	readonly intervalMinutes?: number;
-	readonly model?: string;
-	readonly reasoningEffort?: ReasoningEffort | null;
+  readonly enabled?: boolean;
+  readonly systemPrompt?: string;
+  readonly taskPrompt?: string;
+  readonly intervalMinutes?: number;
+  readonly model?: string;
+  readonly reasoningEffort?: ReasoningEffort | null;
 }
 
 /** One heartbeat run (`GET /workspaces/:id/heartbeat/runs`). */
 export interface HeartbeatRun {
-	readonly id: string;
-	/** The conversation this run wrote to (watch it live for the chat). */
-	readonly conversationId: string;
-	/** ISO timestamp of when the run was triggered. */
-	readonly triggeredAt: string;
-	readonly status: HeartbeatRunStatus;
+  readonly id: string;
+  /** The conversation this run wrote to (watch it live for the chat). */
+  readonly conversationId: string;
+  /** ISO timestamp of when the run was triggered. */
+  readonly triggeredAt: string;
+  readonly status: HeartbeatRunStatus;
 }
 
 // ── Injected ports (consumer-defines-port; the composition root adapts the
@@ -68,22 +68,22 @@ export interface HeartbeatRun {
 
 /** Outcome of `GET /workspaces/:id/heartbeat` (or the PUT response). */
 export type HeartbeatConfigResult =
-	| { readonly ok: true; readonly config: HeartbeatConfig }
-	| { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly config: HeartbeatConfig }
+  | { readonly ok: false; readonly error: string };
 
 /** Outcome of `GET /workspaces/:id/heartbeat/runs`. */
 export type HeartbeatRunsResult =
-	| { readonly ok: true; readonly runs: readonly HeartbeatRun[] }
-	| { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly runs: readonly HeartbeatRun[] }
+  | { readonly ok: false; readonly error: string };
 
 /** Outcome of `POST /workspaces/:id/heartbeat/runs/:runId/stop`. */
 export type HeartbeatStopResult =
-	| { readonly ok: true }
-	| { readonly ok: false; readonly error: string };
+  | { readonly ok: true }
+  | { readonly ok: false; readonly error: string };
 
 export type LoadHeartbeatConfig = () => Promise<HeartbeatConfigResult | null>;
 export type SaveHeartbeatConfig = (
-	patch: HeartbeatConfigPatch,
+  patch: HeartbeatConfigPatch,
 ) => Promise<HeartbeatConfigResult | null>;
 export type LoadHeartbeatRuns = () => Promise<HeartbeatRunsResult | null>;
 export type StopHeartbeatRun = (runId: string) => Promise<HeartbeatStopResult | null>;
@@ -97,7 +97,7 @@ export type StopHeartbeatRun = (runId: string) => Promise<HeartbeatStopResult | 
  * approximation from the runs + config (see `approximateNextRunEpoch`).
  */
 export type HeartbeatNextRunResult =
-	| { readonly ok: true; readonly nextRunAt: string | null }
-	| { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly nextRunAt: string | null }
+  | { readonly ok: false; readonly error: string };
 
 export type LoadHeartbeatNextRun = () => Promise<HeartbeatNextRunResult | null>;

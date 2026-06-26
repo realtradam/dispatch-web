@@ -6,8 +6,8 @@ import type { RenderedChunk } from "./types";
  * `result` is null while the call is still pending (no result chunk yet).
  */
 export interface ToolBatchEntry {
-	readonly call: ToolCallChunk;
-	readonly result: ToolResultChunk | null;
+  readonly call: ToolCallChunk;
+  readonly result: ToolResultChunk | null;
 }
 
 /**
@@ -16,13 +16,13 @@ export interface ToolBatchEntry {
  * rendered as one grouped unit.
  */
 export type RenderGroup =
-	| { readonly kind: "single"; readonly chunk: RenderedChunk }
-	| {
-			readonly kind: "tool-batch";
-			readonly stepId: string;
-			readonly entries: readonly ToolBatchEntry[];
-			readonly provisional: boolean;
-	  };
+  | { readonly kind: "single"; readonly chunk: RenderedChunk }
+  | {
+      readonly kind: "tool-batch";
+      readonly stepId: string;
+      readonly entries: readonly ToolBatchEntry[];
+      readonly provisional: boolean;
+    };
 
 /**
  * Group a flat rendered-chunk stream for display. Tool calls sharing a `stepId`
@@ -35,61 +35,61 @@ export type RenderGroup =
  * Pure: input → output, no DOM, no Svelte.
  */
 export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonly RenderGroup[] {
-	// 1. Steps that batched 2+ tool calls.
-	const callsPerStep = new Map<string, number>();
-	for (const rc of rendered) {
-		if (rc.chunk.type === "tool-call" && rc.chunk.stepId !== undefined) {
-			callsPerStep.set(rc.chunk.stepId, (callsPerStep.get(rc.chunk.stepId) ?? 0) + 1);
-		}
-	}
-	const batchSteps = new Set<string>();
-	for (const [stepId, count] of callsPerStep) {
-		if (count >= 2) batchSteps.add(stepId);
-	}
+  // 1. Steps that batched 2+ tool calls.
+  const callsPerStep = new Map<string, number>();
+  for (const rc of rendered) {
+    if (rc.chunk.type === "tool-call" && rc.chunk.stepId !== undefined) {
+      callsPerStep.set(rc.chunk.stepId, (callsPerStep.get(rc.chunk.stepId) ?? 0) + 1);
+    }
+  }
+  const batchSteps = new Set<string>();
+  for (const [stepId, count] of callsPerStep) {
+    if (count >= 2) batchSteps.add(stepId);
+  }
 
-	// 2. toolCallIds belonging to a batch (so their results are absorbed), and a
-	//    lookup of result chunks by toolCallId for pairing.
-	const batchCallIds = new Set<string>();
-	const resultByCallId = new Map<string, ToolResultChunk>();
-	for (const rc of rendered) {
-		const chunk = rc.chunk;
-		if (chunk.type === "tool-call" && chunk.stepId !== undefined && batchSteps.has(chunk.stepId)) {
-			batchCallIds.add(chunk.toolCallId);
-		} else if (chunk.type === "tool-result" && !resultByCallId.has(chunk.toolCallId)) {
-			resultByCallId.set(chunk.toolCallId, chunk);
-		}
-	}
+  // 2. toolCallIds belonging to a batch (so their results are absorbed), and a
+  //    lookup of result chunks by toolCallId for pairing.
+  const batchCallIds = new Set<string>();
+  const resultByCallId = new Map<string, ToolResultChunk>();
+  for (const rc of rendered) {
+    const chunk = rc.chunk;
+    if (chunk.type === "tool-call" && chunk.stepId !== undefined && batchSteps.has(chunk.stepId)) {
+      batchCallIds.add(chunk.toolCallId);
+    } else if (chunk.type === "tool-result" && !resultByCallId.has(chunk.toolCallId)) {
+      resultByCallId.set(chunk.toolCallId, chunk);
+    }
+  }
 
-	// 3. Emit groups in stream order; each batch lands at its first call.
-	const groups: RenderGroup[] = [];
-	const emittedSteps = new Set<string>();
-	for (const rc of rendered) {
-		const chunk = rc.chunk;
+  // 3. Emit groups in stream order; each batch lands at its first call.
+  const groups: RenderGroup[] = [];
+  const emittedSteps = new Set<string>();
+  for (const rc of rendered) {
+    const chunk = rc.chunk;
 
-		if (chunk.type === "tool-call" && chunk.stepId !== undefined && batchSteps.has(chunk.stepId)) {
-			const stepId = chunk.stepId;
-			if (emittedSteps.has(stepId)) continue;
-			emittedSteps.add(stepId);
+    if (chunk.type === "tool-call" && chunk.stepId !== undefined && batchSteps.has(chunk.stepId)) {
+      const stepId = chunk.stepId;
+      if (emittedSteps.has(stepId)) continue;
+      emittedSteps.add(stepId);
 
-			const entries: ToolBatchEntry[] = [];
-			let provisional = false;
-			for (const inner of rendered) {
-				if (inner.chunk.type === "tool-call" && inner.chunk.stepId === stepId) {
-					const result = resultByCallId.get(inner.chunk.toolCallId) ?? null;
-					entries.push({ call: inner.chunk, result });
-					if (inner.provisional) provisional = true;
-				}
-			}
-			groups.push({ kind: "tool-batch", stepId, entries, provisional });
-			continue;
-		}
+      const entries: ToolBatchEntry[] = [];
+      let provisional = false;
+      for (const inner of rendered) {
+        if (inner.chunk.type === "tool-call" && inner.chunk.stepId === stepId) {
+          const result = resultByCallId.get(inner.chunk.toolCallId) ?? null;
+          entries.push({ call: inner.chunk, result });
+          if (inner.provisional) provisional = true;
+        }
+      }
+      groups.push({ kind: "tool-batch", stepId, entries, provisional });
+      continue;
+    }
 
-		if (chunk.type === "tool-result" && batchCallIds.has(chunk.toolCallId)) {
-			continue; // absorbed into its batch
-		}
+    if (chunk.type === "tool-result" && batchCallIds.has(chunk.toolCallId)) {
+      continue; // absorbed into its batch
+    }
 
-		groups.push({ kind: "single", chunk: rc });
-	}
+    groups.push({ kind: "single", chunk: rc });
+  }
 
-	return groups;
+  return groups;
 }

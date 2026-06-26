@@ -9,46 +9,46 @@
  */
 
 export interface TableData {
-	readonly columns: readonly string[];
-	readonly rows: readonly (readonly string[])[];
+  readonly columns: readonly string[];
+  readonly rows: readonly (readonly string[])[];
 }
 
 function isStringArray(v: unknown): v is unknown[] {
-	return Array.isArray(v);
+  return Array.isArray(v);
 }
 
 function coerceCell(v: unknown): string | null {
-	if (typeof v === "string") return v;
-	if (typeof v === "number" && Number.isFinite(v)) return String(v);
-	if (typeof v === "boolean") return String(v);
-	return null;
+  if (typeof v === "string") return v;
+  if (typeof v === "number" && Number.isFinite(v)) return String(v);
+  if (typeof v === "boolean") return String(v);
+  return null;
 }
 
 export function parseTablePayload(payload: unknown): TableData | null {
-	if (typeof payload !== "object" || payload === null) return null;
-	const obj = payload as Record<string, unknown>;
+  if (typeof payload !== "object" || payload === null) return null;
+  const obj = payload as Record<string, unknown>;
 
-	const rawColumns = obj.columns;
-	const rawRows = obj.rows;
-	if (!isStringArray(rawColumns) || !isStringArray(rawRows)) return null;
+  const rawColumns = obj.columns;
+  const rawRows = obj.rows;
+  if (!isStringArray(rawColumns) || !isStringArray(rawRows)) return null;
 
-	const columns: string[] = [];
-	for (const col of rawColumns) {
-		if (typeof col !== "string") return null;
-		columns.push(col);
-	}
+  const columns: string[] = [];
+  for (const col of rawColumns) {
+    if (typeof col !== "string") return null;
+    columns.push(col);
+  }
 
-	const rows: string[][] = [];
-	for (const row of rawRows) {
-		if (!Array.isArray(row)) return null;
-		const cells: string[] = [];
-		for (const cell of row) {
-			const c = coerceCell(cell);
-			if (c === null) return null;
-			cells.push(c);
-		}
-		rows.push(cells);
-	}
+  const rows: string[][] = [];
+  for (const row of rawRows) {
+    if (!Array.isArray(row)) return null;
+    const cells: string[] = [];
+    for (const cell of row) {
+      const c = coerceCell(cell);
+      if (c === null) return null;
+      cells.push(c);
+    }
+    rows.push(cells);
+  }
 
-	return { columns, rows };
+  return { columns, rows };
 }
