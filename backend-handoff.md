@@ -5,10 +5,10 @@
 > **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2h ADDED — Heartbeat system-prompt default + reset button: the heartbeat `systemPrompt` is
-now an override (empty = inherit the GLOBAL system prompt); FE pre-fills + resets to the default; opens 1 backend ask
-CR-HB-2: resolve an empty heartbeat `systemPrompt` to the global system prompt at run time (composes with CR-HB-1).
-typecheck 0/0, 849 tests green, biome clean, build OK. §2g/§2f unchanged.)_
+_Last updated: 2026-06-26 (§2i ADDED — Heartbeat next-run countdown timer: FE shows a live "Next run in Xm Ys" countdown
+from a 1s clock; opens 1 backend ask CR-HB-3: new `GET /workspaces/:id/heartbeat/next-run` → `{ nextRunAt: ISO|null }`.
+FE falls back to an approximation (latest run + interval) until the endpoint ships. typecheck 0/0, 865 tests green, biome
+clean, build OK. §2h/§2g/§2f unchanged.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -644,6 +644,75 @@ actually runs the workspace's regular system prompt (not an empty one).
 only be confirmed against a running backend: set the heartbeat system prompt to empty (or click "Reset to default" +
 Save), trigger a run, and confirm the run used the GLOBAL system prompt (not an empty one). Until CR-HB-2 ships, an
 empty heartbeat `systemPrompt` would run with no system prompt — the FE flags this as the known gap.
+
+---
+
+## 2i. Heartbeat next-run countdown timer → **FE BUILT; 1 BACKEND ASK (CR-HB-3)**
+
+A follow-up to §2f/§2g/§2h (branch `feature/heartbeat`). The Heartbeat sidebar view now shows a live countdown to the
+next scheduled run ("Next run in 4m 32s") beneath the Enabled/Disabled status. The FE computes it from a server-
+authoritative next-run timestamp + a 1s ticking clock.
+
+### CR-HB-3 — `GET /workspaces/:id/heartbeat/next-run` → **ASK (new endpoint)**
+
+**New endpoint:**
+```
+GET /workspaces/:id/heartbeat/next-run
+```
+**Response shape:**
+```json
+{ "nextRunAt": "2026-06-25T14:05:00Z" }
+```
+or `null` when the heartbeat is **disabled** or **no run is scheduled**:
+```json
+{ "nextRunAt": null }
+```
+
+**Semantics:**
+- `nextRunAt` is the server-authoritative timestamp of the NEXT scheduled heartbeat run (the moment the scheduler will
+  fire it), as an ISO 8601 string. It is DERIVED server-side from the scheduler state (the last run's start + the
+  configured `intervalMinutes`, or the moment `enabled` was toggled on + `intervalMinutes` for the first run) — the FE
+  cannot derive it accurately (it doesn't know when the last run fired relative to "now" + scheduling jitter, paused-
+  while-running, etc.).
+- `null` when the heartbeat is disabled, or when no run is currently scheduled (e.g. a run is in flight and the next
+  hasn't been queued yet — the FE then shows no countdown, not a fabricated one).
+- Recompute on each call (a cheap read of the scheduler's next-fire time). The FE polls it on the same 4s cadence as
+  the runs list, so a run completing (→ next run scheduled) reflects within ~4s.
+
+**Why a dedicated endpoint (not a field on the config/runs response):** the user explicitly asked for "a timestamp
+endpoint." It's also the most efficient for polling (a lightweight read of just the next-fire time, vs. re-fetching the
+full config or runs). The FE polls it alongside the runs list every 4s.
+
+**No wire/transport-contract/ui-contract change** — the response is a plain JSON object (the heartbeat API is a plain
+REST surface, not a transport-contract type; the FE owns the `HeartbeatNextRunResult` type locally in
+`src/features/heartbeat/logic/types.ts` and coerces the untyped body at the network seam).
+
+### FE behavior (this slice) — works BEFORE the backend ships the endpoint
+
+- The store's `heartbeatNextRun()` calls `GET /workspaces/:id/heartbeat/next-run`; on **404/error** it returns
+  `ok: false` (non-fatal). The FE then sets a `nextRunEndpointFailed` flag and **stops polling the endpoint** (no 404
+  spam) and falls back to an APPROXIMATION: the latest run's `triggeredAt` + the configured `intervalMinutes`
+  (`approximateNextRunEpoch`, pure + tested). So the countdown shows (approximate) immediately, and becomes ACCURATE
+  once the backend ships CR-HB-3 (the FE prefers the server value when available).
+- A 1s ticking clock (`now` state) recomputes the countdown locally from `effectiveNextRun` (server value, else the
+  approximation) — no per-second network churn. Pure `formatCountdown(remainingMs)` → "4m 32s" / "32s" / "1h 05m" /
+  "due" (≤0) / "—" (unknown).
+- The countdown only renders when the heartbeat is **enabled** AND a next-run time is known (`effectiveNextRun !==
+  null`); disabled → no countdown (just "Disabled").
+- Edge: when the countdown reaches "due" (≤0), a run should be firing; the next 4s poll refreshes `nextRunAt` to the
+  newly-scheduled run. The approximation similarly refreshes when a new run appears in the runs list.
+
+### FE summary (this slice)
+- `src/features/heartbeat/logic/types.ts`: `HeartbeatNextRunResult` + `LoadHeartbeatNextRun` port.
+- `src/features/heartbeat/logic/view-model.ts`: pure `nextRunEpoch` (parse ISO), `formatCountdown`, `approximateNextRunEpoch` (+12 tests).
+- `src/app/store.svelte.ts`: `heartbeatNextRun()` (GET `.../heartbeat/next-run`; graceful 404 → `ok:false`).
+- `src/features/heartbeat/ui/HeartbeatView.svelte`: polls `nextRun` (stop-on-fail + fallback), 1s countdown clock, "Next run in …" under the status.
+- `src/app/App.svelte`: `loadHeartbeatNextRun` adapter → `HeartbeatView`.
+
+**Verification:** typecheck 0/0, 865 tests green (+12 next-run helpers), biome clean, build OK. The accurate countdown
+can only be confirmed against a running backend with CR-HB-3 shipped (enable the heartbeat, watch "Next run in …" tick
+down, confirm it matches when a run actually fires). Until CR-HB-3 ships, the FE shows the APPROXIMATE countdown
+(latest run + interval) — flagged as the known gap.
 
 ---
 

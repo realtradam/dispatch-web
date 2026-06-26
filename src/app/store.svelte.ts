@@ -59,6 +59,7 @@ import type {
 	HeartbeatConfig,
 	HeartbeatConfigPatch,
 	HeartbeatConfigResult,
+	HeartbeatNextRunResult,
 	HeartbeatRun,
 	HeartbeatRunsResult,
 	HeartbeatStopResult,
@@ -340,6 +341,15 @@ export interface AppStore {
 	 * ends); the run's status flips to `stopped` (visible on the next runs poll).
 	 */
 	stopHeartbeatRun(runId: string): Promise<HeartbeatStopResult>;
+	/**
+	 * Fetch the server-authoritative next-run timestamp
+	 * (`GET /workspaces/:id/heartbeat/next-run`) — when the next heartbeat run
+	 * will fire (ISO 8601), or null when disabled / no run scheduled. The FE shows
+	 * a live countdown from this. When the endpoint is absent (404 — backend
+	 * hasn't shipped CR-HB-3 yet) it returns `ok: false` so the FE falls back to
+	 * an approximation from the runs + config.
+	 */
+	heartbeatNextRun(): Promise<HeartbeatNextRunResult>;
 	/**
 	 * Open a "watch" on a conversation for a modal viewer (the heartbeat run-chat
 	 * modal): ensures a live {@link ChatStore} for the conversation, subscribing
@@ -1645,6 +1655,35 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 				return {
 					ok: false,
 					error: err instanceof Error ? err.message : "Stop heartbeat run request failed",
+				};
+			}
+		},
+
+		async heartbeatNextRun(): Promise<HeartbeatNextRunResult> {
+			const wsId = untrack(() => activeWorkspaceId);
+			try {
+				const res = await fetchImpl(
+					`${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat/next-run`,
+				);
+				if (!res.ok) {
+					// 404 = the backend hasn't shipped CR-HB-3 yet → the FE falls back to
+					// an approximation. Surface as ok:false (non-fatal).
+					const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+					return {
+						ok: false,
+						error: errBody?.error ?? `Heartbeat next-run failed (HTTP ${res.status})`,
+					};
+				}
+				const data = (await res.json().catch(() => null)) as { nextRunAt?: string | null } | null;
+				// `null` (disabled / no run scheduled) passes through; anything non-string
+				// also becomes null so a malformed body can't crash the countdown.
+				const raw = data?.nextRunAt;
+				const nextRunAt = typeof raw === "string" ? raw : null;
+				return { ok: true, nextRunAt };
+			} catch (err) {
+				return {
+					ok: false,
+					error: err instanceof Error ? err.message : "Heartbeat next-run request failed",
 				};
 			}
 		},
