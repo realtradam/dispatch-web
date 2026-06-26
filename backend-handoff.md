@@ -5,10 +5,10 @@
 > **From:** dispatch-web orchestrator · **To:** `../dispatch-backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2g ADDED — Heartbeat follow-up UI: prompt editor modal (reuses `GET /system-prompt/variables`;
-opens 1 backend ask CR-HB-1: confirm/implement `[type:name]` variable resolution in the heartbeat system/task prompts)
-+ hours/minutes interval timer (FE-only conversion, no backend change). typecheck 0/0, tests green, biome clean, build OK).
-§2f (the initial heartbeat slice) is unchanged._
+_Last updated: 2026-06-26 (§2h ADDED — Heartbeat system-prompt default + reset button: the heartbeat `systemPrompt` is
+now an override (empty = inherit the GLOBAL system prompt); FE pre-fills + resets to the default; opens 1 backend ask
+CR-HB-2: resolve an empty heartbeat `systemPrompt` to the global system prompt at run time (composes with CR-HB-1).
+typecheck 0/0, 849 tests green, biome clean, build OK. §2g/§2f unchanged.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -584,6 +584,66 @@ is pure FE presentation. No endpoint, data-shape, or behavior change. (The exist
 (CR-HB-1) can only be confirmed end-to-end against a running backend with variable-laden heartbeat prompts — a human
 should set `[system:os]` in a heartbeat prompt via the new editor, trigger a run, and confirm the resolved value (not the
 literal `[system:os]`) appears in the model's context / run transcript.
+
+---
+
+## 2h. Heartbeat system-prompt default + reset button → **FE BUILT; 1 BACKEND ASK (CR-HB-2)**
+
+A follow-up to §2f/§2g (branch `feature/heartbeat`). Two UX changes on the heartbeat prompt editor:
+1. The system prompt now **defaults to the workspace's regular system prompt** (the global `GET /system-prompt`
+   template — there is no per-workspace system prompt; `Workspace` has no `systemPrompt` field, and the system prompt
+   is global, resolved once per conversation). When the heartbeat's `systemPrompt` is empty, the editor pre-fills the
+   textarea with the global default so the user can see + tweak what will run — but a pre-filled default is NOT an
+   explicit edit (no `hasChanges` until the user edits away from it).
+2. A **"Reset to default" button** reverts the system prompt to the global default (clearing any override → inherit).
+
+### Semantics: heartbeat `systemPrompt` is an OVERRIDE; empty = inherit the global default
+
+Following the codebase's established resolution-chain pattern (cwd / reasoning-effort / model / computer — all
+"persisted value OR fall back to a default; resolution is SERVER-owned"), the heartbeat's `systemPrompt` is now treated
+as an **override**:
+- `systemPrompt === ""` (empty) → **inherit** the global system prompt (the workspace's regular prompt).
+- non-empty → an explicit override.
+
+The FE never duplicates the global default into the heartbeat config: when the editor's text matches the default (or is
+empty), it persists `systemPrompt: ""` (inherit) — so a later change to the global default still flows through. A
+distinct edit persists the override verbatim. Pure helpers in `src/features/heartbeat/logic/view-model.ts`:
+`effectiveSystemPrompt(override, default)`, `isInheritingSystemPrompt(override)`,
+`persistedSystemPrompt(editable, default)` (+6 tests).
+
+### CR-HB-2 — Resolve an empty heartbeat `systemPrompt` to the global system prompt at run time → **ASK (backend behavior change)**
+
+The FE sends `systemPrompt: ""` to inherit. **The backend must resolve an empty heartbeat `systemPrompt` to the GLOBAL
+system prompt template (`GET /system-prompt`) at heartbeat-run construction time** — so a heartbeat with no override
+actually runs the workspace's regular system prompt (not an empty one).
+
+- **Resolution:** when building a heartbeat run's turn, if the heartbeat's persisted `systemPrompt` is `""`, substitute
+  the global system prompt template (the same one `GET /system-prompt` returns / that conversations resolve). If
+  non-empty, use the override as-is.
+- **Composes with CR-HB-1:** after resolving empty → global (CR-HB-2), the resulting prompt's `[type:name]` variable
+  placeholders must still be resolved (CR-HB-1). So both apply, in order: (1) empty ⇒ global template, (2) resolve
+  `[type:name]` placeholders in whichever prompt is in effect. (For an override, only step 2 applies.)
+- **Timing / cache-safety:** mirror the global template's behavior — resolve once per heartbeat run (or once + persist,
+  whichever the heartbeat scheduler already does for prompt-cache safety). The FE doesn't care WHEN; only THAT empty
+  becomes the global prompt.
+- **No wire/transport-contract/ui-contract change** — `systemPrompt` is still a `string`; empty = inherit. The FE is
+  unaffected once the backend resolves it. **No new endpoint needed** — the FE already reads the global default via the
+  existing `GET /system-prompt` (passed through as `loadDefaultPrompt`).
+
+### FE summary (this slice)
+- `src/features/heartbeat/logic/view-model.ts`: 3 pure inheritance helpers (+6 tests).
+- `src/features/heartbeat/ui/PromptEditor.svelte`: `loadDefaultPrompt` port (the global `GET /system-prompt`); loads
+  the default on open + pre-fills the system textarea when inheriting; `hasChanges` diffs against the EFFECTIVE prompt
+  (override or default) so a pre-filled default isn't an unsaved change; save persists `""` when the text matches the
+  default (inherit); new "Reset to default" button + "Inheriting workspace default" badge + status hint.
+- `src/features/heartbeat/ui/HeartbeatView.svelte`: passes `loadDefaultPrompt` through; `onSaved` syncs the raw
+  override (`""` = inherit) into the form.
+- `src/app/App.svelte`: passes `loadDefaultPrompt={loadSystemPromptPrompt}` (reuses the existing `store.loadSystemPrompt()` adapter) to `HeartbeatView`.
+
+**Verification:** typecheck 0/0, 849 tests green, biome clean, build OK. The inheritance RUNTIME behavior (CR-HB-2) can
+only be confirmed against a running backend: set the heartbeat system prompt to empty (or click "Reset to default" +
+Save), trigger a run, and confirm the run used the GLOBAL system prompt (not an empty one). Until CR-HB-2 ships, an
+empty heartbeat `systemPrompt` would run with no system prompt — the FE flags this as the known gap.
 
 ---
 

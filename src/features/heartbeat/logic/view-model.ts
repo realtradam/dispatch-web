@@ -263,6 +263,41 @@ export function formDiffers(form: HeartbeatFormState, config: HeartbeatConfig): 
 	);
 }
 
+// ── System-prompt inheritance (heartbeat override ⇄ global default) ────────────
+//
+// The heartbeat's `systemPrompt` is an OVERRIDE of the global system prompt (the
+// one every workspace conversation uses — there is no per-workspace system
+// prompt; `GET /system-prompt` is global). An EMPTY override means "inherit the
+// global default" (server-owned resolution: the backend resolves empty → global
+// at run time; see CR-HB-2). These pure helpers keep the override/inherit
+// semantics in ONE place so the editor + form agree.
+
+/**
+ * The prompt to DISPLAY: the heartbeat's override if it set one, else the global
+ * default. The editor pre-fills the textarea with this so the user can see (and
+ * tweak) what will run — but a pre-filled default is NOT an explicit edit.
+ */
+export function effectiveSystemPrompt(override: string, defaultPrompt: string): string {
+	return override !== "" ? override : defaultPrompt;
+}
+
+/** Whether the heartbeat is inheriting the global default (empty override). */
+export function isInheritingSystemPrompt(override: string): boolean {
+	return override === "";
+}
+
+/**
+ * The `systemPrompt` value to PERSIST for the given editable text: if the user's
+ * text matches the global default (or is empty), persist `""` to INHERIT (so a
+ * later change to the global default still flows through); otherwise persist the
+ * text verbatim as an override. This keeps "matching the default = inheriting it"
+ * — never duplicating the default into the heartbeat config.
+ */
+export function persistedSystemPrompt(editable: string, defaultPrompt: string): string {
+	if (editable === "" || editable === defaultPrompt) return "";
+	return editable;
+}
+
 // The reasoning-effort `<option>`s are reused verbatim from the per-conversation
 // selector (re-exported so the config panel imports a single source).
 export { effortOptions };

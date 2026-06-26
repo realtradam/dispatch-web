@@ -6,45 +6,76 @@
 		groupVariables,
 		insertTag,
 		isDynamicVariable,
+		type LoadSystemPrompt,
 		type LoadSystemPromptVariables,
 	} from "../../system-prompt";
 	import type { SaveHeartbeatConfig } from "../logic/types";
+	import {
+		effectiveSystemPrompt,
+		isInheritingSystemPrompt,
+		persistedSystemPrompt,
+	} from "../logic/view-model";
 	import { portal } from "../../../adapters/portal";
 
 	let {
 		systemPrompt,
 		taskPrompt,
 		loadVariables,
+		loadDefaultPrompt,
 		saveConfig,
 		onSaved,
 		onClose,
 	}: {
-		/** The current system prompt (seeded from the loaded config). */
+		/**
+		 * The heartbeat's persisted system prompt (raw override). Empty = inherit
+		 * the global system prompt (the workspace's regular prompt).
+		 */
 		systemPrompt: string;
 		/** The current task prompt (seeded from the loaded config). */
 		taskPrompt: string;
 		/** Load the available variables (`GET /system-prompt/variables`). */
 		loadVariables: LoadSystemPromptVariables;
+		/** Load the GLOBAL system prompt (`GET /system-prompt`) — the default the
+		 *  heartbeat inherits when its `systemPrompt` is empty. */
+		loadDefaultPrompt: LoadSystemPrompt;
 		/** Persist both prompts via a partial heartbeat config PUT. */
 		saveConfig: SaveHeartbeatConfig;
-		/** Called after a successful save with the persisted prompts, so the parent
-		 *  can sync its form (the editor edits local copies). */
+		/** Called after a successful save with the RAW persisted prompts (system
+		 *  may be "" = inherit), so the parent can sync its form. */
 		onSaved: (systemPrompt: string, taskPrompt: string) => void;
 		onClose: () => void;
 	} = $props();
 
-	// Local editable copies (the modal edits in isolation; Save commits both).
-	// Seeded ONCE from the props via `untrack` — the modal is re-mounted per open
-	// (keyed by the parent), so it captures the initial prompts, not a live view.
+	// The global default system prompt (loaded async on open). Empty until loaded
+	// (or when no global prompt is configured) — the editor degrades gracefully.
+	let defaultPrompt = $state("");
+
+	// The editable system text. Pre-filled with the EFFECTIVE prompt — the
+	// heartbeat's override, or the global default when inheriting (so the user
+	// can see + tweak what will run). A pre-filled default is NOT an explicit
+	// edit (see `hasChanges`).
 	let system = $state(untrack(() => systemPrompt));
 	let task = $state(untrack(() => taskPrompt));
-	/** Snapshots at open, to diff against (drives Save + Reset). */
-	let loadedSystem = $state(untrack(() => systemPrompt));
+
+	// The raw persisted override at open (for the "inheriting" indicator + the
+	// reset baseline). Empty = the heartbeat is inheriting the global default.
+	const rawLoadedSystem = untrack(() => systemPrompt);
 	let loadedTask = $state(untrack(() => taskPrompt));
+
+	/** Once the default loads, pre-fill an inheriting system prompt with it
+	 *  (only if the user hasn't edited away from the raw override yet). */
+	let defaultApplied = $state(false);
+	$effect(() => {
+		if (!defaultApplied && defaultPrompt !== "" && isInheritingSystemPrompt(rawLoadedSystem)) {
+			system = defaultPrompt;
+			defaultApplied = true;
+		}
+	});
 
 	let variables = $state<readonly SystemPromptVariable[]>([]);
 	let varsLoading = $state(false);
 	let varsError = $state<string | null>(null);
+	let defaultLoading = $state(false);
 
 	let saving = $state(false);
 	let saveError = $state<string | null>(null);
@@ -57,7 +88,13 @@
 	let taskEl = $state<HTMLTextAreaElement | null>(null);
 
 	const groups = $derived(groupVariables(variables));
-	const hasChanges = $derived(system !== loadedSystem || task !== loadedTask);
+	/** The baseline system text to diff against: the effective prompt at open
+	 *  (override, or the default when inheriting) — so a pre-filled default does
+	 *  NOT register as an unsaved change. */
+	const systemBaseline = $derived(effectiveSystemPrompt(rawLoadedSystem, defaultPrompt));
+	const hasChanges = $derived(system !== systemBaseline || task !== loadedTask);
+	/** Whether the current text matches the default (i.e. saving would inherit). */
+	const inheriting = $derived(system === defaultPrompt && defaultPrompt !== "");
 
 	async function loadVars(): Promise<void> {
 		untrack(() => {
@@ -73,27 +110,52 @@
 		}
 	}
 
+	async function loadDefault(): Promise<void> {
+		untrack(() => {
+			defaultLoading = true;
+		});
+		const result = await loadDefaultPrompt();
+		defaultLoading = false;
+		if (result.ok) {
+			defaultPrompt = result.template;
+		}
+		// A failed default load is non-fatal: the editor still works with the
+		// raw override; only the "inherit" affordance is unavailable.
+	}
+
 	async function save(): Promise<void> {
 		if (saving || !hasChanges) return;
 		saving = true;
 		saveError = null;
 		justSaved = false;
-		const result = await saveConfig({ systemPrompt: system, taskPrompt: task });
+		// Persist the system prompt via the inheritance helper: matching the
+		// default (or empty) → "" (inherit); otherwise the override verbatim.
+		const systemToPersist = persistedSystemPrompt(system, defaultPrompt);
+		const result = await saveConfig({ systemPrompt: systemToPersist, taskPrompt: task });
 		saving = false;
 		if (result === null) return;
 		if (result.ok) {
-			loadedSystem = system;
 			loadedTask = task;
 			justSaved = true;
-			onSaved(system, task);
+			onSaved(systemToPersist, task);
 		} else {
 			saveError = result.error;
 		}
 	}
 
+	/** Revert ALL edits to the open-time state (system effective prompt + task). */
 	function reset(): void {
-		system = loadedSystem;
+		system = systemBaseline;
 		task = loadedTask;
+		saveError = null;
+		justSaved = false;
+	}
+
+	/** Reset ONLY the system prompt to the global default (clears any override →
+	 *  inherit on save). No-op until the default has loaded. */
+	function resetSystemToDefault(): void {
+		if (defaultPrompt === "") return;
+		system = defaultPrompt;
 		saveError = null;
 		justSaved = false;
 	}
@@ -134,9 +196,10 @@
 		if (e.key === "Escape") onClose();
 	}
 
-	// Load the variable palette once on open.
+	// Load the variable palette + the global default once on open.
 	$effect(() => {
 		void loadVars();
+		void loadDefault();
 	});
 </script>
 
@@ -187,16 +250,43 @@
 			<!-- Left: two text editors (system top, task bottom) -->
 			<div class="flex w-1/2 min-w-0 flex-col gap-2 border-r border-base-300 p-4">
 				<div class="flex min-h-0 flex-1 flex-col gap-1">
-					<span class="shrink-0 text-xs font-semibold uppercase opacity-60">System prompt</span>
+					<div class="flex shrink-0 items-center justify-between gap-2">
+						<div class="flex items-center gap-2">
+							<span class="text-xs font-semibold uppercase opacity-60">System prompt</span>
+							{#if defaultLoading}
+								<span class="loading loading-spinner loading-xs"></span>
+							{:else if inheriting}
+								<span class="badge badge-ghost badge-sm font-normal">Inheriting workspace default</span>
+							{/if}
+						</div>
+						<button
+							type="button"
+							class="btn btn-ghost btn-xs"
+							disabled={defaultPrompt === "" || saving}
+							onclick={resetSystemToDefault}
+							title="Reset the system prompt to the workspace default (inherit)"
+						>
+							Reset to default
+						</button>
+					</div>
 					<textarea
 						bind:this={systemEl}
 						bind:value={system}
 						onfocus={() => (activeField = "system")}
 						class="textarea textarea-bordered min-h-0 w-full flex-1 resize-none font-mono text-xs"
-						placeholder="You are an autonomous agent…"
+						placeholder={defaultPrompt || "You are an autonomous agent…"}
 						disabled={saving}
 						aria-label="Heartbeat system prompt"
 					></textarea>
+					<p class="shrink-0 text-xs opacity-50">
+						{#if inheriting}
+							Matches the workspace default — saving will inherit it (no override).
+						{:else if defaultPrompt !== ""}
+							Editing overrides the workspace default.
+						{:else}
+							Empty — no system prompt set.
+						{/if}
+					</p>
 				</div>
 
 				<div class="flex min-h-0 flex-1 flex-col gap-1">

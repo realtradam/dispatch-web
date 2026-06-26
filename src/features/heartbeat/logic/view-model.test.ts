@@ -4,16 +4,19 @@ import type { HeartbeatConfig, HeartbeatRun } from "./types";
 import {
 	badgeForStatus,
 	DEFAULT_INTERVAL_MINUTES,
+	effectiveSystemPrompt,
 	effortOptions,
 	emptyForm,
 	formatRunTime,
 	formDiffers,
 	formFromConfig,
+	isInheritingSystemPrompt,
 	joinInterval,
 	normalizeHeartbeatConfig,
 	normalizeHeartbeatRuns,
 	normalizeInterval,
 	patchFromForm,
+	persistedSystemPrompt,
 	relativeLabel,
 	splitInterval,
 	statusLabelFor,
@@ -247,6 +250,48 @@ describe("config form", () => {
 		const c = config({ reasoningEffort: null });
 		const f = formFromConfig(c);
 		expect(formDiffers(f, c)).toBe(false); // null resolves to "high" == form
+	});
+});
+
+describe("system-prompt inheritance (override ⇄ global default)", () => {
+	const DEFAULT = "You are a helpful assistant.";
+
+	it("effectiveSystemPrompt: override wins when non-empty, else the default", () => {
+		expect(effectiveSystemPrompt("custom", DEFAULT)).toBe("custom");
+		expect(effectiveSystemPrompt("", DEFAULT)).toBe(DEFAULT);
+	});
+
+	it("isInheritingSystemPrompt: true iff the override is empty", () => {
+		expect(isInheritingSystemPrompt("")).toBe(true);
+		expect(isInheritingSystemPrompt("custom")).toBe(false);
+	});
+
+	it('persistedSystemPrompt: empty or matching-the-default → inherit ("")', () => {
+		// matching the default → inherit (never duplicate the default into the config)
+		expect(persistedSystemPrompt(DEFAULT, DEFAULT)).toBe("");
+		// empty edit → inherit
+		expect(persistedSystemPrompt("", DEFAULT)).toBe("");
+	});
+
+	it("persistedSystemPrompt: a distinct edit → the override verbatim", () => {
+		expect(persistedSystemPrompt("custom", DEFAULT)).toBe("custom");
+		expect(persistedSystemPrompt(DEFAULT + "\nmore", DEFAULT)).toBe(DEFAULT + "\nmore");
+	});
+
+	it("round-trip: inherit → display default → reset (no edit) → persist inherit", () => {
+		// A heartbeat inheriting (override "") displays the default; with no edit,
+		// persisting yields inherit ("") — so the global default stays the source.
+		const override = "";
+		const displayed = effectiveSystemPrompt(override, DEFAULT);
+		expect(displayed).toBe(DEFAULT);
+		expect(persistedSystemPrompt(displayed, DEFAULT)).toBe("");
+	});
+
+	it("round-trip: override → reset to default → persist inherit (clears override)", () => {
+		// User had an override, clicks Reset (textarea ← default): persisting clears
+		// the override ("" → inherit) because the text now matches the default.
+		const afterReset = DEFAULT;
+		expect(persistedSystemPrompt(afterReset, DEFAULT)).toBe("");
 	});
 });
 

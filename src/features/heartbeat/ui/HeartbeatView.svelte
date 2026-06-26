@@ -20,7 +20,10 @@
 		SaveHeartbeatConfig,
 		StopHeartbeatRun,
 	} from "../logic/types";
-	import type { LoadSystemPromptVariables } from "../../system-prompt";
+	import type {
+		LoadSystemPrompt,
+		LoadSystemPromptVariables,
+	} from "../../system-prompt";
 	import PromptEditor from "./PromptEditor.svelte";
 
 	let {
@@ -30,6 +33,7 @@
 		loadRuns,
 		stopRun,
 		loadVariables,
+		loadDefaultPrompt,
 		onOpenRun,
 	}: {
 		/** The available model names (for the config's model dropdown). */
@@ -40,6 +44,9 @@
 		stopRun: StopHeartbeatRun;
 		/** Load the available system-prompt variables (palette in the prompt editor). */
 		loadVariables: LoadSystemPromptVariables;
+		/** Load the global system prompt — the default the heartbeat inherits when
+		 *  its `systemPrompt` is empty (the workspace's regular prompt). */
+		loadDefaultPrompt: LoadSystemPrompt;
 		/** Open a run's chat in the fullscreen modal (composition-root wires the live watch). */
 		onOpenRun: (run: HeartbeatRunView) => void;
 	} = $props();
@@ -435,10 +442,12 @@
 		systemPrompt={form.systemPrompt}
 		taskPrompt={form.taskPrompt}
 		{loadVariables}
+		{loadDefaultPrompt}
 		{saveConfig}
 		onSaved={(systemPrompt, taskPrompt) => {
 			// Sync the form + the diff baseline so the main Save button + formDiffers
-			// stay accurate (the editor persisted the prompts already).
+			// stay accurate (the editor persisted the prompts already). `systemPrompt`
+			// may be "" (inherit) — the form stores the raw override.
 			form = { ...form, systemPrompt, taskPrompt };
 			loadedConfig = { ...loadedConfig, systemPrompt, taskPrompt };
 			justSaved = true;

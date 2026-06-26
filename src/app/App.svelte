@@ -681,6 +681,7 @@
 			loadRuns={loadHeartbeatRuns}
 			stopRun={stopHeartbeatRun}
 			loadVariables={loadSystemPromptVariablesPrompt}
+			loadDefaultPrompt={loadSystemPromptPrompt}
 			onOpenRun={(run) => (heartbeatRun = run)}
 		/>
 	{/if}
