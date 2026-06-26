@@ -14,14 +14,14 @@ import type { TurnProviderRetryEvent } from "@dispatch/wire";
 
 /** The display shape for a provider-retry banner. */
 export interface ProviderRetryView {
-	/** "Retry #N" — `attempt` is 0-based, so +1 (attempt 0 = "Retry #1"). */
-	readonly attemptLabel: string;
-	/** The scheduled sleep as a short duration: "5s" / "30s" / "1m" / "5m" / "30m". */
-	readonly delayLabel: string;
-	/** The endpoint's error verbatim, e.g. "HTTP 429: {…overloaded_error…}". */
-	readonly message: string;
-	/** The HTTP code when known (e.g. "429"), else null. */
-	readonly code: string | null;
+  /** "Retry #N" — `attempt` is 0-based, so +1 (attempt 0 = "Retry #1"). */
+  readonly attemptLabel: string;
+  /** The scheduled sleep as a short duration: "5s" / "30s" / "1m" / "5m" / "30m". */
+  readonly delayLabel: string;
+  /** The endpoint's error verbatim, e.g. "HTTP 429: {…overloaded_error…}". */
+  readonly message: string;
+  /** The HTTP code when known (e.g. "429"), else null. */
+  readonly code: string | null;
 }
 
 /**
@@ -30,11 +30,11 @@ export interface ProviderRetryView {
  * shows seconds, under an hour shows minutes, else hours.
  */
 export function formatRetryDelay(ms: number): string {
-	const totalSeconds = Math.round(ms / 1000);
-	if (totalSeconds < 60) return `${totalSeconds}s`;
-	const totalMinutes = Math.round(totalSeconds / 60);
-	if (totalMinutes < 60) return `${totalMinutes}m`;
-	return `${Math.round(totalMinutes / 60)}h`;
+  const totalSeconds = Math.round(ms / 1000);
+  if (totalSeconds < 60) return `${totalSeconds}s`;
+  const totalMinutes = Math.round(totalSeconds / 60);
+  if (totalMinutes < 60) return `${totalMinutes}m`;
+  return `${Math.round(totalMinutes / 60)}h`;
 }
 
 /**
@@ -42,10 +42,10 @@ export function formatRetryDelay(ms: number): string {
  * retry about to happen), so the label is 1-based for the user.
  */
 export function viewProviderRetry(event: TurnProviderRetryEvent): ProviderRetryView {
-	return {
-		attemptLabel: `Retry #${event.attempt + 1}`,
-		delayLabel: formatRetryDelay(event.delayMs),
-		message: event.message,
-		code: event.code ?? null,
-	};
+  return {
+    attemptLabel: `Retry #${event.attempt + 1}`,
+    delayLabel: formatRetryDelay(event.delayMs),
+    message: event.message,
+    code: event.code ?? null,
+  };
 }

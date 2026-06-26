@@ -1,30 +1,30 @@
 export type { RenderGroup, ToolBatchEntry } from "./groups";
 export { groupRenderedChunks } from "./groups";
 export {
-	appendUserMessage,
-	applyHistory,
-	clearGenerating,
-	foldEvent,
-	initialState,
+  appendUserMessage,
+  applyHistory,
+  clearGenerating,
+  foldEvent,
+  initialState,
 } from "./reducer";
 export type { ProviderRetryView } from "./retry-banner";
 export { formatRetryDelay, viewProviderRetry } from "./retry-banner";
 export { selectChunks, selectGenerating, selectMessages, selectProviderRetry } from "./selectors";
 export {
-	DEFAULT_CHAT_LIMIT,
-	initialWindowSize,
-	MAX_CHAT_LIMIT,
-	MIN_CHAT_LIMIT,
-	normalizeChatLimit,
-	restoreEarlier,
-	selectHasEarlier,
-	trimTranscript,
-	unloadCount,
-	windowTranscript,
+  DEFAULT_CHAT_LIMIT,
+  initialWindowSize,
+  MAX_CHAT_LIMIT,
+  MIN_CHAT_LIMIT,
+  normalizeChatLimit,
+  restoreEarlier,
+  selectHasEarlier,
+  trimTranscript,
+  unloadCount,
+  windowTranscript,
 } from "./trim";
 export type {
-	AccumulatingChunk,
-	ProvisionalChunk,
-	RenderedChunk,
-	TranscriptState,
+  AccumulatingChunk,
+  ProvisionalChunk,
+  RenderedChunk,
+  TranscriptState,
 } from "./types";

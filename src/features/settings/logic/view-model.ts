@@ -17,8 +17,8 @@ import { normalizeChatLimit } from "../../../core/chunks";
 
 /** Outcome of persisting a chat-limit setting. */
 export type ChatLimitSaveResult =
-	| { readonly ok: true; readonly chatLimit: number }
-	| { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly chatLimit: number }
+  | { readonly ok: false; readonly error: string };
 
 export type SaveChatLimit = (value: number) => Promise<ChatLimitSaveResult>;
 
@@ -26,8 +26,8 @@ export type SaveChatLimit = (value: number) => Promise<ChatLimitSaveResult>;
 
 /** Result of parsing a typed chat-limit string. */
 export type ChatLimitParse =
-	| { readonly ok: true; readonly value: number }
-	| { readonly ok: false; readonly error: string };
+  | { readonly ok: true; readonly value: number }
+  | { readonly ok: false; readonly error: string };
 
 /**
  * Parse a typed chat-limit string into a normalized limit (floored + clamped to
@@ -37,15 +37,15 @@ export type ChatLimitParse =
  * from user typing.
  */
 export function parseChatLimit(raw: string): ChatLimitParse {
-	const trimmed = raw.trim();
-	if (trimmed.length === 0) {
-		return { ok: false, error: "Enter a number." };
-	}
-	const n = Number(trimmed);
-	if (!Number.isFinite(n)) {
-		return { ok: false, error: "Must be a number." };
-	}
-	return { ok: true, value: normalizeChatLimit(n) };
+  const trimmed = raw.trim();
+  if (trimmed.length === 0) {
+    return { ok: false, error: "Enter a number." };
+  }
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) {
+    return { ok: false, error: "Must be a number." };
+  }
+  return { ok: true, value: normalizeChatLimit(n) };
 }
 
 /**
@@ -54,7 +54,7 @@ export function parseChatLimit(raw: string): ChatLimitParse {
  * dirty-check for the input — it must NOT mutate or clamp, only compare.
  */
 export function chatLimitChanged(typed: string, current: number): boolean {
-	const parsed = parseChatLimit(typed);
-	if (!parsed.ok) return false;
-	return parsed.value !== current;
+  const parsed = parseChatLimit(typed);
+  if (!parsed.ok) return false;
+  return parsed.value !== current;
 }

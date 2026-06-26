@@ -30,12 +30,12 @@ export const DEFAULT_WORKSPACE_ID = "default";
  * surfaces the error).
  */
 export function parsePath(pathname: string): Route {
-	const trimmed = pathname.replace(/^\/+|\/+$/g, "");
-	if (trimmed === "") return { kind: "home" };
-	const first = trimmed.split("/")[0] ?? "";
-	const id = safeDecode(first);
-	if (id === "") return { kind: "home" };
-	return { kind: "workspace", id };
+  const trimmed = pathname.replace(/^\/+|\/+$/g, "");
+  if (trimmed === "") return { kind: "home" };
+  const first = trimmed.split("/")[0] ?? "";
+  const id = safeDecode(first);
+  if (id === "") return { kind: "home" };
+  return { kind: "workspace", id };
 }
 
 /**
@@ -43,7 +43,7 @@ export function parsePath(pathname: string): Route {
  * Used by the home view's "new workspace" input before navigating.
  */
 export function isValidSlug(slug: string): boolean {
-	return WORKSPACE_SLUG_RE.test(slug);
+  return WORKSPACE_SLUG_RE.test(slug);
 }
 
 /**
@@ -51,13 +51,13 @@ export function isValidSlug(slug: string): boolean {
  * workspace. Pure: id in, path string out.
  */
 export function workspacePath(id: string): string {
-	return `/${id}`;
+  return `/${id}`;
 }
 
 function safeDecode(segment: string): string {
-	try {
-		return decodeURIComponent(segment);
-	} catch {
-		return segment;
-	}
+  try {
+    return decodeURIComponent(segment);
+  } catch {
+    return segment;
+  }
 }
