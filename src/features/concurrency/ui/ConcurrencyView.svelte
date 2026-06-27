@@ -205,11 +205,6 @@
         Refresh
       </button>
     </div>
-    <p class="text-xs opacity-60">
-      Cap how many concurrent token-generating requests a provider may run. At the cap, further
-      requests queue (oldest-agent-first); remove a limit to make a provider unlimited. Limits are
-      in-memory only.
-    </p>
 
     <!-- Add form -->
     <form
@@ -293,10 +288,6 @@
         Refresh
       </button>
     </div>
-    <p class="text-xs opacity-60">
-      In-flight slots held vs the cap (e.g. 2/4), agents queued waiting, and a paused state when a
-      provider backs off after a 429. Polls every 2s.
-    </p>
 
     <span class="text-xs opacity-70">{statusSummary}</span>
 
