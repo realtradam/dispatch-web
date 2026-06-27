@@ -2,7 +2,7 @@ import type { SetCwdRequest, WsServerMessage } from "@dispatch/transport-contrac
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
 import App from "./App.svelte";
 import { createAppStore } from "./store.svelte";
@@ -127,7 +127,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     expect(screen.getByRole("textbox", { name: "Message input" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Send" })).toBeInTheDocument();
@@ -145,7 +145,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     expect(store.activeConversationId).toBeNull();
     expect(screen.getByTestId("top-bar-title")).toHaveTextContent("New Tab");
@@ -162,7 +162,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     // Promote draft → tab: the tab's title is derived from the first message.
     store.send("Refactor the auth module");
@@ -172,6 +172,28 @@ describe("App component interaction tests", () => {
     expect(await screen.findByTestId("top-bar-title")).toHaveTextContent(
       "Refactor the auth module",
     );
+
+    store.dispose();
+  });
+
+  it("the dashboard home button navigates to '/' (back to the workspaces home)", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    const onNavigate = vi.fn();
+    render(App, { props: { store, onNavigate } });
+
+    const homeBtn = screen.getByRole("link", { name: "Back to dashboard" });
+    expect(homeBtn).toHaveAttribute("href", "/");
+    await userEvent.setup().click(homeBtn);
+
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("/");
 
     store.dispose();
   });
@@ -194,7 +216,7 @@ describe("App component interaction tests", () => {
       ],
     });
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     const subscribed = sentMessages(ws)
       .filter((m: { type: string }) => m.type === "subscribe")
@@ -222,7 +244,7 @@ describe("App component interaction tests", () => {
       ],
     });
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     // No interaction: specs arrive and both surfaces render expanded.
     ws.feedSurfaceMessage({
@@ -261,7 +283,7 @@ describe("App component interaction tests", () => {
       message: "Something went wrong",
     });
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     const alert = screen.getByRole("alert");
     expect(alert).toHaveTextContent("Something went wrong");
@@ -283,7 +305,7 @@ describe("App component interaction tests", () => {
       catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
     });
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     const user = userEvent.setup();
     // Surface is auto-subscribed; its spec arrives and renders expanded.
@@ -330,7 +352,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     const user = userEvent.setup();
     const textarea = screen.getByRole("textbox", { name: "Message input" });
@@ -363,7 +385,7 @@ describe("App component interaction tests", () => {
     store.send("test");
     const convId = activeConversationId(store);
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     ws.feedServerMessage({
       type: "chat.delta",
@@ -403,7 +425,7 @@ describe("App component interaction tests", () => {
       catalog: [{ id: "s1", region: "sidebar", title: "Surface One" }],
     });
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     // Auto-subscribed; the custom-table spec arrives and renders expanded.
     ws.feedSurfaceMessage({
@@ -441,7 +463,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     // Extensions view is pre-populated in the fake storage, so the modules table renders immediately.
     expect(screen.getByRole("columnheader", { name: "Module" })).toBeInTheDocument();
@@ -491,7 +513,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     // The modal should appear with the error text
     const dialog = await screen.findByRole("dialog", { name: "Error" }, { timeout: 3000 });
@@ -517,7 +539,7 @@ describe("App component interaction tests", () => {
     });
     ws.resolveOpen();
 
-    render(App, { props: { store } });
+    render(App, { props: { store, onNavigate: vi.fn() } });
 
     // Wait a tick for boot async to settle
     await new Promise((resolve) => setTimeout(resolve, 200));

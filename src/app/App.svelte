@@ -82,7 +82,7 @@
 	import { createLocalStore } from "../adapters/local-storage";
 	import { untrack } from "svelte";
 
-	let { store }: { store: AppStore } = $props();
+	let { store, onNavigate }: { store: AppStore; onNavigate: (path: string) => void } = $props();
 
 	// The backend's conversation-scoped cache-warming surface. Referenced by id at
 	// the composition root (sanctioned discovery-by-id) to give it a dedicated view
@@ -445,6 +445,32 @@
 			>
 				{topBarTitle}
 			</span>
+			<a
+				href="/"
+				class="btn btn-ghost btn-sm shrink-0 px-2"
+				aria-label="Back to dashboard"
+				title="Back to dashboard"
+				onclick={(e) => {
+					e.preventDefault();
+					onNavigate("/");
+				}}
+			>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="2"
+					stroke="currentColor"
+					class="size-4"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.5a.75.75 0 0 0 .75.75h4.5a.75.75 0 0 0 .75-.75V15a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 0 .75.75h4.5a.75.75 0 0 0 .75-.75V9.75M8.25 21h8.25"
+					/>
+				</svg>
+			</a>
 			<span
 				class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-base-content/30"
 				title="Build version (git short hash)"

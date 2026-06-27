@@ -188,7 +188,16 @@
   </div>
 
   <div class="flex justify-start">
-    <a class="btn" href={workspacePath(ws.id)} target="_blank" rel="noopener noreferrer"> Open </a>
+    <a
+      class="btn"
+      href={workspacePath(ws.id)}
+      onclick={(e) => {
+        e.preventDefault();
+        onNavigate(workspacePath(ws.id));
+      }}
+    >
+      Open
+    </a>
   </div>
 
   {#if cwdError}
