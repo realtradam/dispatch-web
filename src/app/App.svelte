@@ -557,7 +557,7 @@
 		class:w-0={!sidebarOpen}
 	>
 		<div
-			class="flex h-full w-80 flex-col gap-2 overflow-y-auto bg-base-100 p-3 transition-transform duration-300 ease-out"
+			class="flex h-full w-80 flex-col gap-2 overflow-y-auto bg-base-100 pt-3 pr-3 pb-3 transition-transform duration-300 ease-out"
 			style="transform: translateX({sidebarOpen ? '0' : '100%'})"
 		>
 			<ViewSidebar kinds={viewKinds} initial={sidebarPanels} onChange={handleSidebarChange} content={viewContent} />
