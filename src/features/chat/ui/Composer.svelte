@@ -152,7 +152,7 @@
       {#if status === "queued"}
         <!-- Waiting for a concurrency slot — a ring (vs the dots of `running`). -->
         <span
-          class="loading loading-spinner loading-xs text-primary"
+          class="loading loading-ring loading-xs text-primary"
           aria-label="Queued"
           title="Waiting for a concurrency slot"
         ></span>

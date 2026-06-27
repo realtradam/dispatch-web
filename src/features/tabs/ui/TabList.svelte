@@ -147,7 +147,7 @@
 				{#if statusFor?.(tab.conversationId) === "queued"}
 					<!-- Waiting for a concurrency slot — a ring (vs the dots of `active`). -->
 					<span
-						class="loading loading-spinner loading-xs shrink-0 text-primary"
+						class="loading loading-ring loading-xs shrink-0 text-primary"
 						aria-label="Queued"
 						title="Waiting for a concurrency slot"
 					></span>
