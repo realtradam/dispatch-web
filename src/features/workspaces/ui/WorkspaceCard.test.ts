@@ -119,16 +119,20 @@ describe("WorkspaceCard", () => {
     expect(store.setDefaultCwd).toHaveBeenCalledWith("my-ws", null);
   });
 
-  it("the Open link opens the workspace in a new browser tab (no same-tab navigation)", () => {
+  it("the Open link navigates to the workspace in the same tab (SPA navigation, no new tab)", async () => {
+    const user = userEvent.setup();
     const store = fakeStore() as unknown as WorkspaceStore;
     const onNavigate = vi.fn();
     render(WorkspaceCard, { props: { ws: fakeEntry(), store, onNavigate, computers: [] } });
 
     const open = screen.getByRole("link", { name: "Open" });
-    // Native new-tab link: href points at the workspace, and target="_blank"
-    // opens it in a new browser tab rather than client-side navigating.
+    // Still a real link (progressive enhancement): href points at the workspace.
     expect(open).toHaveAttribute("href", "/my-ws");
-    expect(open).toHaveAttribute("target", "_blank");
-    expect(open.getAttribute("rel") ?? "").toMatch(/noopener/);
+    // But it no longer opens a new browser tab.
+    expect(open).not.toHaveAttribute("target", "_blank");
+    // Clicking navigates in-place via the SPA callback.
+    await user.click(open);
+    expect(onNavigate).toHaveBeenCalledTimes(1);
+    expect(onNavigate).toHaveBeenCalledWith("/my-ws");
   });
 });
