@@ -136,7 +136,7 @@
   <div class="flex items-center gap-2 px-4 pb-2 text-xs text-base-content/50">
     <span class="shrink-0">
       {#if status === "running"}
-        <span class="loading loading-spinner loading-xs text-primary"></span>
+        <span class="loading loading-dots loading-xs text-primary"></span>
       {:else if status === "error"}
         <svg
           xmlns="http://www.w3.org/2000/svg"
