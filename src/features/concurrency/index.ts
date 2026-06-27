@@ -25,6 +25,8 @@ export {
   normalizeLimit,
   parseLimitInput,
   pauseLabel,
+  providerFromModel,
+  providerOptions,
   summarizeLimits,
   summarizeStatus,
   viewConcurrencyLimit,

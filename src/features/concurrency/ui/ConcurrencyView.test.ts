@@ -10,6 +10,9 @@ import type {
 } from "../logic/types";
 import ConcurrencyView from "./ConcurrencyView.svelte";
 
+// Available models → provider ids are "umans", "anthropic", "openai-compat".
+const MODELS = ["umans/umans-glm-5.2", "anthropic/claude-sonnet", "openai-compat/gpt-4o"] as const;
+
 // Fakes for the four injected ports. Each resolves immediately so the mount
 // effect's initial load settles in a microtask (assertions await via findBy*).
 
@@ -58,6 +61,7 @@ describe("ConcurrencyView", () => {
     const fakes = makeFakes();
     render(ConcurrencyView, {
       props: {
+        models: MODELS,
         loadLimits: fakes.loadLimits,
         saveLimit: fakes.saveLimit,
         deleteLimit: fakes.deleteLimit,
@@ -65,6 +69,9 @@ describe("ConcurrencyView", () => {
       },
     });
 
+    // The provider dropdown is populated from the available models' providers.
+    const providerSelect = await screen.findByLabelText("Provider");
+    expect(providerSelect).toBeVisible();
     // Limits summary (unique to the limits section) + the row's remove control.
     expect(await screen.findByText(/1 limit configured/)).toBeInTheDocument();
     expect(await screen.findByLabelText("Remove concurrency limit for umans")).toBeVisible();
@@ -74,11 +81,12 @@ describe("ConcurrencyView", () => {
     expect(fakes.calls.loadStatus).toBeGreaterThanOrEqual(1);
   });
 
-  it("adds a provider limit via the form (calls saveLimit + reloads)", async () => {
+  it("adds a provider limit via the dropdown form (calls saveLimit + reloads)", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ limits: [], status: [] });
     render(ConcurrencyView, {
       props: {
+        models: MODELS,
         loadLimits: fakes.loadLimits,
         saveLimit: fakes.saveLimit,
         deleteLimit: fakes.deleteLimit,
@@ -86,9 +94,9 @@ describe("ConcurrencyView", () => {
       },
     });
 
-    await screen.findByPlaceholderText("umans");
-
-    await user.type(screen.getByPlaceholderText("umans"), "anthropic");
+    const providerSelect = await screen.findByLabelText("Provider");
+    // Choose "anthropic" from the dropdown (the list is auto-selected first).
+    await user.selectOptions(providerSelect, "anthropic");
     await user.type(screen.getByPlaceholderText("4"), "8");
     await user.click(screen.getByRole("button", { name: "Add" }));
 
@@ -99,11 +107,12 @@ describe("ConcurrencyView", () => {
     expect(await screen.findByLabelText("Remove concurrency limit for anthropic")).toBeVisible();
   });
 
-  it("disables Add when the provider id is empty or the limit is invalid", async () => {
+  it("disables Add when the limit is empty/invalid (provider is auto-selected)", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ limits: [], status: [] });
     render(ConcurrencyView, {
       props: {
+        models: MODELS,
         loadLimits: fakes.loadLimits,
         saveLimit: fakes.saveLimit,
         deleteLimit: fakes.deleteLimit,
@@ -111,17 +120,38 @@ describe("ConcurrencyView", () => {
       },
     });
 
-    await screen.findByPlaceholderText("umans");
+    const providerSelect = await screen.findByLabelText("Provider");
+    // A provider is auto-selected from the dropdown.
+    expect((providerSelect as HTMLSelectElement).value).not.toBe("");
     const addBtn = screen.getByRole("button", { name: "Add" });
+    expect(addBtn).toBeDisabled(); // no limit entered yet
+
+    // An invalid (non-numeric) limit keeps Add disabled.
+    await user.type(screen.getByPlaceholderText("4"), "abc");
     expect(addBtn).toBeDisabled();
 
-    // Provider id set but invalid limit → still disabled.
-    await user.type(screen.getByPlaceholderText("umans"), "openai-compat");
-    expect(addBtn).toBeDisabled();
-
-    // Now a valid limit → enabled.
-    await user.type(screen.getByPlaceholderText("4"), "5");
+    // A valid positive-integer limit enables Add.
+    const limitInput = screen.getByPlaceholderText("4");
+    await user.clear(limitInput);
+    await user.type(limitInput, "5");
     expect(addBtn).toBeEnabled();
+  });
+
+  it("shows no-providers + disables the dropdown when there are no models", async () => {
+    const fakes = makeFakes({ limits: [], status: [] });
+    render(ConcurrencyView, {
+      props: {
+        models: [],
+        loadLimits: fakes.loadLimits,
+        saveLimit: fakes.saveLimit,
+        deleteLimit: fakes.deleteLimit,
+        loadStatus: fakes.loadStatus,
+      },
+    });
+
+    const providerSelect = await screen.findByLabelText("Provider");
+    expect(providerSelect).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
   });
 
   it("removes a provider limit via the row ✕ (calls deleteLimit + reloads)", async () => {
@@ -129,6 +159,7 @@ describe("ConcurrencyView", () => {
     const fakes = makeFakes();
     render(ConcurrencyView, {
       props: {
+        models: MODELS,
         loadLimits: fakes.loadLimits,
         saveLimit: fakes.saveLimit,
         deleteLimit: fakes.deleteLimit,
@@ -146,6 +177,7 @@ describe("ConcurrencyView", () => {
 
   it("surfaces a load error from the limits endpoint", async () => {
     const failing = {
+      models: MODELS,
       loadLimits: async (): Promise<ConcurrencyLimitsResult> => ({
         ok: false,
         error: "Concurrency service not available",

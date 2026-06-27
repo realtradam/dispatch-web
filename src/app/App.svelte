@@ -716,6 +716,7 @@
 		<!-- Per-provider concurrency limits + live status. GLOBAL (not workspace- or
 		     conversation-scoped), so the panel stays mounted across tab switches. -->
 		<ConcurrencyView
+			models={store.models}
 			loadLimits={loadConcurrencyLimits}
 			saveLimit={saveConcurrencyLimit}
 			deleteLimit={deleteConcurrencyLimit}

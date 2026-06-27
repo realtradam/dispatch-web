@@ -7,6 +7,8 @@ import {
   normalizeConcurrencyStatus,
   parseLimitInput,
   pauseLabel,
+  providerFromModel,
+  providerOptions,
   summarizeLimits,
   summarizeStatus,
   viewConcurrencyLimit,
@@ -41,6 +43,43 @@ describe("parseLimitInput", () => {
     expect(parseLimitInput("   ")).toBeNull();
     expect(parseLimitInput("abc")).toBeNull();
     expect(parseLimitInput("4abc")).toBeNull();
+  });
+});
+
+// ── providerFromModel / providerOptions ───────────────────────────────────────
+
+describe("providerFromModel", () => {
+  it("takes the part before the first slash", () => {
+    expect(providerFromModel("openai/gpt-4o")).toBe("openai");
+    expect(providerFromModel("openai-compat/gpt-4o-mini")).toBe("openai-compat");
+  });
+  it("returns the whole string when there is no slash", () => {
+    expect(providerFromModel("umans")).toBe("umans");
+  });
+});
+
+describe("providerOptions", () => {
+  it("derives distinct provider ids from models, first-seen order", () => {
+    expect(
+      providerOptions(["openai/gpt-4o", "umans/umans-glm-5.2", "openai/gpt-4o-mini"], []),
+    ).toEqual(["openai", "umans"]);
+  });
+  it("unions with providers already carrying a configured limit", () => {
+    expect(providerOptions(["openai/gpt-4o"], [{ providerId: "anthropic", limit: 4 }])).toEqual([
+      "openai",
+      "anthropic",
+    ]);
+  });
+  it("does not duplicate a provider present in both models and limits", () => {
+    expect(providerOptions(["openai/gpt-4o"], [{ providerId: "openai", limit: 4 }])).toEqual([
+      "openai",
+    ]);
+  });
+  it("ignores models whose provider prefix is empty", () => {
+    expect(providerOptions(["/model-only", "umans/x"], [])).toEqual(["umans"]);
+  });
+  it("returns [] when there are no models and no limits", () => {
+    expect(providerOptions([], [])).toEqual([]);
   });
 });
 
