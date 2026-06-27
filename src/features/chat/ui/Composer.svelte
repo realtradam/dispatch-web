@@ -27,9 +27,16 @@
     contextSize?: number | undefined;
     /** Per-model context window (max tokens) from `GET /models` modelInfo. */
     contextWindow?: number | undefined;
-    // Coarse agent status for the status-bar icon.
-    status?: "idle" | "running" | "error";
+    /**
+     * Coarse agent status for the status-bar icon. `queued` = the turn is in
+     * flight but waiting for a concurrency slot (CR-13) — shown as a loading
+     * RING (vs the loading DOTS of `running`/actively generating). Behaves like
+     * `running` for the send button (steer/stop).
+     */
+    status?: ComposerStatus;
   } = $props();
+
+  export type ComposerStatus = "idle" | "running" | "queued" | "error";
 
   let text = $state("");
   let inputEl: HTMLTextAreaElement | undefined;
@@ -41,15 +48,22 @@
 
   // One button, three modes:
   // - idle → "Send" (starts a turn via chat.send)
-  // - running + text → "Queue" (steers via chat.queue)
-  // - running + empty → "Stop" (aborts via POST /stop)
+  // - running/queued + text → "Queue" (steers via chat.queue)
+  // - running/queued + empty → "Stop" (aborts via POST /stop)
+  // (`queued` behaves like `running` — the turn is in flight, just waiting for a
+  // concurrency slot; the user can still steer or stop it.)
+  const inFlight = $derived(status === "running" || status === "queued");
   const buttonMode = $derived.by<"send" | "queue" | "stop">(() => {
-    if (status === "running" && !hasText && onStop !== undefined) return "stop";
-    if (status === "running" && hasText && onQueue !== undefined) return "queue";
+    if (inFlight && !hasText && onStop !== undefined) return "stop";
+    if (inFlight && hasText && onQueue !== undefined) return "queue";
     return "send";
   });
   const placeholder = $derived(
-    status === "running" ? "Steer the conversation..." : "Type a message...",
+    status === "queued"
+      ? "Queued for a slot…"
+      : status === "running"
+        ? "Steer the conversation..."
+        : "Type a message...",
   );
 
   // As the window fills, escalate color: calm → warning → danger.
@@ -135,7 +149,14 @@
   <!-- Bottom status bar: status icon · context-window fill · token count -->
   <div class="flex items-center gap-2 px-4 pb-2 text-xs text-base-content/50">
     <span class="shrink-0">
-      {#if status === "running"}
+      {#if status === "queued"}
+        <!-- Waiting for a concurrency slot — a ring (vs the dots of `running`). -->
+        <span
+          class="loading loading-spinner loading-xs text-primary"
+          aria-label="Queued"
+          title="Waiting for a concurrency slot"
+        ></span>
+      {:else if status === "running"}
         <span class="loading loading-dots loading-xs text-primary"></span>
       {:else if status === "error"}
         <svg

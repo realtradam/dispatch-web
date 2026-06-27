@@ -264,4 +264,35 @@ describe("TabList", () => {
     // Clicking the ID must NOT switch tabs (the badge stops propagation).
     expect(onSelect).not.toHaveBeenCalled();
   });
+
+  it("shows a loading RING for a 'queued' tab and loading DOTS for an 'active' tab", () => {
+    render(TabList, {
+      props: {
+        tabs: sampleTabs,
+        activeConversationId: "c1",
+        statusFor: (id: string) => (id === "c1" ? "queued" : id === "c2" ? "active" : undefined),
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+      },
+    });
+
+    // c1 is queued → a ring (spinner), labeled "Queued".
+    const queuedRing = screen.getByLabelText("Queued");
+    expect(queuedRing.className).toContain("loading-spinner");
+    expect(queuedRing.closest('[role="tab"]')).toHaveTextContent("First");
+
+    const tabs = screen.getAllByRole("tab");
+    expect(tabs).toHaveLength(3);
+    const activeTab = tabs[1];
+    const idleTab = tabs[2];
+    if (activeTab === undefined || idleTab === undefined) throw new Error("missing tabs");
+
+    // c2 is active → loading dots (NOT a spinner).
+    expect(activeTab.querySelector(".loading-dots")).not.toBeNull();
+    expect(activeTab.querySelector(".loading-spinner")).toBeNull();
+
+    // c3 has no status → no spinner at all.
+    expect(idleTab.querySelector(".loading")).toBeNull();
+  });
 });

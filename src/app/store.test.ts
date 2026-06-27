@@ -1634,4 +1634,72 @@ describe("createAppStore", () => {
     expect(result.providers).toEqual([]);
     store.dispose();
   });
+
+  // ── Conversation status: `queued` (CR-13 — waiting for a concurrency slot) ────
+
+  it("conversation.statusChanged 'queued' sets the status (tab spinner) without opening a duplicate tab", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    store.send("hello");
+    const convId = activeConversationId(store);
+    const tabsBefore = store.tabs.length;
+
+    // The backend broadcasts "queued" while the turn waits for a slot.
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "queued",
+      workspaceId: "default",
+    });
+
+    expect(store.conversationStatus(convId)).toBe("queued");
+    // The tab already exists (opened on send) — no duplicate tab is opened.
+    expect(store.tabs.length).toBe(tabsBefore);
+
+    // Granted → "active" (dots), then idle on turn seal.
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "active",
+      workspaceId: "default",
+    });
+    expect(store.conversationStatus(convId)).toBe("active");
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "idle",
+      workspaceId: "default",
+    });
+    expect(store.conversationStatus(convId)).toBe("idle");
+    store.dispose();
+  });
+
+  it("conversation.statusChanged 'queued' opens a tab for a new cross-device conversation", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    expect(store.tabs.length).toBe(0);
+
+    // Another device's turn is waiting for a slot — broadcast "queued".
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: "other-device-conv",
+      status: "queued",
+      workspaceId: "default",
+    });
+
+    expect(store.conversationStatus("other-device-conv")).toBe("queued");
+    // A queued conversation we had no tab for opens one (like `active`).
+    expect(store.tabs.some((t) => t.conversationId === "other-device-conv")).toBe(true);
+    store.dispose();
+  });
 });

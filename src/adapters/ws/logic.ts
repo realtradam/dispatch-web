@@ -126,7 +126,12 @@ export function parseServerMessage(data: string): WsServerMessage | null {
     case "conversation.statusChanged": {
       if (typeof parsed.conversationId !== "string") return null;
       if (typeof parsed.status !== "string") return null;
-      if (parsed.status !== "active" && parsed.status !== "idle" && parsed.status !== "closed") {
+      if (
+        parsed.status !== "active" &&
+        parsed.status !== "queued" &&
+        parsed.status !== "idle" &&
+        parsed.status !== "closed"
+      ) {
         return null;
       }
       if (typeof parsed.workspaceId !== "string") return null;

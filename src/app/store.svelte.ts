@@ -980,10 +980,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         }
         return;
       }
-      // active / idle — update the status map (drives the tab spinner).
+      // active / queued / idle — update the status map (drives the tab spinner).
+      // `queued` = the turn is in flight but waiting for a concurrency slot
+      // (broadcast-only, never persisted — CR-13); the tab shows a ring.
       conversationStatuses = new Map(conversationStatuses).set(conversationId, status);
-      // If this is a new active conversation we don't have a tab for, open one.
-      if (status === "active" && !chatStores.has(conversationId)) {
+      // If this is a new active OR queued conversation we don't have a tab for,
+      // open one — so a cross-device turn (incl. one waiting in the concurrency
+      // queue) is visible. `idle` never opens a tab.
+      if ((status === "active" || status === "queued") && !chatStores.has(conversationId)) {
         openConversation(conversationId, workspaceId);
       }
     },
