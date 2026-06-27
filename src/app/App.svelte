@@ -438,7 +438,7 @@
 		     the right. -->
 		<div class="flex items-center justify-between gap-2 px-2">
 			<span
-				class="min-w-0 flex-1 shrink truncate px-[2px] text-sm font-medium opacity-70"
+				class="min-w-0 flex-1 shrink truncate pl-2 text-sm font-medium opacity-70"
 				data-testid="top-bar-title"
 				title={topBarTitle}
 				aria-label="Active conversation title"
