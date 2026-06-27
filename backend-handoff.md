@@ -5,9 +5,12 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (backend: concurrency limits now PERSISTED across reboots — no API contract change, no FE
-re-pin/re-mirror needed; §2j updated. FE: brief "Saved." confirmation on the limit row after a successful save. 926 tests
-green.) Prior: CR-13 (`"queued"` ConversationStatus) RESOLVED; dev merged (e81df4c)._
+_Last updated: 2026-06-27 (FE-only slice: **workspace-active indicator** — loading-dots on
+workspace cards when a workspace has ≥1 active/queued conversation. New `AppStore.workspaceHasActiveConversations(workspaceId)` derives from the existing open-tab set (every active/queued
+conversation has an open tab stamped with its `workspaceId`) × the backend lifecycle statuses; a
+`hasActive?: (workspaceId: string) => boolean` port on `WorkspacesHome`/`WorkspaceCard` is wired at
+`src/App.svelte`. DaisyUI `loading-dots` (same as the tab/composer active indicator). **No backend /
+contract change** — no re-pin/re-mirror. typecheck 0/0, 1029 tests green (+10), biome clean, build OK.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 _Last updated: 2026-06-26 (§2j UPDATED — Image storage: persisted `ImageChunk.url`s are now compact relative HTTP
 paths (`/images/<conv>/<uuid>.png`) served by `GET /images/:conversationId/:imageId` (images stored on disk under tmp,
