@@ -81,6 +81,38 @@ describe("ConcurrencyView", () => {
     expect(fakes.calls.loadStatus).toBeGreaterThanOrEqual(1);
   });
 
+  it("surfaces NO loading indicator during refresh (background poll is silent — no flicker)", async () => {
+    // The 2s status poll + post-mutation reloads are SILENT: they never toggle a
+    // visible loading state, so the Refresh buttons are plain-text (no spinner)
+    // and the list area never reflows mid-refresh. Regression guard for the
+    // flicker fix (mirrors the heartbeat runs list).
+    const fakes = makeFakes();
+    render(ConcurrencyView, {
+      props: {
+        models: MODELS,
+        loadLimits: fakes.loadLimits,
+        saveLimit: fakes.saveLimit,
+        deleteLimit: fakes.deleteLimit,
+        loadStatus: fakes.loadStatus,
+      },
+    });
+
+    await screen.findByText(/1 provider · 2\/4 in flight · 1 queued/);
+
+    const statusRefresh = screen.getByLabelText("Refresh concurrency status");
+    expect(statusRefresh).toHaveTextContent("Refresh");
+    expect(statusRefresh.querySelector(".loading-spinner")).toBeNull();
+    expect(statusRefresh).not.toBeDisabled();
+
+    const limitsRefresh = screen.getByLabelText("Refresh concurrency limits");
+    expect(limitsRefresh).toHaveTextContent("Refresh");
+    expect(limitsRefresh.querySelector(".loading-spinner")).toBeNull();
+
+    // A manual refresh stays silent too (no spinner appears).
+    await fakes.loadStatus();
+    expect(statusRefresh.querySelector(".loading-spinner")).toBeNull();
+  });
+
   it("adds a provider limit via the dropdown form (calls saveLimit + reloads)", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ limits: [], status: [] });
