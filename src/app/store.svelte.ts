@@ -157,6 +157,12 @@ export interface AppStore {
   readonly activeConversationId: string | null;
   /** The workspace currently in view (URL slug); tabs are filtered to it. */
   readonly activeWorkspaceId: string;
+  /**
+   * The resolved HTTP API base URL (e.g. `http://localhost:24203`). Used to
+   * resolve relative image URLs served by the backend (`/images/…`) into
+   * absolute URLs for `<img src>`.
+   */
+  readonly httpBase: string;
   readonly activeChat: ChatStore;
   readonly models: readonly string[];
   /** Per-model metadata (contextWindow, etc.) from `GET /models`. */
@@ -1126,6 +1132,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     get activeWorkspaceId(): string {
       return activeWorkspaceId;
+    },
+    get httpBase(): string {
+      return httpBase;
     },
     setActiveWorkspace(workspaceId: string): void {
       activeWorkspaceId = workspaceId;

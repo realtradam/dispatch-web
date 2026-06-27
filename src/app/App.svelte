@@ -516,6 +516,7 @@
 							onShowEarlier={handleShowEarlier}
 							thinkingKeyBase={store.activeChat.thinkingKeyBase}
 							providerRetry={store.activeChat.providerRetry}
+							apiBaseUrl={store.httpBase}
 						/>
 					{/key}
 				</div>
@@ -610,6 +611,7 @@
 			closeChat={closeRunChat}
 			stopRun={stopHeartbeatRun}
 			onClose={() => (heartbeatRun = null)}
+			apiBaseUrl={store.httpBase}
 		/>
 	{/key}
 {/if}
