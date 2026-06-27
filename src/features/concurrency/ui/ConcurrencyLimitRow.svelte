@@ -23,6 +23,9 @@
   let saving = $state(false);
   let removing = $state(false);
   let error = $state<string | null>(null);
+  /** Brief "Saved" confirmation after a successful save (mirrors ChatLimitField).
+   *  Cleared when the field is edited again. */
+  let justSaved = $state(false);
 
   $effect(() => {
     const incoming = String(limit.limit);
@@ -35,6 +38,12 @@
   const parsed = $derived(parseLimitInput(draft));
   const dirty = $derived(parsed !== null && parsed !== limit.limit);
 
+  // Clear the "Saved" hint + any error as soon as the user edits the field.
+  function onInput(): void {
+    justSaved = false;
+    error = null;
+  }
+
   async function handleSave(): Promise<void> {
     if (parsed === null || parsed === limit.limit) return;
     saving = true;
@@ -46,6 +55,7 @@
       // also re-assert it via the seed effect above once the parent reloads).
       draft = String(result.limit);
       lastSeed = draft;
+      justSaved = true;
     } else {
       error = result.error;
     }
@@ -72,6 +82,7 @@
       class="input input-bordered input-xs w-20 font-mono"
       aria-label={`Concurrency limit for ${limit.providerId}`}
       bind:value={draft}
+      oninput={onInput}
       disabled={saving || removing}
     />
     <button
@@ -102,5 +113,7 @@
   </div>
   {#if error}
     <span class="font-mono text-xs text-error">{error}</span>
+  {:else if justSaved && !dirty}
+    <span class="text-xs text-success">Saved.</span>
   {/if}
 </div>

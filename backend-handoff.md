@@ -5,9 +5,9 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (CR-13 RESOLVED — backend shipped `"queued"` ConversationStatus (additive to `wire@0.12.0`,
-no bump); FE consumed: WS parser accepts `"queued"`, TabList shows a loading-ring for queued / dots for active, Composer
-corner status gains `"queued"` → ring. 925 tests green. dev was merged earlier — merge commit e81df4c.) §2j concurrency unchanged._
+_Last updated: 2026-06-26 (backend: concurrency limits now PERSISTED across reboots — no API contract change, no FE
+re-pin/re-mirror needed; §2j updated. FE: brief "Saved." confirmation on the limit row after a successful save. 926 tests
+green.) Prior: CR-13 (`"queued"` ConversationStatus) RESOLVED; dev merged (e81df4c)._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED. CR-13 (`"queued"` ConversationStatus) is RESOLVED.
@@ -767,10 +767,16 @@ down, confirm it matches when a run actually fires). Until CR-HB-3 ships, the FE
 
 The backend tracks + limits how many concurrent token-generating API requests are in flight PER
 PROVIDER. When the cap is reached, further requests QUEUE and are granted slots oldest-agent-first
-(a 429 backoff PAUSES a provider's queue until `pausedUntil`). The cap is in-memory + per-provider
-(no persistence), managed via a new GLOBAL REST surface under `/concurrency/...` provided by the
-`concurrency` extension. **`transport-contract@0.23.0`** added the 5 types:
-`ConcurrencyLimitsResponse`, `SetConcurrencyLimitRequest`, `ConcurrencyLimitResponse`,
+(a 429 backoff PAUSES a provider's queue until `pausedUntil`). The cap is per-provider, managed via a
+new GLOBAL REST surface under `/concurrency/...` provided by the `concurrency` extension. **The limits
+are now PERSISTED across reboots** (backend update on `feature/provider-concurrency` — `PUT`/`DELETE`
+also write to storage; `GET /concurrency/limits` reads in-memory state pre-populated from storage on
+boot). **No API contract change** — the endpoints, request bodies, and response shapes are identical,
+so the FE needs no re-pin/re-mirror; a limit set via the UI now survives a server restart. (Earlier
+backend-only changes since the last handoff, also no FE impact: a 200ms release cooldown for internal
+slot recycling, and the `"queued"` `ConversationStatus` — which the FE already shipped, CR-13.)
+**`transport-contract@0.23.0`** added the 5 types: `ConcurrencyLimitsResponse`,
+`SetConcurrencyLimitRequest`, `ConcurrencyLimitResponse`,
 `ConcurrencyStatusEntry`, `ConcurrencyStatusResponse`.
 
 **Backend API (plain REST — the types ARE in `transport-contract@0.23.0`):**
