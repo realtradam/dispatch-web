@@ -27,10 +27,11 @@ function addUsage(a: Usage, b: Usage): Usage {
  * Splits groups into per-turn segments: a new segment begins at each `single`
  * group with `group.chunk.role === "user"`. Segments are matched to entries
  * by `stepId` presence when possible (robust against chat-limit trimming: when
- * a turn's user message is trimmed, head-alignment would be off by one, but
+ * a turn's user message is trimmed, positional alignment would be off, but
  * stepId matching still finds the right entry). Segments with no stepId-bearing
- * groups (text-only turns) fall back to sequential matching against unused
- * entries.
+ * groups (text-only turns) fall back to POSITIONAL tail-alignment: since the
+ * loaded transcript is always a SUFFIX of the full turn history (the chat limit
+ * keeps the newest and unloads the oldest), segment `seg` ↔ entry `K - T + seg`.
  *
  * Within a segment that has a matched entry, each completed step's metrics
  * are placed INLINE right after the last group bearing that step's `stepId`.
@@ -44,9 +45,13 @@ function addUsage(a: Usage, b: Usage): Usage {
  * is finalized via `done` or durable data). A still-generating turn emits no
  * turn-total row.
  *
- * Cumulative usage is computed across finalized turns in entry-array order
- * (turn order), so the per-turn "chat total" cache rate is correct regardless
- * of which turns were trimmed.
+ * Fully trimmed turns (entries whose content was unloaded by the chat limit and
+ * which match no segment) are NOT rendered as standalone rows — that previously
+ * piled a wall of stale cache badges at the top of a long, trimmed transcript.
+ * Their usage still counts toward the per-turn "chat total" cumulative (computed
+ * across ALL finalized turns in entry-array order), so the running cache rate
+ * stays correct regardless of which turns were trimmed; paging earlier history
+ * back in ("Show earlier messages") re-matches them and re-renders their rows.
  */
 export function interleaveTurnMetrics(
   groups: readonly RenderGroup[],
@@ -84,8 +89,9 @@ export function interleaveTurnMetrics(
   const entryStepIds: Set<string>[] = entries.map((e) => new Set(e.steps.map((s) => s.stepId)));
 
   // Match segments to entries. Pass 1: match by stepId overlap (handles
-  // trimming where head-alignment would be wrong). Pass 2: sequential fallback
-  // for unmatched segments (text-only turns with no stepId-bearing groups).
+  // trimming where positional alignment alone could be ambiguous). Pass 2:
+  // positional tail-alignment fallback for unmatched segments (text-only turns
+  // with no stepId-bearing groups).
   const usedEntries = new Set<number>();
   const segmentEntry = new Map<number, TurnMetricsEntry>();
   const segmentEntryIndex = new Map<number, number>();
@@ -127,19 +133,36 @@ export function interleaveTurnMetrics(
     }
   }
 
-  // Pass 2: sequential fallback for unmatched segments.
-  // If NO segments were matched by stepId (pass 1), use TAIL-ALIGNMENT:
-  // the loaded chunks are always the NEWEST (chat-limit/windowing keeps the
-  // newest and trims the oldest), so match the LAST T entries to the T
-  // segments. This prevents misaligning oldest (trimmed) entries to newest
-  // segments — which would show "turn 1" on turn 20's content.
-  const pass1Matches = segmentEntry.size;
-  if (pass1Matches === 0 && K >= T) {
+  // Pass 2: positional fallback for segments pass 1 left unmatched
+  // (text-only turns with no stepId-bearing groups to anchor on).
+  //
+  // The loaded transcript is always a SUFFIX of the full turn history —
+  // chat-limit/windowing keeps the NEWEST chunks and unloads the OLDEST — so
+  // the T loaded segments correspond to the LAST T entries. TAIL-ALIGNMENT
+  // (segment `seg` ↔ entry `K - T + seg`) is therefore correct whenever the
+  // metrics hold at least as many turns as there are loaded segments
+  // (`K >= T`): the leading `K - T` entries are TRIMMED turns (their content
+  // was unloaded) and must be skipped, never matched to a newer segment.
+  //
+  // This MUST run even when pass 1 matched SOME segments (tool turns). The
+  // earlier code only tail-aligned when pass 1 matched NONE, falling back to
+  // HEAD-alignment otherwise — which, with leading trimmed entries, matched a
+  // brand-new text-only turn to an old (trimmed) entry's STALE metrics (the
+  // "new steps show no / wrong cache" failure). Tail-aligning by position is
+  // safe alongside pass 1: stepIds are unique per turn, so pass 1 already
+  // grabbed each tool turn's positionally-correct entry, leaving the right
+  // entry free for each text-only turn.
+  //
+  // Only when `K < T` (fewer entries than segments — some loaded turns have no
+  // metrics yet, e.g. a metrics sync still pending or a freshly loaded
+  // transcript) do we head-align, assigning the first K entries to the first K
+  // unmatched segments (the turns that DO have metrics sit at the front).
+  if (K >= T) {
     // Tail-align: skip the first K-T entries (trimmed turns).
     for (let seg = 0; seg < T; seg++) {
       if (segmentEntry.has(seg)) continue;
       const entryIdx = K - T + seg;
-      if (entryIdx < K && !usedEntries.has(entryIdx)) {
+      if (entryIdx >= 0 && entryIdx < K && !usedEntries.has(entryIdx)) {
         usedEntries.add(entryIdx);
         const e = entries[entryIdx];
         if (e !== undefined) {
@@ -149,7 +172,7 @@ export function interleaveTurnMetrics(
       }
     }
   } else {
-    // Head-align fallback for remaining unmatched segments.
+    // Head-align fallback (K < T): first K entries to first K unmatched segments.
     let nextUnused = 0;
     for (let seg = 0; seg < T; seg++) {
       if (segmentEntry.has(seg)) continue;
@@ -185,22 +208,6 @@ export function interleaveTurnMetrics(
   const rows: MetricsRow[] = [];
 
   const firstUserIdx = segmentStarts[0] ?? 0;
-
-  // Emit turn-metrics rows for entries that weren't matched to any segment
-  // (fully trimmed turns — their content was unloaded by the chat limit, but
-  // their aggregate metrics still show so the user knows what was trimmed).
-  for (let i = 0; i < entries.length; i++) {
-    if (usedEntries.has(i)) continue;
-    const e = entries[i];
-    if (e === undefined || e.total === null) continue;
-    rows.push({
-      kind: "turn-metrics",
-      turn: e.total,
-      turnNumber: i + 1,
-      cumulativeUsage: cumulativeByEntry[i] ?? e.total.usage,
-      prevTurnUsage: prevUsageByEntry[i] ?? null,
-    });
-  }
 
   for (let i = 0; i < firstUserIdx; i++) {
     const g = groups[i];
