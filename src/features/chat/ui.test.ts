@@ -655,8 +655,10 @@ describe("ChatView", () => {
     expect(container.querySelector("img")?.getAttribute("src")).toBe(url);
   });
 
-  it("renders a read_image tool call/result like any other tool", () => {
-    // The read_image tool is available to all models; it is a normal tool call.
+  it("renders a consult_vision tool call/result like any other tool", () => {
+    // read_image is GONE — replaced by consult_vision (opens a vision-model
+    // conversation, attaches the image + question, returns the answer). It is
+    // a normal tool call: rendered generically by toolName.
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -664,8 +666,8 @@ describe("ChatView", () => {
         chunk: {
           type: "tool-call",
           toolCallId: "tc1",
-          toolName: "read_image",
-          input: { path: "/tmp/screenshot.png" },
+          toolName: "consult_vision",
+          input: { question: "what is in this image?", imageIds: [1] },
         },
         provisional: false,
       },
@@ -675,8 +677,8 @@ describe("ChatView", () => {
         chunk: {
           type: "tool-result",
           toolCallId: "tc1",
-          toolName: "read_image",
-          content: "a screenshot of the desktop",
+          toolName: "consult_vision",
+          content: "a red square on a white background",
           isError: false,
         },
         provisional: false,
@@ -685,8 +687,47 @@ describe("ChatView", () => {
 
     render(ChatView, { props: { chunks } });
 
-    expect(screen.getAllByText("read_image").length).toBeGreaterThan(0);
-    expect(screen.getByText("a screenshot of the desktop")).toBeInTheDocument();
+    expect(screen.getAllByText("consult_vision").length).toBeGreaterThan(0);
+    expect(screen.getByText("a red square on a white background")).toBeInTheDocument();
+  });
+
+  it("renders a non-vision placeholder text chunk as-is", () => {
+    // A non-vision model gets a numbered placeholder (a regular text chunk)
+    // instead of an auto-transcription. Renders like any text chunk.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: {
+          type: "text",
+          text: "[Image 1 attached — call consult_vision with imageIds=[1] and a specific question to analyze it]",
+        },
+        provisional: false,
+      },
+    ];
+
+    render(ChatView, { props: { chunks } });
+
+    expect(screen.getByText(/\[Image 1 attached/)).toBeInTheDocument();
+    expect(screen.getByText(/consult_vision with imageIds/)).toBeInTheDocument();
+  });
+
+  it("renders a compacted-image text chunk as-is", () => {
+    // Image compaction transcribes old images to [Compacted image]: <desc>.
+    // Regular text chunk — render as-is.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "text", text: "[Compacted image]: a chart showing rising sales" },
+        provisional: false,
+      },
+    ];
+
+    render(ChatView, { props: { chunks } });
+
+    expect(screen.getByText(/\[Compacted image\]/)).toBeInTheDocument();
+    expect(screen.getByText(/rising sales/)).toBeInTheDocument();
   });
 });
 

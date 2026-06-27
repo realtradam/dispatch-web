@@ -5,11 +5,12 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2j ADDED — Vision & vision handoff: image paste in the composer, `image` chunks
-rendered in the transcript, and a vision badge in the model picker. Additive to `wire@0.12.0` /
-`transport-contract@0.22.0` (NO version bump): new `ImageChunk` in the `Chunk` union + `ImageInput`;
-`ChatRequest.images` (`ChatSendMessage` carries it; `ChatQueueMessage` does NOT — steering is text-only);
-`ModelMetadata.vision`. typecheck 0/0, 901 tests green (+34), biome clean, build OK. §2i unchanged.)_
+_Last updated: 2026-06-26 (§2j UPDATED — consult_vision tool + vision settings API: `read_image` is REPLACED by
+`consult_vision` (non-vision models now get numbered placeholder text chunks, not auto-transcriptions); NEW global
+`GET`/`PUT /settings/vision` (`VisionSettingsResponse`/`SetVisionSettingsRequest` — `imageLimit` + `compactionModel`);
+image compaction transcribes old images to `[Compacted image]: …` text chunks (all regular text — render as-is). New
+`vision` feature library + "Vision" sidebar view (imageLimit input + compactionModel dropdown of vision-capable models +
+"Auto"). typecheck 0/0, 948 tests green (+47), biome clean, build OK. §2i unchanged.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -792,8 +793,66 @@ transcript render; `GET /models` `vision` → badge; history `image` chunk → r
 component + store tests. To confirm end-to-end: start the backend, paste an image into the composer with
 a vision model selected (e.g. any `kimi/*`), send, confirm the image renders + the model responds to it;
 then switch to a non-vision model (e.g. `umans/glm-5.2`), paste an image, send, confirm the image renders
-AND a `[Image analysis (via …)]` text bubble appears (the handoff transcription); confirm the vision
-badge shows/hides per model in the picker.
+AND a numbered placeholder `[Image N attached — call consult_vision…]` text bubble appears (the non-vision
+handoff — see the update below; the old `[Image analysis (via …)]` auto-transcription is GONE); confirm
+the vision badge shows/hides per model in the picker.
+
+### 2j-update. consult_vision tool + vision settings API → **CONSUMED ✅ (backend updated; FE built + verified)**
+
+A follow-up to §2j. The backend revised the vision surface: the `read_image` tool is REPLACED by
+`consult_vision`, non-vision models get NUMBERED PLACEHOLDERS (not auto-transcriptions), and there is a
+NEW global vision-settings API. Additive to `wire@0.12.0` / `transport-contract@0.22.0` (NO version bump);
+re-mirrored `.dispatch/transport-contract.reference.md` (added `VisionSettingsResponse` /
+`SetVisionSettingsRequest` + a delta note).
+
+**What changed (backend):**
+- **`read_image` → `consult_vision`** (`{ question: string (req), imageIds?: number[], path?: string }`):
+  opens a NEW conversation tab with a vision-capable model (Kimi), attaches the image + question, returns
+  the conversation id + the vision model's answer (suggests the dispatch CLI for follow-ups). Rendered like
+  any tool call/result (generic `toolName` dispatch — no special-casing).
+- **Non-vision models get NUMBERED PLACEHOLDERS** instead of auto-transcriptions: a pasted image on a
+  non-vision model persists an `image` chunk + a `text` chunk `[Image N attached — call consult_vision
+  with imageIds=[N] and a specific question to analyze it]`. (The old `[Image analysis (via <model>)]: …`
+  auto-transcription is GONE.)
+- **Image compaction** (transparent): when a vision model has > `imageLimit` images in history, the oldest
+  are transcribed to `[Compacted image]: <description>` `text` chunks (the persisted `image` chunk stays
+  for rendering). Both placeholder + compacted chunks are REGULAR `text` chunks — render as-is (no special
+  handling).
+- **NEW global vision settings API:** `GET /settings/vision` → `VisionSettingsResponse`
+  (`{ imageLimit: number (default 10), compactionModel: string|null (null = auto) }`); `PUT /settings/vision`
+  ← `SetVisionSettingsRequest` (partial: `imageLimit?` non-negative int, 0 = disable compaction;
+  `compactionModel?` `<key>/<model>` or null).
+
+**FE (DONE + verified):**
+- **Tool rendering:** the ChatView `read_image` test → `consult_vision` (rendering is generic — renders by
+  `toolName`, so no component change; only the test name/input updated). +2 ChatView tests for the
+  placeholder text chunk + the compacted-image text chunk (both render as regular text).
+- **New `vision` feature library** (`src/features/vision/`): pure `logic/view-model.ts` (32 tests) —
+  `VisionSettings`/`VisionSettingsPatch` (owned locally, consumer-defines-port; the shapes are a plain REST
+  surface, mirroring heartbeat/mcp), `LoadVisionSettings`/`SaveVisionSettings` ports + result types,
+  `normalizeVisionSettings` (network-seam coercion — a malformed body can't crash the renderer),
+  `parseImageLimit`/`imageLimitChanged` (dirty-check), `compactionModelOptions` (filters `GET /models` to
+  vision-capable models via the chat feature's public `isVisionModel` export + an "Auto" sentinel),
+  `selectedCompactionValue`/`compactionModelFromValue` round-trip, `imageLimitLabel`; `ui/VisionSettingsView.svelte`
+  (imageLimit text input + Save, compactionModel dropdown with Auto + vision-capable models, load-on-mount,
+  save-on-change, error/saved feedback; 9 component tests); `index.ts`.
+- **Cross-unit seam:** `isVisionModel` was added to `features/chat`'s public `index.ts` (additive — the
+  vision feature imports it through the public surface, not the chat internals).
+- **Store wiring** (`src/app/store.svelte.ts`): `visionSettings` reactive state + `refreshVisionSettings()`
+  (`GET /settings/vision`, normalized at the seam) + `setVisionSettings(patch)` (`PUT /settings/vision`,
+  returns merged settings) + `VisionSettingsResult`; seeded on boot; exposed on `AppStore`. +4 store tests.
+- **Mounted in `App.svelte`:** a new "Vision" sidebar view kind (`viewKinds`) + `VisionSettingsView` in the
+  `viewContent` snippet (not conversation-scoped — no `{#key}`); `loadVisionSettings`/`saveVisionSettings`
+  adapters wrap the store; `visionManifest` in `loadedModules`.
+
+**Verification:** `svelte-check` 0/0; vitest **948/948** (run TWICE — no cross-test pollution; +47 new
+since the §2j baseline: 32 vision view-model, 9 VisionSettingsView, 4 store, +2 ChatView
+placeholder/compacted, and the read_image→consult_vision test update), biome clean, `vite build` succeeds.
+**Live probe NOT run** (backend not reachable headless). To confirm end-to-end: open the Vision sidebar
+view, confirm the imageLimit + compactionModel load; change imageLimit → Save → confirm it persists on
+reload; set compactionModel to a vision model → confirm the dropdown reflects it; paste an image with a
+non-vision model → confirm the `[Image N attached — call consult_vision…]` placeholder renders (not an
+auto-transcription); trigger a `consult_vision` tool call → confirm it renders like a tool.
 
 ---
 
