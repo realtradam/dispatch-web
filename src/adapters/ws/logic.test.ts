@@ -283,6 +283,21 @@ describe("parseServerMessage", () => {
     });
   });
 
+  it("accepts the `queued` status (CR-13 — waiting for a concurrency slot)", () => {
+    const data = JSON.stringify({
+      type: "conversation.statusChanged",
+      conversationId: "c1",
+      status: "queued",
+      workspaceId: "w1",
+    });
+    expect(parseServerMessage(data)).toEqual({
+      type: "conversation.statusChanged",
+      conversationId: "c1",
+      status: "queued",
+      workspaceId: "w1",
+    });
+  });
+
   it("returns null for conversation.statusChanged with missing workspaceId", () => {
     expect(
       parseServerMessage(

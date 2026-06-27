@@ -4,7 +4,12 @@
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
 >
-> **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers). Regenerate whenever `@dispatch/wire` changes.
+> **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers + provider-retry + concurrency-`queued` status). Regenerate whenever `@dispatch/wire` changes.
+>
+> **2026-06-26 delta (provider concurrency — ADDITIVE to `wire@0.12.0`, NO version bump):** `ConversationStatus`
+> widened to `"active" | "queued" | "idle" | "closed"`. `queued` = the turn is in flight but waiting for a
+> per-provider concurrency slot (broadcast-only via `conversation.statusChanged`, never persisted); the FE shows
+> a loading ring (vs the dots of `active`). See `backend-handoff.md` CR-13.
 >
 > **2026-06-23 delta (workspaces handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):** adds
 > `Workspace` + `WorkspaceEntry` (a list entry with a conversation count) and a required
@@ -559,12 +564,16 @@ export interface TurnSteeringEvent {
 
 /**
  * The lifecycle status of a conversation, used for tab persistence across
- * devices. `active` = an agent is currently generating; `idle` = exists but not
- * generating; `closed` = user dismissed the tab (hidden from the tab bar, not
- * deleted). New conversations start as `idle`; transitions to `active` on
- * turn-start, back to `idle` on turn done/error, and to `closed` on user close.
+ * devices. `active` = an agent is currently generating; `queued` = the turn is
+ * in flight but waiting for a per-provider concurrency slot (broadcast-only,
+ * never persisted — CR-13; the tab shows a ring vs the dots of `active`);
+ * `idle` = exists but not generating; `closed` = user dismissed the tab
+ * (hidden from the tab bar, not deleted). New conversations start as `idle`;
+ * transitions to `active` on turn-start (or `queued` when the request blocks on
+ * a concurrency slot before generation begins), back to `idle` on turn
+ * done/error, and to `closed` on user close.
  */
-export type ConversationStatus = "active" | "idle" | "closed";
+export type ConversationStatus = "active" | "queued" | "idle" | "closed";
 
 /**
  * Metadata for a conversation, returned by `GET /conversations` (the list

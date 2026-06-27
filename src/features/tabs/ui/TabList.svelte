@@ -144,7 +144,14 @@
 						{tab.title}
 					</span>
 				{/if}
-				{#if statusFor?.(tab.conversationId) === "active"}
+				{#if statusFor?.(tab.conversationId) === "queued"}
+					<!-- Waiting for a concurrency slot — a ring (vs the dots of `active`). -->
+					<span
+						class="loading loading-spinner loading-xs shrink-0 text-primary"
+						aria-label="Queued"
+						title="Waiting for a concurrency slot"
+					></span>
+				{:else if statusFor?.(tab.conversationId) === "active"}
 					<span class="loading loading-dots loading-xs shrink-0 text-primary"></span>
 				{/if}
 				<button
