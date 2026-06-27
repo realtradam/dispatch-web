@@ -74,9 +74,12 @@ export interface ChatStore {
   readonly chunks: readonly RenderedChunk[];
   readonly turnMetrics: readonly TurnMetricsEntry[];
   /**
-   * The conversation's current context size (tokens occupied) — the latest
-   * finalized turn's `contextSize`, or `undefined` ("unknown") when none is
-   * known yet. Never `0` for the unknown case.
+   * The conversation's current context size (tokens occupied) — updated
+   * PROGRESSIVELY: during an in-flight turn, the most recent step's
+   * `inputTokens + outputTokens` (each step's input already includes all prior
+   * context); once the turn seals, its authoritative `contextSize`. `undefined`
+   * ("unknown") when no step has reported usage yet. Never `0` for the unknown
+   * case.
    */
   readonly currentContextSize: number | undefined;
   /**

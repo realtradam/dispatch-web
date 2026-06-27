@@ -439,4 +439,251 @@ describe("contextSize / selectCurrentContextSize", () => {
     ]);
     expect(selectCurrentContextSize(s)).toBe(222);
   });
+
+  it("in-flight turn updates context size after the first step completes", () => {
+    // Before the requirement: an in-flight turn had total=null so its step usage
+    // was ignored until `done`. Now the latest step's input+output is used.
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 5000, 200, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+
+    // Still generating (no done) — context = step 1 input+output = 5200.
+    expect(selectCurrentContextSize(s)).toBe(5200);
+  });
+
+  it("in-flight turn updates progressively as each step reports usage", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 5000, 200, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    expect(selectCurrentContextSize(s)).toBe(5200);
+
+    // Step 2 reports usage mid-stream (before its step-complete): each step's
+    // input already includes all prior context, so the last step's input+output
+    // is the current occupancy.
+    s = foldMetricsEvent(s, usageEvent("t1", 5200, 150, "s2"));
+    expect(selectCurrentContextSize(s)).toBe(5350);
+
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s2"));
+    expect(selectCurrentContextSize(s)).toBe(5350);
+  });
+
+  it("in-flight context size is the latest step with usage, NOT the aggregate sum", () => {
+    // Mirrors the finalized-turn test: contextSize is the FINAL step's
+    // input+output, not the sum across steps (which would overcount a
+    // multi-step turn because every step re-prefills the growing prompt).
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 100, 50, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    s = foldMetricsEvent(s, usageEvent("t1", 200, 80, "s2"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s2"));
+    // Aggregate would be 300+130=430; the latest step is 200+80=280.
+    expect(selectCurrentContextSize(s)).toBe(280);
+  });
+
+  it("in-flight turn with a step-complete but no usage falls back to older turn", () => {
+    // step-complete before usage → the step has no usage yet, so the in-flight
+    // turn exposes no context size and the display falls back to the prior
+    // finalized turn's value (never 0).
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 700 }));
+    s = foldMetricsEvent(s, stepCompleteEvent("t2", "s1", { genTotalMs: 500 }));
+
+    expect(selectCurrentContextSize(s)).toBe(700);
+  });
+
+  it("in-flight turn with no steps/usage returns undefined (falls back)", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 700 }));
+    // t2 just started — no usage, no complete step — omitted entirely.
+    s = foldMetricsEvent(s, { type: "turn-start", conversationId: "c1", turnId: "t2" });
+    expect(selectCurrentContextSize(s)).toBe(700);
+
+    // t2's first step reports usage → the display jumps to t2's live value.
+    s = foldMetricsEvent(s, usageEvent("t2", 800, 10, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t2", "s1"));
+    expect(selectCurrentContextSize(s)).toBe(810);
+  });
+
+  it("done finalizes the in-flight progressive value with the authoritative contextSize", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 5000, 200, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    expect(selectCurrentContextSize(s)).toBe(5200);
+
+    s = foldMetricsEvent(s, usageEvent("t1", 5200, 150, "s2"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s2"));
+    expect(selectCurrentContextSize(s)).toBe(5350);
+
+    // done stamps the authoritative contextSize (the final step's input+output).
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 5350 }));
+    expect(selectCurrentContextSize(s)).toBe(5350);
+  });
+
+  it("in-flight context size excludes cache tokens (they are a subset of inputTokens)", () => {
+    // cacheReadTokens / cacheWriteTokens are portions of inputTokens already
+    // counted — adding them would double-count. Only input+output is occupancy.
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, {
+      type: "usage",
+      conversationId: "c1",
+      turnId: "t1",
+      stepId: "s1" as StepId,
+      usage: {
+        inputTokens: 5000,
+        outputTokens: 200,
+        cacheReadTokens: 4000,
+        cacheWriteTokens: 1000,
+      },
+    });
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    // 5000+200=5200, NOT 9200 (with cacheRead) or 10200 (with both).
+    expect(selectCurrentContextSize(s)).toBe(5200);
+  });
+
+  it("multiple in-flight turns: the newest turn's live value wins", () => {
+    let s = initialMetricsState();
+    // t1 (older) in-flight with one completed step → 5200.
+    s = foldMetricsEvent(s, usageEvent("t1", 5000, 200, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    // t2 (newer, seen later → last in liveOrder) in-flight → 8000.
+    s = foldMetricsEvent(s, usageEvent("t2", 7800, 200, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t2", "s1"));
+    expect(selectCurrentContextSize(s)).toBe(8000);
+  });
+
+  it("out-of-order step IDs: usage for step 2 before step 1's step-complete still scans newest-first", () => {
+    // stepOrder is FIRST-SEEN: s1 (its usage arrived first), then s2. So s2 is
+    // the newest step regardless of when each step's step-complete arrives.
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 5000, 200, "s1"));
+    s = foldMetricsEvent(s, usageEvent("t1", 5200, 150, "s2"));
+    // Neither step complete yet → the turn is omitted (no complete step), so the
+    // display can't update until the first step completes.
+    expect(selectCurrentContextSize(s)).toBeUndefined();
+
+    // s1 completes AFTER s2's usage was reported. The turn is now visible; the
+    // newest-first scan picks s2 (the later step), not s1 (the just-completed one).
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    expect(selectCurrentContextSize(s)).toBe(5350);
+
+    // s2 completes — still s2, unchanged.
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s2"));
+    expect(selectCurrentContextSize(s)).toBe(5350);
+  });
+
+  it("done turn without contextSize falls back to an older turn (even with step usage)", () => {
+    // Contract lock-in: a done turn's step usage is NOT consulted for the
+    // context display — only its authoritative total.contextSize is. When that
+    // is absent, the display falls back to the next older finalized turn rather
+    // than synthesizing a value from the step usage.
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 700 }));
+    // t2 done WITH step usage but NO done.contextSize (edge case: the done event
+    // omitted contextSize despite per-step usage).
+    s = foldMetricsEvent(s, usageEvent("t2", 800, 10, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t2", "s1"));
+    s = foldMetricsEvent(s, doneEvent("t2"));
+    expect(selectCurrentContextSize(s)).toBe(700);
+  });
+
+  it("in-flight context size skips a step with unsafe usage (NaN / negative)", () => {
+    // A corrupt provider report must never reach the status bar. The newest
+    // step with invalid counters is skipped, falling back to the prior valid one.
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 5000, 200, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    // s2 reports NaN input (e.g. a non-numeric provider field coerced).
+    s = foldMetricsEvent(s, {
+      type: "usage",
+      conversationId: "c1",
+      turnId: "t1",
+      stepId: "s2" as StepId,
+      usage: { inputTokens: Number.NaN, outputTokens: 150 },
+    });
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s2"));
+    // s2 skipped (NaN) → falls back to s1's 5200, NOT NaN.
+    expect(selectCurrentContextSize(s)).toBe(5200);
+
+    // Negative tokens are likewise skipped.
+    s = foldMetricsEvent(s, {
+      type: "usage",
+      conversationId: "c1",
+      turnId: "t1",
+      stepId: "s3" as StepId,
+      usage: { inputTokens: -10, outputTokens: 5 },
+    });
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s3"));
+    expect(selectCurrentContextSize(s)).toBe(5200);
+  });
+});
+
+describe("applyDurableMetrics pruning", () => {
+  it("prunes a live turn once durable data covers it (no unbounded growth)", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 100, 50, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 150 }));
+    expect(s.live.has("t1")).toBe(true);
+    expect(s.liveOrder).toContain("t1");
+
+    s = applyDurableMetrics(s, [
+      {
+        turnId: "t1",
+        usage: { inputTokens: 100, outputTokens: 50 },
+        steps: [{ stepId: "s1" as StepId, usage: { inputTokens: 100, outputTokens: 50 } }],
+        contextSize: 150,
+      },
+    ]);
+    // The live copy is gone; the durable (authoritative) entry replaces it.
+    expect(s.live.has("t1")).toBe(false);
+    expect(s.liveOrder).not.toContain("t1");
+    expect(s.durable.has("t1")).toBe(true);
+    // The display still reads the durable value atomically (no gap).
+    expect(selectCurrentContextSize(s)).toBe(150);
+  });
+
+  it("prunes only the turns present in the durable batch (leaves other live turns)", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t1", 100, 50, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t1", "s1"));
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 150 }));
+    // t2 still in flight — must NOT be pruned when only t1 seals.
+    s = foldMetricsEvent(s, usageEvent("t2", 800, 10, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t2", "s1"));
+
+    s = applyDurableMetrics(s, [
+      { turnId: "t1", usage: { inputTokens: 100, outputTokens: 50 }, steps: [], contextSize: 150 },
+    ]);
+    expect(s.live.has("t1")).toBe(false);
+    expect(s.live.has("t2")).toBe(true);
+    expect(s.liveOrder).toEqual(["t2"]);
+    // The newest (in-flight) turn's live value still wins.
+    expect(selectCurrentContextSize(s)).toBe(810);
+  });
+
+  it("is a no-op when no incoming turn is live (no live mutation)", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, usageEvent("t2", 800, 10, "s1"));
+    s = foldMetricsEvent(s, stepCompleteEvent("t2", "s1"));
+    const before = s;
+    s = applyDurableMetrics(s, [
+      { turnId: "t1", usage: { inputTokens: 1, outputTokens: 1 }, steps: [] },
+    ]);
+    // t1 was never live → the live map/order are unchanged (same reference).
+    expect(s.live).toBe(before.live);
+    expect(s.liveOrder).toBe(before.liveOrder);
+    // t1 (durable) is older; the in-flight t2 still wins.
+    expect(selectCurrentContextSize(s)).toBe(810);
+  });
+
+  it("durable wins over live for a shared turnId (pruned live no longer consulted)", () => {
+    let s = initialMetricsState();
+    s = foldMetricsEvent(s, doneEvent("t1", { contextSize: 111 }));
+    s = applyDurableMetrics(s, [
+      { turnId: "t1", usage: { inputTokens: 1, outputTokens: 1 }, steps: [], contextSize: 222 },
+    ]);
+    // The live (111) copy is pruned; only durable (222) remains.
+    expect(s.live.has("t1")).toBe(false);
+    expect(selectCurrentContextSize(s)).toBe(222);
+  });
 });

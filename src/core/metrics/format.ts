@@ -45,14 +45,17 @@ export function formatCompactTokens(n: number): string {
 /**
  * Context-window occupancy: the current size against a max window limit.
  *
- * `current` is the latest turn's context size (0 when unknown); `max` is the
- * model's window limit (or `null` when unknown). `percent` is
- * `current / max * 100` clamped to [0, 100], UNROUNDED (the UI picks the
- * precision) — so a few-thousand-token context against a 1,000,000 window still
- * reads non-zero. `percent` is `null` when `max` is unknown (no bar/denominator).
+ * `current` is the latest turn's context size, or `null` when unknown (no
+ * per-step usage reported yet) — NEVER coerced to `0`, so a consumer cannot
+ * silently render "0 tokens / 1M"; it must branch on `current === null` and show
+ * a placeholder instead. `max` is the model's window limit (or `null` when
+ * unknown). `percent` is `current / max * 100` clamped to [0, 100], UNROUNDED
+ * (the UI picks the precision) — so a few-thousand-token context against a
+ * 1,000,000 window still reads non-zero. `percent` is `null` when `current` OR
+ * `max` is unknown (no bar/denominator).
  */
 export interface ContextUsage {
-  readonly current: number;
+  readonly current: number | null;
   readonly max: number | null;
   readonly percent: number | null;
 }
@@ -61,9 +64,10 @@ export function computeContextUsage(
   contextSize: number | undefined,
   contextLimit: number | null | undefined,
 ): ContextUsage {
-  const current = contextSize ?? 0;
+  const current = contextSize ?? null;
   const max = typeof contextLimit === "number" && contextLimit > 0 ? contextLimit : null;
-  const percent = max === null ? null : Math.max(0, Math.min(100, (current / max) * 100));
+  const percent =
+    current === null || max === null ? null : Math.max(0, Math.min(100, (current / max) * 100));
   return { current, max, percent };
 }
 

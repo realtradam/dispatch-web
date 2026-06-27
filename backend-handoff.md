@@ -1030,6 +1030,33 @@ conversation → confirm the persisted image renders from the `/images/…` endp
 
 ---
 
+## 2k. Step-level context-window usage (progressive) → **FE BUILT; no backend change**
+
+The context-window usage indicator at the bottom of the screen (Composer status
+bar) now updates **after each step** during a multi-step turn, instead of only
+when the turn seals. Pure FE change — consumes wire events the backend ALREADY
+sends (`usage` per step + `step-complete` + `done.contextSize`); no contract
+change, re-pin, or re-mirror needed.
+
+- `selectCurrentContextSize` (`core/metrics/reducer.ts`) now, for an IN-FLIGHT
+  (not-done) turn, returns the most recent step WITH USAGE's
+  `inputTokens + outputTokens` as the live context occupancy. Per the wire
+  contract each step's input already includes all prior context (the prompt is
+  re-prefilled every step), so the last step's input+output is the true occupancy
+  — the same definition `TurnDoneEvent.contextSize` stamps at turn end.
+- A finalized turn (`done` / durable) still wins with its authoritative
+  `contextSize`; durable still wins over live for a shared `turnId`. An in-flight
+  turn with no step usage yet falls back to the next older finalized turn (never
+  `0`).
+- New helper `liveTurnContextSize`; updated doc on `ChatStore.currentContextSize`
+  + the Composer `contextSize` prop. 7 new reducer tests (35 total), 1026 green.
+
+### FE summary (this slice)
+No backend ask. The backend already emits per-step `usage` (token counts, may
+arrive mid-stream) and `step-complete` (timing) joined by `stepId`, plus
+`done.contextSize` (final step's input+output) — the FE just wasn't reading the
+per-step usage for the live indicator. Now it does.
+
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
 - **Model max context-window LIMIT** → **CONSUMED ✅** — `GET /models` now returns
