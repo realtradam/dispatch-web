@@ -453,7 +453,7 @@
 			</span>
 			<button
 				class="btn btn-square btn-ghost btn-sm mx-1 shrink-0"
-				aria-label="Toggle sidebar"
+				aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
 				aria-expanded={sidebarOpen}
 				onclick={() => (sidebarOpen = !sidebarOpen)}
 			>
@@ -466,11 +466,21 @@
 					class="size-5"
 					aria-hidden="true"
 				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5"
-					/>
+					{#if sidebarOpen}
+						<!-- Sidebar open → chevrons point right -->
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="m11.25 4.5 7.5 7.5-7.5 7.5m-7.5-15 7.5 7.5-7.5 7.5"
+						/>
+					{:else}
+						<!-- Sidebar closed → chevrons point left -->
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5"
+						/>
+					{/if}
 				</svg>
 			</button>
 		</div>
