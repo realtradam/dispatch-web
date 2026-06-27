@@ -9,10 +9,17 @@
     store,
     onNavigate,
     computers,
+    hasActive,
   }: {
     store: WorkspaceStore;
     onNavigate: (path: string) => void;
     computers: readonly ComputerEntry[];
+    /**
+     * Optional port forwarded to each {@link WorkspaceCard}: whether the
+     * workspace has at least one active (generating / queued) conversation.
+     * Wired by the composition root to the app store. Absent → no indicator.
+     */
+    hasActive?: (workspaceId: string) => boolean;
   } = $props();
 
   onMount(() => {
@@ -89,7 +96,13 @@
     {:else}
       <ul class="flex flex-col gap-2">
         {#each store.list as ws (ws.id)}
-          <WorkspaceCard {ws} {store} {onNavigate} {computers} />
+          <WorkspaceCard
+            {ws}
+            {store}
+            {onNavigate}
+            {computers}
+            {...(hasActive ? { hasActive } : {})}
+          />
         {/each}
       </ul>
     {/if}

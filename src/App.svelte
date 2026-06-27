@@ -68,7 +68,12 @@
 </script>
 
 {#if route.kind === "home"}
-  <WorkspacesHome store={workspaceStore} onNavigate={navigate} computers={store.computers} />
+  <WorkspacesHome
+    store={workspaceStore}
+    onNavigate={navigate}
+    computers={store.computers}
+    hasActive={(id) => store.workspaceHasActiveConversations(id)}
+  />
 {:else}
   <App {store} onNavigate={navigate} />
 {/if}

@@ -1730,6 +1730,122 @@ describe("createAppStore", () => {
     expect(store.tabs.some((t) => t.conversationId === "other-device-conv")).toBe(true);
     store.dispose();
   });
+
+  // ── workspaceHasActiveConversations (workspace-card active indicator) ─────
+
+  it("workspaceHasActiveConversations is false when no conversation is active", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    store.send("hello");
+    const convId = activeConversationId(store);
+
+    // The conversation is freshly created — the backend hasn't reported it as
+    // active yet, so the workspace has no active conversation.
+    expect(store.conversationStatus(convId)).toBeUndefined();
+    expect(store.workspaceHasActiveConversations("default")).toBe(false);
+    store.dispose();
+  });
+
+  it("workspaceHasActiveConversations is true when a conversation in the workspace is active", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    store.send("hello");
+    const convId = activeConversationId(store);
+
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "active",
+      workspaceId: "default",
+    });
+
+    expect(store.workspaceHasActiveConversations("default")).toBe(true);
+    store.dispose();
+  });
+
+  it("workspaceHasActiveConversations is true when a conversation is queued (waiting for a slot)", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    store.send("hello");
+    const convId = activeConversationId(store);
+
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "queued",
+      workspaceId: "default",
+    });
+
+    expect(store.workspaceHasActiveConversations("default")).toBe(true);
+    store.dispose();
+  });
+
+  it("workspaceHasActiveConversations goes back to false when the conversation goes idle", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    store.send("hello");
+    const convId = activeConversationId(store);
+
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "active",
+      workspaceId: "default",
+    });
+    expect(store.workspaceHasActiveConversations("default")).toBe(true);
+
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: convId,
+      status: "idle",
+      workspaceId: "default",
+    });
+    expect(store.workspaceHasActiveConversations("default")).toBe(false);
+    store.dispose();
+  });
+
+  it("workspaceHasActiveConversations scopes to the given workspace (ignores other workspaces)", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    // A cross-device active conversation in workspace "proj-a".
+    ws.feedServerMessage({
+      type: "conversation.statusChanged",
+      conversationId: "proj-a-conv",
+      status: "active",
+      workspaceId: "proj-a",
+    });
+
+    // proj-a is active; proj-b is not (no active conversation there).
+    expect(store.workspaceHasActiveConversations("proj-a")).toBe(true);
+    expect(store.workspaceHasActiveConversations("proj-b")).toBe(false);
+    store.dispose();
+  });
 });
 
 describe("createAppStore — vision settings (global)", () => {
