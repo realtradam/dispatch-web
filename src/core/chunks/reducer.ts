@@ -1,4 +1,5 @@
-import type { AgentEvent, Chunk, StoredChunk } from "@dispatch/wire";
+import type { AgentEvent, Chunk, ImageInput, Role, StoredChunk } from "@dispatch/wire";
+import { assertChunkExhaustive } from "../wire/conformance";
 import type { AccumulatingChunk, ProvisionalChunk, TranscriptState } from "./types";
 
 /** The initial empty transcript state. */
@@ -43,6 +44,63 @@ function flushAccumulating(
 }
 
 /**
+ * Content equality for two chunks of the SAME role (used to de-dup an
+ * optimistic echo against the authoritative committed version). Compares the
+ * discriminating payload only — `stepId` (generation provenance) is ignored
+ * since it is absent on provisional echoes but present on committed tool chunks.
+ */
+function chunkContentEquals(a: Chunk, b: Chunk): boolean {
+  if (a.type !== b.type) return false;
+  switch (a.type) {
+    case "text": {
+      const o = b as Extract<Chunk, { type: "text" }>;
+      return a.text === o.text;
+    }
+    case "thinking": {
+      const o = b as Extract<Chunk, { type: "thinking" }>;
+      return a.text === o.text;
+    }
+    case "image": {
+      const o = b as Extract<Chunk, { type: "image" }>;
+      return a.url === o.url;
+    }
+    case "error": {
+      const o = b as Extract<Chunk, { type: "error" }>;
+      return a.message === o.message && a.code === o.code;
+    }
+    case "system": {
+      const o = b as Extract<Chunk, { type: "system" }>;
+      return a.text === o.text;
+    }
+    case "tool-call": {
+      const o = b as Extract<Chunk, { type: "tool-call" }>;
+      return a.toolCallId === o.toolCallId && a.toolName === o.toolName;
+    }
+    case "tool-result": {
+      const o = b as Extract<Chunk, { type: "tool-result" }>;
+      return a.toolCallId === o.toolCallId && a.toolName === o.toolName && a.isError === o.isError;
+    }
+    default:
+      return assertChunkExhaustive(a) === assertChunkExhaustive(b);
+  }
+}
+
+/**
+ * The trailing run of consecutive same-role provisional chunks at the end of
+ * `provisional` (the optimistic echo of one message). Returns the start/end
+ * indices `[start, end)` into `provisional` (empty if none).
+ */
+function trailingRun(
+  provisional: readonly ProvisionalChunk[],
+  role: Role,
+): readonly ProvisionalChunk[] {
+  const end = provisional.length;
+  let start = end;
+  while (start > 0 && provisional[start - 1]?.role === role) start--;
+  return provisional.slice(start, end);
+}
+
+/**
  * Merge authoritative seq-keyed chunks into the committed history.
  * Dedupes by seq (new wins), keeps seq-monotonic order, idempotent.
  * When sealedTurnId is set, drops all provisional chunks (now superseded)
@@ -78,21 +136,30 @@ export function applyHistory(
 
   // During generation: if new committed chunks arrived, the provisional
   // array may contain duplicates — the optimistic echo from `appendUserMessage`
-  // is now backed by a committed chunk (CR-6: user message persisted at turn
-  // start). Remove provisional chunks that match the last committed chunk
-  // (role + chunk content), keeping only the accumulating (streaming) chunk.
+  // is now backed by committed chunks (CR-6: user message persisted at turn
+  // start). A user message may be multi-chunk (`[text, image, image, …]`), so
+  // match the trailing provisional user-run against the trailing committed
+  // user-run by content equality and drop the whole echo when it is fully
+  // backed. Leaves the accumulating (streaming) chunk untouched.
   if (addedNew && state.generating && state.provisional.length > 0) {
-    const lastCommitted = committed[committed.length - 1];
-    if (lastCommitted !== undefined) {
-      const provisional = state.provisional.filter((p) => {
-        if (p.role !== lastCommitted.role) return true;
-        if (p.chunk.type !== lastCommitted.chunk.type) return true;
-        if (p.chunk.type === "text" && lastCommitted.chunk.type === "text") {
-          return p.chunk.text !== lastCommitted.chunk.text;
-        }
-        return true;
-      });
-      return { ...state, committed, provisional, accumulating: state.accumulating };
+    const provRun = trailingRun(state.provisional, "user");
+    if (provRun.length > 0) {
+      const commRun = trailingRun(committed, "user");
+      // Drop the provisional user echo iff every echoed chunk is content-equal
+      // to the corresponding committed chunk (the server persisted the same
+      // message). A partial match (echo longer than committed) keeps the echo
+      // — the not-yet-committed tail stays until the turn seals.
+      const fullyBacked =
+        commRun.length >= provRun.length &&
+        provRun.every((p, i) => {
+          const c = commRun[i];
+          return c !== undefined && chunkContentEquals(p.chunk, c.chunk);
+        });
+      if (fullyBacked) {
+        const dropStart = state.provisional.length - provRun.length;
+        const provisional = state.provisional.slice(0, dropStart);
+        return { ...state, committed, provisional, accumulating: state.accumulating };
+      }
     }
   }
 
@@ -138,16 +205,18 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       // The turn's USER prompt, surfaced on the event stream (backend CR-3) so a
       // WATCHER/late-joiner renders it mid-turn instead of waiting for seal. The
       // SENDER already echoed its own prompt optimistically (`appendUserMessage`),
-      // so DE-DUP: skip if the trailing provisional chunk is already an identical
-      // user text chunk. A pure watcher has no such echo → it appends and renders.
+      // so DE-DUP: skip if the trailing provisional USER run already contains an
+      // identical user text chunk. The echo may be multi-chunk (`[text, image,
+      // image, …]` — `appendUserMessage` appends the text first, then images), so
+      // we scan the whole trailing user run, not just the last chunk (which would
+      // be an image when images were pasted). A pure watcher has no such echo →
+      // it appends and renders. The `user-message` event carries ONLY text (never
+      // images — images arrive via history/loadSince); an images-only send (empty
+      // text) emits no `user-message` and is not de-duped here.
       if (event.text.length === 0) return state;
-      const last = state.provisional[state.provisional.length - 1];
-      if (
-        last !== undefined &&
-        last.role === "user" &&
-        last.chunk.type === "text" &&
-        last.chunk.text === event.text
-      ) {
+      const run = trailingRun(state.provisional, "user");
+      const alreadyEchoed = run.some((p) => p.chunk.type === "text" && p.chunk.text === event.text);
+      if (alreadyEchoed) {
         return { ...state, generating: true };
       }
       const provisional = flushAccumulating(state.provisional, state.accumulating);
@@ -335,15 +404,43 @@ export function foldEvent(state: TranscriptState, event: AgentEvent): Transcript
 /**
  * Optimistically append a user message to the provisional list.
  * Flushes any in-progress accumulating chunk first (defensively).
- * The provisional user chunk is superseded when applyHistory receives
+ * The provisional user chunks are superseded when applyHistory receives
  * the authoritative committed chunks after a turn seals.
+ *
+ * When `images` are provided, they are appended AFTER the text chunk (in
+ * order) as `image` chunks — matching the server's persisted layout
+ * (`[text, image, image, …]` in one user message). A text chunk is only
+ * appended when `text` is non-empty (an images-only send echoes just the
+ * images). The `user-message` event carries only text (never images), so its
+ * de-dup scans the trailing user run for the echoed text rather than just the
+ * last chunk.
  */
-export function appendUserMessage(state: TranscriptState, text: string): TranscriptState {
+export function appendUserMessage(
+  state: TranscriptState,
+  text: string,
+  images?: readonly ImageInput[],
+): TranscriptState {
   const provisional = flushAccumulating(state.provisional, state.accumulating);
-  const userChunk: Chunk = { type: "text", text };
+  const userChunks: Chunk[] = [];
+  if (text.length > 0) userChunks.push({ type: "text", text });
+  if (images !== undefined) {
+    for (const img of images) {
+      if (img.url.length === 0) continue;
+      const chunk: Chunk =
+        img.mimeType !== undefined
+          ? { type: "image", url: img.url, mimeType: img.mimeType }
+          : { type: "image", url: img.url };
+      userChunks.push(chunk);
+    }
+  }
+  if (userChunks.length === 0) {
+    // Nothing to echo (empty text + no images) — leave state unchanged but
+    // still flush any accumulating chunk defensively.
+    return { ...state, provisional, accumulating: null };
+  }
   return {
     ...state,
-    provisional: [...provisional, { role: "user", chunk: userChunk }],
+    provisional: [...provisional, ...userChunks.map((chunk) => ({ role: "user", chunk }) as const)],
     accumulating: null,
   };
 }

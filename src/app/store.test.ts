@@ -423,6 +423,34 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("sending from draft forwards staged images on chat.send", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    ws.sent.length = 0;
+
+    const images = [
+      { url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+      { url: "https://example.com/x.jpg" },
+    ];
+    store.send("describe these", images);
+
+    const msgs = parseSent(ws);
+    const chatSend = msgs.find((m) => (m as { type: string }).type === "chat.send") as
+      | { type: string; message: string; images?: { url: string }[] }
+      | undefined;
+    expect(chatSend).toBeTruthy();
+    expect(chatSend?.images).toEqual(images);
+    // The optimistic echo includes the image chunks.
+    expect(store.activeChat.chunks.some((c) => c.chunk.type === "image")).toBe(true);
+
+    store.dispose();
+  });
+
   it("an incoming chat.delta renders in the transcript", () => {
     const ws = fakeSocket();
     const store = createAppStore({
@@ -1700,6 +1728,130 @@ describe("createAppStore", () => {
     expect(store.conversationStatus("other-device-conv")).toBe("queued");
     // A queued conversation we had no tab for opens one (like `active`).
     expect(store.tabs.some((t) => t.conversationId === "other-device-conv")).toBe(true);
+    store.dispose();
+  });
+});
+
+describe("createAppStore — vision settings (global)", () => {
+  function visionFetch(initial: { imageLimit: number; compactionModel: string | null }): {
+    fetchImpl: typeof fetch;
+    puts: { imageLimit?: number; compactionModel?: string | null }[];
+  } {
+    let current = initial;
+    const puts: { imageLimit?: number; compactionModel?: string | null }[] = [];
+    return {
+      puts,
+      fetchImpl: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.endsWith("/models")) {
+          return new Response(
+            JSON.stringify({
+              models: ["kimi/k2", "umans/glm-5.2"],
+              modelInfo: { "kimi/k2": { vision: true } },
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/settings/vision")) {
+          if (init?.method === "PUT") {
+            const text = typeof init.body === "string" ? init.body : "";
+            const body = text ? (JSON.parse(text) as object) : {};
+            puts.push(body as { imageLimit?: number; compactionModel?: string | null });
+            current = { ...current, ...(body as object) } as {
+              imageLimit: number;
+              compactionModel: string | null;
+            };
+          }
+          return new Response(JSON.stringify(current), { status: 200 });
+        }
+        // Default: empty history + no cwd for the other endpoints.
+        return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      },
+    };
+  }
+
+  it("loads vision settings on boot (GET /settings/vision)", async () => {
+    const { fetchImpl } = visionFetch({ imageLimit: 7, compactionModel: "kimi/k2" });
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    fakeSocket().resolveOpen(); // not strictly needed for HTTP
+
+    await vi.waitFor(() => {
+      expect(store.visionSettings).toEqual({ imageLimit: 7, compactionModel: "kimi/k2" });
+    });
+    store.dispose();
+  });
+
+  it("setVisionSettings PUTs a partial update and reflects the merged settings", async () => {
+    const ctx = visionFetch({ imageLimit: 10, compactionModel: null });
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: ctx.fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+
+    await vi.waitFor(() => {
+      expect(store.visionSettings?.imageLimit).toBe(10);
+    });
+
+    const result = await store.setVisionSettings({ imageLimit: 3 });
+    expect(result?.ok).toBe(true);
+    if (result?.ok) {
+      expect(result.settings.imageLimit).toBe(3);
+      expect(result.settings.compactionModel).toBeNull();
+    }
+    expect(ctx.puts).toEqual([{ imageLimit: 3 }]);
+    expect(store.visionSettings?.imageLimit).toBe(3);
+
+    // A second save updates compactionModel only.
+    const result2 = await store.setVisionSettings({ compactionModel: "kimi/k2" });
+    expect(result2?.ok).toBe(true);
+    expect(ctx.puts).toEqual([{ imageLimit: 3 }, { compactionModel: "kimi/k2" }]);
+    expect(store.visionSettings?.compactionModel).toBe("kimi/k2");
+    store.dispose();
+  });
+
+  it("refreshVisionSettings refetches (load adapter)", async () => {
+    const { fetchImpl } = visionFetch({ imageLimit: 5, compactionModel: null });
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+
+    await store.refreshVisionSettings();
+    expect(store.visionSettings).toEqual({ imageLimit: 5, compactionModel: null });
+    store.dispose();
+  });
+
+  it("surfaces a PUT error", async () => {
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/settings/vision")) {
+        if (init?.method === "PUT") {
+          return new Response(JSON.stringify({ error: "invalid imageLimit" }), { status: 400 });
+        }
+        return new Response(JSON.stringify({ imageLimit: 10, compactionModel: null }), {
+          status: 200,
+        });
+      }
+      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+    };
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+
+    const result = await store.setVisionSettings({ imageLimit: -1 });
+    expect(result?.ok).toBe(false);
+    if (result !== null && !result.ok) {
+      expect(result.error).toContain("invalid imageLimit");
+    }
     store.dispose();
   });
 });

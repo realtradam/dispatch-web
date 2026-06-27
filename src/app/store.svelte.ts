@@ -27,6 +27,7 @@ import type {
   SetReasoningEffortRequest,
   SetSystemPromptTemplateRequest,
   SetTitleRequest,
+  SetVisionSettingsRequest,
   SystemPromptTemplateResponse,
   SystemPromptVariable,
   SystemPromptVariablesResponse,
@@ -35,7 +36,7 @@ import type {
   WarmResponse,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
-import type { ComputerEntry, ConversationStatus } from "@dispatch/wire";
+import type { ComputerEntry, ConversationStatus, ImageInput } from "@dispatch/wire";
 import { untrack } from "svelte";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
@@ -78,6 +79,11 @@ import type {
 import { normalizeHeartbeatConfig, normalizeHeartbeatRuns } from "../features/heartbeat";
 import type { Tab, TabsState } from "../features/tabs";
 import { createTabsStore, deriveTitle, type TabsStore } from "../features/tabs";
+import {
+  normalizeVisionSettings,
+  type VisionSettings,
+  type VisionSettingsPatch,
+} from "../features/vision";
 import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
 import { randomId } from "./uuid";
@@ -134,6 +140,11 @@ export type CompactPercentResult =
   | { readonly ok: true; readonly percent: number }
   | { readonly ok: false; readonly error: string };
 
+/** Outcome of `PUT /settings/vision` (global vision-settings save). */
+export type VisionSettingsResult =
+  | { readonly ok: true; readonly settings: VisionSettings }
+  | { readonly ok: false; readonly error: string };
+
 /** Outcome of `GET /system-prompt` (global template load). */
 export type SystemPromptLoadResult =
   | { readonly ok: true; readonly template: string }
@@ -157,6 +168,12 @@ export interface AppStore {
   readonly activeConversationId: string | null;
   /** The workspace currently in view (URL slug); tabs are filtered to it. */
   readonly activeWorkspaceId: string;
+  /**
+   * The resolved HTTP API base URL (e.g. `http://localhost:24203`). Used to
+   * resolve relative image URLs served by the backend (`/images/…`) into
+   * absolute URLs for `<img src>`.
+   */
+  readonly httpBase: string;
   readonly activeChat: ChatStore;
   readonly models: readonly string[];
   /** Per-model metadata (contextWindow, etc.) from `GET /models`. */
@@ -171,7 +188,14 @@ export interface AppStore {
   readonly storage: Storage | undefined;
   /** The current spec for one surface by id (discovery-by-id), or null if absent. */
   surface(surfaceId: string): SurfaceSpec | null;
-  send(text: string): void;
+  /**
+   * Send a user message (start a turn). Forwards any staged `images`
+   * (`ImageInput[]` — base64 data URLs / https URLs) on the `chat.send` op;
+   * the server passes them to a vision-capable model natively or transcribes
+   * them via vision handoff for a non-vision model. Omitted on the wire when
+   * none are staged. On a draft, promotes to a tab first.
+   */
+  send(text: string, images?: readonly ImageInput[]): void;
   /**
    * Enqueue a steering message onto the focused conversation's queue
    * (`chat.queue` WS op). While a turn is generating, the message is delivered
@@ -272,6 +296,23 @@ export interface AppStore {
    * number enables. Works for a draft too (its id survives promotion).
    */
   setCompactPercent(percent: number): Promise<CompactPercentResult | null>;
+  /**
+   * The GLOBAL vision settings (`GET /settings/vision`): `imageLimit` (max
+   * native images per turn before compaction; 0 = disabled) + `compactionModel`
+   * (which vision model transcribes old images; null = auto). Shared across all
+   * conversations. Seeded on boot; `null` = not yet fetched.
+   */
+  readonly visionSettings: VisionSettings | null;
+  /**
+   * Refetch the global vision settings (`GET /settings/vision`). Called by the
+   * vision-settings view on mount; also seeded on boot.
+   */
+  refreshVisionSettings(): Promise<void>;
+  /**
+   * Save a PARTIAL vision-settings update (`PUT /settings/vision`). Either
+   * field may be omitted. Returns the merged settings on success.
+   */
+  setVisionSettings(patch: VisionSettingsPatch): Promise<VisionSettingsResult | null>;
   /**
    * Fetch the workspace conversation's language-server status (`GET /conversations/:id/lsp`).
    * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
@@ -661,6 +702,22 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // The workspace conversation's auto-compact percent. Seeded from the
   // backend on focus change; null = not yet fetched. 0 = disabled.
   let compactPercent = $state<number | null>(null);
+
+  // The GLOBAL vision settings (shared across all conversations). Seeded on
+  // boot; null = not yet fetched.
+  let visionSettings = $state<VisionSettings | null>(null);
+
+  /** Refetch the global vision settings (`GET /settings/vision`). */
+  async function refreshVisionSettings(): Promise<void> {
+    try {
+      const res = await fetchImpl(`${httpBase}/settings/vision`);
+      if (!res.ok) return;
+      const data = normalizeVisionSettings(await res.json());
+      visionSettings = data;
+    } catch (err) {
+      reportError("Failed to load vision settings", err);
+    }
+  }
 
   /** Refetch the workspace conversation's compact percent (works for a draft too). */
   async function refreshCompactPercent(): Promise<void> {
@@ -1106,6 +1163,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   void refreshModel();
   void refreshReasoningEffort();
   void refreshCompactPercent();
+  void refreshVisionSettings();
 
   // Fetch the authoritative open-conversation list from the backend (cross-
   // device tab sync). Merges with the localStorage-restored tabs: opens new
@@ -1121,6 +1179,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     get activeWorkspaceId(): string {
       return activeWorkspaceId;
+    },
+    get httpBase(): string {
+      return httpBase;
     },
     setActiveWorkspace(workspaceId: string): void {
       activeWorkspaceId = workspaceId;
@@ -1182,6 +1243,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     get compactPercent(): number | null {
       return compactPercent;
     },
+    get visionSettings(): VisionSettings | null {
+      return visionSettings;
+    },
+    async refreshVisionSettings(): Promise<void> {
+      await refreshVisionSettings();
+    },
     get chatLimit(): number {
       return chatLimit;
     },
@@ -1196,7 +1263,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       return getSurfaceSpec(protocol, surfaceId);
     },
 
-    send(text: string): void {
+    send(text: string, images?: readonly ImageInput[]): void {
       if (tabsStore.activeConversationId === null) {
         // Draft: promote to tab on first send
         const conversationId = draftConversationId;
@@ -1224,9 +1291,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         void refreshReasoningEffort();
         void refreshCompactPercent();
         // Now send on the promoted store
-        chatStores.get(conversationId)?.send(text);
+        chatStores.get(conversationId)?.send(text, images);
       } else {
-        activeChat.send(text);
+        activeChat.send(text, images);
       }
     },
 
@@ -1536,6 +1603,32 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         return {
           ok: false,
           error: err instanceof Error ? err.message : "Set compact percent request failed",
+        };
+      }
+    },
+
+    async setVisionSettings(patch: VisionSettingsPatch): Promise<VisionSettingsResult | null> {
+      const body: SetVisionSettingsRequest = patch;
+      try {
+        const res = await fetchImpl(`${httpBase}/settings/vision`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Set vision settings failed (HTTP ${res.status})`,
+          };
+        }
+        const data = normalizeVisionSettings(await res.json());
+        visionSettings = data;
+        return { ok: true, settings: data };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Set vision settings request failed",
         };
       }
     },

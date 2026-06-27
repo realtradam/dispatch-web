@@ -1,5 +1,6 @@
 export type { RenderGroup, ToolBatchEntry } from "./groups";
 export { groupRenderedChunks } from "./groups";
+export { resolveImageUrl } from "./image-url";
 export {
   appendUserMessage,
   applyHistory,

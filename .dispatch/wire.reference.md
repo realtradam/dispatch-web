@@ -11,6 +11,23 @@
 > per-provider concurrency slot (broadcast-only via `conversation.statusChanged`, never persisted); the FE shows
 > a loading ring (vs the dots of `active`). See `backend-handoff.md` CR-13.
 >
+> **2026-06-26 delta (vision handoff — ADDITIVE to `wire@0.12.0`, NO version bump):** adds a new
+> `ImageChunk` variant to the `Chunk` union (`{ type: "image", url, mimeType? }` — `url` is a base64 data
+> URL or an `http(s)://` URL) and a transport-facing `ImageInput` (`{ url, mimeType? }`, what a client
+> sends on `ChatRequest.images`; the orchestrator converts each into an `ImageChunk` on the persisted user
+> message). Vision-capable models receive image chunks natively; non-vision models never see them directly
+> — the orchestrator's vision handoff transcribes each to a text description (persisted as a separate
+> `text` chunk in the SAME user message). See `backend-handoff.md` §2j.
+>
+> **2026-06-26 update (image storage — NO type change, behavior only):** `ImageChunk.url` for PERSISTED
+> chunks is now a compact relative HTTP path (`/images/<conversationId>/<uuid>.png`) served by the backend's
+> new `GET /images/:conversationId/:imageId` endpoint (raw bytes + correct Content-Type), NOT a base64 data
+> URL — images are stored on disk under tmp, not in the SQLite conversation store (keeps payloads small).
+> `ImageInput.url` (what a client SENDS on `ChatRequest.images`) is UNCHANGED — still a data URL or
+> `http(s)://` URL; the backend saves it to tmp and returns the compact path in the persisted chunk. A client
+> resolves a relative `url` against its API base (`resolveImageUrl`); a data URL (the optimistic echo) or an
+> absolute URL passes through unchanged. See `backend-handoff.md` §2j.
+>
 > **2026-06-23 delta (workspaces handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):** adds
 > `Workspace` + `WorkspaceEntry` (a list entry with a conversation count) and a required
 > `workspaceId: string` on `ConversationMeta` (`"default"` for legacy/unspecified conversations). A
@@ -73,7 +90,8 @@ export type Chunk =
 	| ToolCallChunk
 	| ToolResultChunk
 	| ErrorChunk
-	| SystemChunk;
+	| SystemChunk
+	| ImageChunk;
 
 /** A piece of plain text content from the assistant or user. */
 export interface TextChunk {
@@ -147,6 +165,51 @@ export interface ErrorChunk {
 export interface SystemChunk {
 	readonly type: "system";
 	readonly text: string;
+}
+
+/**
+ * An image attached to a message (e.g. a user-pasted screenshot or pasted
+ * photo). Carries a `url` that is EITHER a base64 data URL
+ * (`data:image/png;base64,…`) OR an `http(s)://` URL OR — for PERSISTED chunks
+ * (history/replay) — a compact relative HTTP path (`/images/<conversationId>/
+ * <uuid>.png`) served by the backend's `GET /images/:conversationId/:imageId`
+ * endpoint (images are stored on disk under tmp, NOT in the conversation store,
+ * to keep SQLite payloads small). A client resolves a relative path against its
+ * API base URL; a data URL (the optimistic echo / a pasted image) or an
+ * absolute URL is rendered as-is. Vision-capable models receive it natively
+ * (the provider serializes it to its image-content format); non-vision models
+ * never see it directly — the orchestrator's **vision handoff** transcribes it
+ * to a text description (via a vision-capable model) and feeds that text
+ * instead, so a text-only model can still reason about the image's contents.
+ *
+ * When a transcription was performed, it is persisted as a separate `text`
+ * chunk alongside the `image` chunk in the SAME user message, so the
+ * description is reused on every later turn (no re-transcription) and a
+ * client renders both the original image and its textual analysis.
+ */
+export interface ImageChunk {
+	readonly type: "image";
+	/** Image source: a base64 data URL (`data:image/…;base64,…`), an `http(s)://` URL, or a compact relative path (`/images/<conv>/<uuid>.png`) for persisted chunks. */
+	readonly url: string;
+	/**
+	 * Optional MIME type of the image (e.g. `"image/png"`). Inferred from the
+	 * data URL when absent; present so a client can render an icon/label without
+	 * parsing the URL. Optional — callers that only have a URL omit it.
+	 */
+	readonly mimeType?: string;
+}
+
+/**
+ * An image a client attaches to a chat message (`ChatRequest.images`). The
+ * transport-facing input shape; the orchestrator converts each `ImageInput`
+ * into an `ImageChunk` on the persisted user message. Carries the same `url`
+ * semantics as `ImageChunk.url`.
+ */
+export interface ImageInput {
+	/** Image source: a base64 data URL (`data:image/…;base64,…`) or an `http(s)://` URL. */
+	readonly url: string;
+	/** Optional MIME type (e.g. `"image/png"`). Optional — inferred from the data URL when absent. */
+	readonly mimeType?: string;
 }
 
 /**

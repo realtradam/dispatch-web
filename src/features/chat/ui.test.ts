@@ -607,6 +607,180 @@ describe("ChatView", () => {
     // Turn total should NOT render (total is null — turn still in progress)
     expect(screen.queryByText(/^turn/)).toBeNull();
   });
+
+  it("renders a user image chunk as an <img> with the chunk's url", () => {
+    const url = "data:image/png;base64,AAAA";
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "image", url, mimeType: "image/png" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, { props: { chunks } });
+
+    const img = container.querySelector("img");
+    expect(img).not.toBeNull();
+    expect(img?.getAttribute("src")).toBe(url);
+    expect(img?.getAttribute("alt")).toBe("image/png");
+    expect(img?.getAttribute("loading")).toBe("lazy");
+  });
+
+  it("resolves a persisted image chunk's relative url against apiBaseUrl", () => {
+    // Persisted image chunks now carry a compact relative path (`/images/…`)
+    // served by the backend — prepend the API base to render them.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "image", url: "/images/conv-123/abc-456.png", mimeType: "image/png" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, {
+      props: { chunks, apiBaseUrl: "http://localhost:24203" },
+    });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "http://localhost:24203/images/conv-123/abc-456.png",
+    );
+  });
+
+  it("passes a data URL through unchanged even with apiBaseUrl set (optimistic echo)", () => {
+    // The optimistic echo (what the FE just sent) is still a data URL; it must
+    // NOT be mangled by the base-URL prepend.
+    const dataUrl = "data:image/png;base64,iVBOR=";
+    const chunks: RenderedChunk[] = [
+      { seq: null, role: "user", chunk: { type: "image", url: dataUrl }, provisional: true },
+    ];
+
+    const { container } = render(ChatView, {
+      props: { chunks, apiBaseUrl: "http://localhost:24203" },
+    });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(dataUrl);
+  });
+
+  it("leaves a relative image url root-relative when apiBaseUrl is absent", () => {
+    // No apiBaseUrl → a browser resolves `/images/…` against the document origin.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "image", url: "/images/conv-1/x.png" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, { props: { chunks } });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/images/conv-1/x.png");
+  });
+
+  it("renders a multi-chunk user message [text, image] and a transcription text", () => {
+    // A non-vision model: the server persists the original image chunk AND a
+    // transcription text chunk in the SAME user message — render both.
+    const url = "data:image/png;base64,BBQ=";
+    const chunks: RenderedChunk[] = [
+      { seq: 1, role: "user", chunk: { type: "text", text: "describe this" }, provisional: false },
+      {
+        seq: 2,
+        role: "user",
+        chunk: { type: "image", url, mimeType: "image/png" },
+        provisional: false,
+      },
+      {
+        seq: 3,
+        role: "user",
+        chunk: { type: "text", text: "[Image analysis (via kimi/k2)]: a red square" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, { props: { chunks } });
+
+    expect(screen.getByText("describe this")).toBeInTheDocument();
+    expect(screen.getByText(/\[Image analysis/)).toBeInTheDocument();
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(url);
+  });
+
+  it("renders a consult_vision tool call/result like any other tool", () => {
+    // read_image is GONE — replaced by consult_vision (opens a vision-model
+    // conversation, attaches the image + question, returns the answer). It is
+    // a normal tool call: rendered generically by toolName.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "assistant",
+        chunk: {
+          type: "tool-call",
+          toolCallId: "tc1",
+          toolName: "consult_vision",
+          input: { question: "what is in this image?", imageIds: [1] },
+        },
+        provisional: false,
+      },
+      {
+        seq: 2,
+        role: "tool",
+        chunk: {
+          type: "tool-result",
+          toolCallId: "tc1",
+          toolName: "consult_vision",
+          content: "a red square on a white background",
+          isError: false,
+        },
+        provisional: false,
+      },
+    ];
+
+    render(ChatView, { props: { chunks } });
+
+    expect(screen.getAllByText("consult_vision").length).toBeGreaterThan(0);
+    expect(screen.getByText("a red square on a white background")).toBeInTheDocument();
+  });
+
+  it("renders a non-vision placeholder text chunk as-is", () => {
+    // A non-vision model gets a numbered placeholder (a regular text chunk)
+    // instead of an auto-transcription. Renders like any text chunk.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: {
+          type: "text",
+          text: "[Image 1 attached — call consult_vision with imageIds=[1] and a specific question to analyze it]",
+        },
+        provisional: false,
+      },
+    ];
+
+    render(ChatView, { props: { chunks } });
+
+    expect(screen.getByText(/\[Image 1 attached/)).toBeInTheDocument();
+    expect(screen.getByText(/consult_vision with imageIds/)).toBeInTheDocument();
+  });
+
+  it("renders a compacted-image text chunk as-is", () => {
+    // Image compaction transcribes old images to [Compacted image]: <desc>.
+    // Regular text chunk — render as-is.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "text", text: "[Compacted image]: a chart showing rising sales" },
+        provisional: false,
+      },
+    ];
+
+    render(ChatView, { props: { chunks } });
+
+    expect(screen.getByText(/\[Compacted image\]/)).toBeInTheDocument();
+    expect(screen.getByText(/rising sales/)).toBeInTheDocument();
+  });
 });
 
 describe("Composer", () => {
@@ -623,7 +797,7 @@ describe("Composer", () => {
     await user.click(sendButton);
 
     expect(onSend).toHaveBeenCalledTimes(1);
-    expect(onSend).toHaveBeenCalledWith("Hello world");
+    expect(onSend).toHaveBeenCalledWith("Hello world", undefined);
     expect(textarea).toHaveValue("");
   });
 
@@ -651,7 +825,7 @@ describe("Composer", () => {
     const sendButton = screen.getByRole("button", { name: "Send" });
     await user.click(sendButton);
 
-    expect(onSend).toHaveBeenCalledWith("hello");
+    expect(onSend).toHaveBeenCalledWith("hello", undefined);
   });
 
   it("sends on Enter key (without Shift)", async () => {
@@ -663,7 +837,7 @@ describe("Composer", () => {
     const textarea = screen.getByRole("textbox", { name: "Message input" });
     await user.type(textarea, "Test message{Enter}");
 
-    expect(onSend).toHaveBeenCalledWith("Test message");
+    expect(onSend).toHaveBeenCalledWith("Test message", undefined);
   });
 
   it("does not send on Shift+Enter", async () => {
@@ -675,6 +849,142 @@ describe("Composer", () => {
     const textarea = screen.getByRole("textbox", { name: "Message input" });
     await user.type(textarea, "Line 1{Shift>}{Enter}{/Shift}Line 2");
 
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("stages a pasted image and forwards it on send", async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend } });
+
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(textarea, "look at this");
+
+    // jsdom has no ClipboardEvent/DataTransfer: dispatch a plain paste event
+    // carrying a mock clipboardData whose only item is an image File.
+    const file = new File(["PNG"], "shot.png", { type: "image/png" });
+    const paste = new Event("paste", { bubbles: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: {
+        items: [{ kind: "file", type: "image/png", getAsFile: () => file }],
+      },
+    });
+    container.querySelector("textarea")?.dispatchEvent(paste);
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const [, images] = onSend.mock.calls[0] ?? [];
+    expect(images).toHaveLength(1);
+    expect(images[0]?.url).toMatch(/^data:image\/png;base64,/);
+    expect(images[0]?.mimeType).toBe("image/png");
+  });
+
+  it("lets a text paste proceed when no image is on the clipboard", async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend } });
+
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(textarea, "hello");
+
+    // A text-only paste: no file items → the component must NOT preventDefault,
+    // so the default text paste path is unaffected (no image staged).
+    const paste = new Event("paste", { bubbles: true });
+    Object.defineProperty(paste, "clipboardData", {
+      value: { items: [{ kind: "string", type: "text/plain" }] },
+    });
+    container.querySelector("textarea")?.dispatchEvent(paste);
+
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+  });
+
+  it("stages an image via the attach button's file picker", async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend } });
+
+    const file = new File(["JPG"], "photo.jpg", { type: "image/jpeg" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], writable: false });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    });
+
+    // Image-only send (no text): the Send button is enabled.
+    const send = screen.getByRole("button", { name: "Send" });
+    expect(send).not.toBeDisabled();
+    await user.click(send);
+
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const [text, images] = onSend.mock.calls[0] ?? [];
+    expect(text).toBe("");
+    expect(images).toHaveLength(1);
+    expect(images[0]?.mimeType).toBe("image/jpeg");
+  });
+
+  it("removes a staged image via the remove button", async () => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend } });
+
+    const file = new File(["PNG"], "shot.png", { type: "image/png" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], writable: false });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    });
+    await user.click(screen.getByRole("button", { name: "Remove image" }));
+
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+    // With no text and no images, Send is disabled again.
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+  });
+
+  it("ignores a non-image file chosen via the picker", async () => {
+    const onSend = vi.fn();
+    const { container } = render(Composer, { props: { onSend } });
+
+    const file = new File(["TXT"], "notes.txt", { type: "text/plain" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], writable: false });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+
+    // Give the async staging a chance; a non-image is skipped.
+    await new Promise((r) => setTimeout(r, 0));
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+  });
+
+  it("queues (steers) text-only and never forwards images", async () => {
+    // While running, the Send button becomes "Queue"; steering is text-only.
+    const onQueue = vi.fn();
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend, onQueue, status: "running" } });
+
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(textarea, "steer here");
+
+    // Also stage an image — it must NOT be forwarded on a queue.
+    const file = new File(["PNG"], "shot.png", { type: "image/png" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], writable: false });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    });
+
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    expect(onQueue).toHaveBeenCalledWith("steer here");
     expect(onSend).not.toHaveBeenCalled();
   });
 });
@@ -729,6 +1039,55 @@ describe("ModelSelector", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith("openai/gpt-4o");
+  });
+
+  it("marks vision-capable models in the model dropdown", () => {
+    const models = ["kimi/k2", "kimi/k1.5"];
+    const modelInfo = {
+      "kimi/k2": { vision: true },
+      "kimi/k1.5": { vision: false },
+    };
+    render(ModelSelector, {
+      props: { models, selected: "kimi/k2", onSelect: vi.fn(), modelInfo },
+    });
+
+    const modelSelect = screen.getByRole("combobox", { name: "Model selector" });
+    const options = within(modelSelect).getAllByRole("option");
+    expect(options).toHaveLength(2);
+    expect(options[0]?.textContent).toContain("vision");
+    expect(options[1]?.textContent).not.toContain("vision");
+  });
+
+  it("shows the vision indicator when the selected model is vision-capable", () => {
+    render(ModelSelector, {
+      props: {
+        models: ["kimi/k2"],
+        selected: "kimi/k2",
+        onSelect: vi.fn(),
+        modelInfo: { "kimi/k2": { vision: true } },
+      },
+    });
+    expect(screen.getByText(/sees images natively/)).toBeInTheDocument();
+  });
+
+  it("shows the vision-handoff hint when the selected model is non-vision", () => {
+    render(ModelSelector, {
+      props: {
+        models: ["umans/glm-5.2"],
+        selected: "umans/glm-5.2",
+        onSelect: vi.fn(),
+        modelInfo: { "umans/glm-5.2": { vision: false } },
+      },
+    });
+    expect(screen.getByText(/auto-described/i)).toBeInTheDocument();
+    expect(screen.queryByText(/sees images natively/)).not.toBeInTheDocument();
+  });
+
+  it("shows the handoff hint when modelInfo is absent", () => {
+    render(ModelSelector, {
+      props: { models: ["openai/gpt-4"], selected: "openai/gpt-4", onSelect: vi.fn() },
+    });
+    expect(screen.getByText(/auto-described/i)).toBeInTheDocument();
   });
 });
 

@@ -11,6 +11,7 @@
 		closeChat,
 		stopRun,
 		onClose,
+		apiBaseUrl = "",
 	}: {
 		/** The run to display (its conversation's chat is shown live). */
 		run: HeartbeatRunView;
@@ -26,6 +27,11 @@
 		/** Stop the heartbeat run (`POST .../runs/:runId/stop`). */
 		stopRun: StopHeartbeatRun;
 		onClose: () => void;
+		/**
+		 * The HTTP API base URL, to resolve persisted image chunk URLs
+		 * (`/images/…`) in the run's transcript. Defaults to "" (root-relative).
+		 */
+		apiBaseUrl?: string;
 	} = $props();
 
 	// Open the live watch ONCE on mount (the modal is keyed per run.id, so a run
@@ -153,6 +159,7 @@
 						onShowEarlier={chat.showEarlier}
 						thinkingKeyBase={chat.thinkingKeyBase}
 						providerRetry={chat.providerRetry}
+						apiBaseUrl={apiBaseUrl}
 					/>
 				{/if}
 			</div>

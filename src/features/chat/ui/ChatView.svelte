@@ -1,6 +1,6 @@
 <script lang="ts">
   import type { TurnProviderRetryEvent } from "@dispatch/wire";
-  import { groupRenderedChunks, type RenderedChunk, viewProviderRetry } from "../index";
+  import { groupRenderedChunks, resolveImageUrl, type RenderedChunk, viewProviderRetry } from "../index";
   import {
     interleaveTurnMetrics,
     viewCacheRate,
@@ -24,6 +24,7 @@
     onShowEarlier,
     thinkingKeyBase = 0,
     providerRetry = null,
+    apiBaseUrl = "",
   }: {
     chunks: readonly RenderedChunk[];
     turnMetrics?: readonly TurnMetricsEntry[];
@@ -44,6 +45,14 @@
      * newest attempt + delay, and is cleared when content resumes / turn ends.
      */
     providerRetry?: TurnProviderRetryEvent | null;
+    /**
+     * The HTTP API base URL (e.g. `http://localhost:24203`). Persisted image
+     * chunks carry a compact relative path (`/images/<conv>/<uuid>.png`); this
+     * base is prepended to render them. The optimistic echo's data URL and any
+     * absolute URL pass through unchanged (see `resolveImageUrl`). Defaults to
+     * "" (root-relative — a browser resolves `/images/…` against its origin).
+     */
+    apiBaseUrl?: string;
   } = $props();
 
   // True while a show-earlier page-in is awaited (disables the button).
@@ -95,11 +104,23 @@
 
 {#snippet chunkRow(rendered: RenderedChunk)}
   {#if rendered.role === "user"}
-    <!-- User: a speech bubble, left-aligned -->
+    <!-- User: a speech bubble, left-aligned. A user message may be multi-chunk
+         ([text, image, image, …]); each chunk renders in its own bubble. A
+         persisted image chunk's url is a compact relative path (`/images/…`)
+         served by the backend — resolve it against the API base. The
+         optimistic echo's data URL (and any absolute URL) passes through. -->
     <div class="chat chat-start">
       <div class="chat-bubble chat-bubble-primary">
         {#if rendered.chunk.type === "text"}
           <p>{rendered.chunk.text}</p>
+        {:else if rendered.chunk.type === "image"}
+          <img
+            src={resolveImageUrl(rendered.chunk.url, apiBaseUrl)}
+            alt={rendered.chunk.mimeType ?? "pasted image"}
+            loading="lazy"
+            decoding="async"
+            class="max-h-80 max-w-full rounded"
+          />
         {/if}
       </div>
     </div>
