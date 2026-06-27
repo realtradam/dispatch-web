@@ -1,4 +1,4 @@
-import type { AgentEvent, StepId, StoredChunk } from "@dispatch/wire";
+import type { AgentEvent, ImageInput, StepId, StoredChunk } from "@dispatch/wire";
 import { describe, expect, it, vi } from "vitest";
 import { createChatStore } from "./store.svelte";
 import {
@@ -141,6 +141,93 @@ describe("createChatStore", () => {
     expect(transport.sent).toHaveLength(1);
     expect(transport.sent[0]?.model).toBe("openai/gpt-4");
 
+    store.dispose();
+  });
+
+  it("send forwards staged images on chat.send and echoes them provisionally", () => {
+    const transport = createFakeTransport();
+    const historySync = createFakeHistorySync();
+    const metricsSync = createFakeMetricsSync();
+    const cache = createFakeCache();
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: transport.impl,
+      historySync: historySync.impl,
+      metricsSync: metricsSync.impl,
+      cache: cache.impl,
+    });
+
+    const images: ImageInput[] = [
+      { url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+      { url: "https://example.com/cat.jpg" },
+    ];
+    store.send("look at this", images);
+
+    expect(transport.sent).toHaveLength(1);
+    const msg = transport.sent[0];
+    expect(msg?.type).toBe("chat.send");
+    expect(msg?.message).toBe("look at this");
+    expect(msg?.images).toEqual(images);
+
+    // Optimistic echo: a text chunk + two image chunks, provisional.
+    const chunks = store.chunks;
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]?.chunk).toEqual({ type: "text", text: "look at this" });
+    expect(chunks[1]?.chunk).toEqual({ type: "image", url: images[0]?.url, mimeType: "image/png" });
+    expect(chunks[2]?.chunk).toEqual({ type: "image", url: images[1]?.url });
+
+    store.dispose();
+  });
+
+  it("send omits images on the wire when none are staged (backward compatible)", () => {
+    const transport = createFakeTransport();
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: transport.impl,
+      historySync: createFakeHistorySync().impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+    });
+
+    store.send("just text");
+
+    expect(transport.sent[0]).not.toHaveProperty("images");
+    store.dispose();
+  });
+
+  it("send omits images on the wire for an empty array", () => {
+    const transport = createFakeTransport();
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: transport.impl,
+      historySync: createFakeHistorySync().impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+    });
+
+    store.send("just text", []);
+
+    expect(transport.sent[0]).not.toHaveProperty("images");
+    store.dispose();
+  });
+
+  it("send allows an images-only message (empty text)", () => {
+    const transport = createFakeTransport();
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: transport.impl,
+      historySync: createFakeHistorySync().impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+    });
+
+    store.send("", [{ url: "data:image/png;base64,AAAA", mimeType: "image/png" }]);
+
+    expect(transport.sent[0]?.message).toBe("");
+    expect(transport.sent[0]?.images).toHaveLength(1);
+    // The echo is image-only (no text chunk).
+    expect(store.chunks).toHaveLength(1);
+    expect(store.chunks[0]?.chunk.type).toBe("image");
     store.dispose();
   });
 

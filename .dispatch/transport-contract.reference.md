@@ -15,6 +15,32 @@
 > `concurrency` extension tracks/limits in-flight token-generating requests per provider with
 > oldest-agent-first queueing; when it isn't loaded the list + status endpoints return empty arrays and
 > the single/PUT/DELETE return `503`. See `backend-handoff.md` §2j.
+> **2026-06-26 delta (vision handoff — ADDITIVE, NO version bump):** adds the vision/image surface.
+> `ChatRequest` (+ `ChatSendMessage`/`QueueRequest`) gains an optional `images?: readonly ImageInput[]`
+> (each entry: `{ url, mimeType? }` — a base64 data URL or `http(s)://` URL; validated non-array/no-url/
+> empty-url → 400, empty array treated as absent). `ModelMetadata` gains `vision?: boolean` (true when the
+> model natively accepts images; absent → the server's vision handoff transcribes images to text before the
+> model sees them). `ImageChunk`/`ImageInput` are `@dispatch/wire` types (re-exported here).
+>
+> **2026-06-26 update (consult_vision + vision settings — ADDITIVE, NO version bump):** the `read_image`
+> tool is REPLACED by `consult_vision` (`{ question: string, imageIds?: number[], path?: string }`) — it
+> opens a NEW conversation tab with a vision-capable model, attaches the image + question, and returns the
+> vision model's answer (rendered like any tool call/result). Non-vision models now get NUMBERED
+> PLACEHOLDERS (`[Image N attached — call consult_vision with imageIds=[N] and a specific question to
+> analyze it]`) instead of auto-transcriptions — these are regular `text` chunks (render as-is). Image
+> compaction transcribes the oldest images past `imageLimit` to `[Compacted image]: <description>` text
+> chunks (also regular `text` — render as-is; the persisted `image` chunk stays for rendering). NEW global
+> vision settings API: `GET /settings/vision` → `VisionSettingsResponse` (`{ imageLimit, compactionModel }`),
+> `PUT /settings/vision` ← `SetVisionSettingsRequest` (partial: `imageLimit?` non-negative int, 0 = disable
+> compaction; `compactionModel?` `<key>/<model>` or null = auto). See `backend-handoff.md` §2j.
+>
+> **2026-06-26 update (image storage — NO type change, behavior only):** persisted `ImageChunk.url`s are now
+> compact relative HTTP paths (`/images/<conversationId>/<uuid>.png`) served by the new
+> `GET /images/:conversationId/:imageId` endpoint (raw image bytes + correct Content-Type) — NOT base64 data
+> URLs (images are stored on disk under tmp, not in the SQLite store). `ChatRequest.images` (`ImageInput.url`)
+> is UNCHANGED — clients still send data URLs; the backend saves them to tmp and returns compact paths in
+> the persisted chunks. A client resolves a relative `url` against its API base (`resolveImageUrl`); the
+> optimistic echo's data URL and any absolute URL pass through. See `backend-handoff.md` §2j.
 >
 > **2026-06-25 delta (SSH handoff #2 — ADDITIVE to `transport-contract@0.22.0`, NO version bump):** adds the
 > computer HTTP API types: `ComputerListResponse` (`GET /computers`), `ComputerResponse` (`GET /computers/:alias`),
@@ -67,8 +93,11 @@
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
 import type {
 	AgentEvent,
+	Computer,
+	ComputerEntry,
 	ConversationMeta,
 	ConversationStatus,
+	ImageInput,
 	QueuedMessage,
 	ReasoningEffort,
 	StoredChunk,
@@ -80,8 +109,12 @@ import type {
 export type {
 	AgentEvent,
 	CompactionResult,
+	Computer,
+	ComputerEntry,
 	ConversationMeta,
 	ConversationStatus,
+	ImageChunk,
+	ImageInput,
 	QueuedMessage,
 	ReasoningEffort,
 	StepMetrics,
@@ -107,6 +140,21 @@ export interface ChatRequest {
 
 	/** The user's message text for this turn. */
 	readonly message: string;
+
+	/**
+	 * Images attached to this turn (e.g. a user-pasted screenshot). Each entry's
+	 * `url` is a base64 data URL (`data:image/…;base64,…`) or an `http(s)://`
+	 * URL. The server converts these to `image` chunks on the persisted user
+	 * message. For a VISION-capable model (e.g. kimi), the images are passed
+	 * through to the provider natively. For a NON-vision model (e.g. glm-5.2),
+	 * the server's vision handoff transcribes each image to a text description
+	 * (via a vision-capable model) and feeds that text instead — so a text-only
+	 * model can still reason about the image's contents. Optional — omit for a
+	 * text-only turn (backward compatible). Validation: non-array `images` →
+	 * 400; an image without `url` → 400; empty `url` → 400. An empty array is
+	 * accepted and treated as absent.
+	 */
+	readonly images?: readonly ImageInput[];
 
 	/**
 	 * The model to use, as a model name in `<credentialName>/<model>` form — one
@@ -165,6 +213,14 @@ export interface ModelsResponse {
 /** Per-model metadata returned alongside the model catalog. */
 export interface ModelMetadata {
 	readonly contextWindow?: number;
+	/**
+	 * Whether this model can natively accept image input (vision/multimodal).
+	 * When `true`, image chunks in a user message are passed through to the
+	 * provider. When `false`/absent, the server's vision handoff transcribes
+	 * images to text before the model sees them. A client may use this to show
+	 * a vision badge in the model picker. Optional — absent when unknown.
+	 */
+	readonly vision?: boolean;
 }
 
 /**
@@ -426,6 +482,27 @@ export interface SystemPromptVariable {
 /** Response of `GET /system-prompt/variables`. */
 export interface SystemPromptVariablesResponse {
 	readonly variables: readonly SystemPromptVariable[];
+}
+
+// ─── Vision settings (global) ───────────────────────────────────────────────
+
+/**
+ * Response of `GET /settings/vision` — the global vision configuration shared
+ * across all conversations and vision models.
+ */
+export interface VisionSettingsResponse {
+	/** Max native images per turn (default 10); 0 disables image compaction. */
+	readonly imageLimit: number;
+	/** Which model transcribes old images (null = auto-select a vision model). */
+	readonly compactionModel: string | null;
+}
+
+/** Body of `PUT /settings/vision` — a partial update. */
+export interface SetVisionSettingsRequest {
+	/** Non-negative integer (0 = disable compaction). */
+	readonly imageLimit?: number;
+	/** A model name (`<key>/<model>`) or null (auto). */
+	readonly compactionModel?: string | null;
 }
 
 // ─── Message queue (steering) ─────────────────────────────────────────────────

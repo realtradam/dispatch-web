@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ReasoningEffort } from "@dispatch/transport-contract";
+	import type { ImageInput, ReasoningEffort } from "@dispatch/transport-contract";
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import { tick } from "svelte";
 	import Table from "../components/Table.svelte";
@@ -86,6 +86,13 @@
 		type SaveSystemPrompt as SaveSystemPromptAlias,
 		manifest as systemPromptManifest,
 	} from "../features/system-prompt";
+	import {
+		VisionSettingsView,
+		manifest as visionManifest,
+		type LoadVisionSettingsResult,
+		type SaveVisionSettingsResult,
+		type VisionSettingsPatch,
+	} from "../features/vision";
 	import type { AppStore } from "./store.svelte";
 	import ErrorModal from "./ErrorModal.svelte";
 	import { createLocalStore } from "../adapters/local-storage";
@@ -156,6 +163,7 @@
 		systemPromptManifest,
 		heartbeatManifest,
 		concurrencyManifest,
+		visionManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -279,8 +287,8 @@
 		store.invoke(msg.surfaceId, msg.actionId, msg.payload);
 	}
 
-	function handleSend(text: string) {
-		store.send(text);
+	function handleSend(text: string, images?: readonly ImageInput[]): void {
+		store.send(text, images);
 	}
 
 	function handleQueue(text: string) {
@@ -339,6 +347,27 @@
 		if (result === null) return null;
 		return result.ok
 			? { ok: true, percent: result.percent }
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's global vision-settings API to the vision feature's ports.
+	async function loadVisionSettings(): Promise<LoadVisionSettingsResult> {
+		// The store seeds `visionSettings` on boot; a refresh keeps it current.
+		await store.refreshVisionSettings();
+		const settings = store.visionSettings;
+		if (settings === null) {
+			return { ok: false, error: "Vision settings not available." };
+		}
+		return { ok: true, settings };
+	}
+
+	async function saveVisionSettings(
+		patch: VisionSettingsPatch,
+	): Promise<SaveVisionSettingsResult> {
+		const result = await store.setVisionSettings(patch);
+		if (result === null) return { ok: false, error: "Vision settings not available." };
+		return result.ok
+			? { ok: true, settings: result.settings }
 			: { ok: false, error: result.error };
 	}
 
@@ -572,6 +601,7 @@
 							onShowEarlier={handleShowEarlier}
 							thinkingKeyBase={store.activeChat.thinkingKeyBase}
 							providerRetry={store.activeChat.providerRetry}
+							apiBaseUrl={store.httpBase}
 						/>
 					{/key}
 				</div>
@@ -662,6 +692,7 @@
 			closeChat={closeRunChat}
 			stopRun={stopHeartbeatRun}
 			onClose={() => (heartbeatRun = null)}
+			apiBaseUrl={store.httpBase}
 		/>
 	{/key}
 {/if}
@@ -684,7 +715,12 @@
 		{/key}
 	{:else if kind === "model"}
 		<div class="flex flex-col gap-3">
-			<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
+			<ModelSelector
+			models={store.models}
+			selected={store.activeModel}
+			onSelect={handleSelectModel}
+			modelInfo={store.modelInfo}
+		/>
 			<!-- Keyed on the workspace conversation (active tab OR draft) so the inputs
 			     re-mount per conversation — incl. switching between drafts — and can't
 			     bleed across tabs. Editable for a draft too (cwd + effort apply from turn 1). -->
@@ -743,7 +779,9 @@
 			{/if}
 		{/key}
 	{:else if kind === "compaction"}
-		<!-- Re-mount per conversation so the percent + feedback can't bleed across tabs. -->
+		<!-- Message compaction is per-conversation (keyed so the percent + feedback
+		     can't bleed across tabs). Vision (image-compaction) settings are GLOBAL,
+		     so they stay mounted across conversation switches (no {#key}). -->
 		{#key store.currentConversationId}
 			<CompactionView
 				percent={store.compactPercent}
@@ -752,6 +790,13 @@
 				savePercent={saveCompactPercent}
 			/>
 		{/key}
+		<div class="divider my-1 text-xs text-base-content/40">Image compaction</div>
+		<VisionSettingsView
+			models={store.models}
+			modelInfo={store.modelInfo}
+			load={loadVisionSettings}
+			save={saveVisionSettings}
+		/>
 	{:else if kind === "system-prompt"}
 		<!-- Global system prompt template. Opens a full-page modal editor (half
 		     template / half variable palette). Not conversation-scoped (no {#key}). -->

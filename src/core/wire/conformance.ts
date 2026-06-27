@@ -60,6 +60,8 @@ export function assertChunkExhaustive(chunk: Chunk): string {
       return "error";
     case "system":
       return "system";
+    case "image":
+      return "image";
     default:
       return chunk satisfies never;
   }

@@ -1,4 +1,5 @@
 import type {
+  ImageInput,
   StepId,
   StoredChunk,
   TurnDoneEvent,
@@ -867,5 +868,157 @@ describe("appendUserMessage", () => {
     expect(s.provisional[0]?.chunk).toEqual({ type: "text", text: "partial" });
     expect(s.provisional[1]?.role).toBe("user");
     expect(s.provisional[1]?.chunk).toEqual({ type: "text", text: "user msg" });
+  });
+});
+
+const PNG = "data:image/png;base64,AAAA";
+const JPG = "data:image/jpeg;base64,BBBB";
+
+describe("appendUserMessage — images (vision handoff)", () => {
+  it("echoes text then image chunks in order", () => {
+    const images: ImageInput[] = [
+      { url: PNG, mimeType: "image/png" },
+      { url: JPG, mimeType: "image/jpeg" },
+    ];
+    let s = initialState();
+    s = appendUserMessage(s, "what's this?", images);
+    const chunks = selectChunks(s);
+    expect(chunks).toHaveLength(3);
+    expect(chunks[0]?.role).toBe("user");
+    expect(chunks[0]?.chunk).toEqual({ type: "text", text: "what's this?" });
+    expect(chunks[1]?.chunk).toEqual({ type: "image", url: PNG, mimeType: "image/png" });
+    expect(chunks[2]?.chunk).toEqual({ type: "image", url: JPG, mimeType: "image/jpeg" });
+    expect(chunks.every((c) => c.provisional && c.seq === null)).toBe(true);
+  });
+
+  it("omits mimeType when not provided", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "look", [{ url: PNG }]);
+    const img = selectChunks(s)[1]?.chunk;
+    expect(img).toEqual({ type: "image", url: PNG });
+    expect(img).not.toHaveProperty("mimeType");
+  });
+
+  it("echoes images-only when text is empty (no text chunk)", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "", [{ url: PNG, mimeType: "image/png" }]);
+    const chunks = selectChunks(s);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0]?.chunk.type).toBe("image");
+  });
+
+  it("echoes nothing for empty text + empty images", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, textDelta("t1", "partial"));
+    s = appendUserMessage(s, "", []);
+    // Defensive flush still happened; no user chunk added.
+    const users = selectChunks(s).filter((c) => c.role === "user");
+    expect(users).toHaveLength(0);
+    expect(s.accumulating).toBeNull();
+  });
+
+  it("skips images with an empty url", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "hi", [
+      { url: "", mimeType: "image/png" },
+      { url: PNG, mimeType: "image/png" },
+    ]);
+    const chunks = selectChunks(s);
+    expect(chunks).toHaveLength(2); // text + the one valid image
+    expect(chunks[1]?.chunk.type).toBe("image");
+  });
+
+  it("groups text + images into one user ChatMessage", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "see this", [{ url: PNG }]);
+    const msgs = selectMessages(s);
+    expect(msgs).toHaveLength(1);
+    expect(msgs[0]?.role).toBe("user");
+    expect(msgs[0]?.chunks).toHaveLength(2);
+  });
+});
+
+describe("foldEvent — user-message dedups against a text+image echo", () => {
+  const userMessage = (text: string): TurnInputEvent => ({
+    type: "user-message",
+    conversationId: "c1",
+    turnId: "t1",
+    text,
+  });
+
+  it("does not duplicate the text when images follow it in the echo", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "hi", [{ url: PNG, mimeType: "image/png" }]);
+    expect(selectChunks(s)).toHaveLength(2); // text + image
+    s = foldEvent(s, userMessage("hi"));
+    const users = selectChunks(s).filter((c) => c.role === "user");
+    expect(users).toHaveLength(2); // unchanged — no duplicate text
+    expect(users[0]?.chunk.type).toBe("text");
+    expect(users[1]?.chunk.type).toBe("image");
+    expect(s.generating).toBe(true);
+  });
+
+  it("still appends when the echoed text differs", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "first", [{ url: PNG }]);
+    s = foldEvent(s, userMessage("second"));
+    const users = selectChunks(s).filter((c) => c.role === "user");
+    expect(users.filter((c) => c.chunk.type === "text")).toHaveLength(2);
+  });
+});
+
+describe("applyHistory — multi-chunk image echo is superseded by committed", () => {
+  it("drops the provisional [text, image] echo when committed arrives during generation", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "hi", [{ url: PNG, mimeType: "image/png" }]);
+    s = foldEvent(s, turnStart("t1"));
+    expect(s.provisional).toHaveLength(2);
+
+    s = applyHistory(s, [
+      storedChunk(1, "user", { type: "text", text: "hi" }),
+      storedChunk(2, "user", { type: "image", url: PNG, mimeType: "image/png" }),
+    ]);
+    expect(s.provisional).toEqual([]);
+    expect(s.committed).toHaveLength(2);
+    expect(s.committed[0]?.chunk).toEqual({ type: "text", text: "hi" });
+    expect(s.committed[1]?.chunk).toEqual({ type: "image", url: PNG, mimeType: "image/png" });
+  });
+
+  it("keeps the echo when committed is only a partial match (img not yet persisted)", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "hi", [
+      { url: PNG, mimeType: "image/png" },
+      { url: JPG, mimeType: "image/jpeg" },
+    ]);
+    s = foldEvent(s, turnStart("t1"));
+    // Only the text + first image have been persisted so far.
+    s = applyHistory(s, [
+      storedChunk(1, "user", { type: "text", text: "hi" }),
+      storedChunk(2, "user", { type: "image", url: PNG, mimeType: "image/png" }),
+    ]);
+    // Echo is [text, img1, img2]; committed run is [text, img1] — not a full
+    // match (echo is longer) → keep the echo (turn-seal will drop it wholesale).
+    expect(s.provisional.length).toBeGreaterThan(0);
+  });
+
+  it("renders committed image chunks from history (a non-vision transcription turn)", () => {
+    // The server persists the original image chunk AND the transcription text
+    // in the SAME user message: render both (image, then analysis text).
+    let s = initialState();
+    s = applyHistory(s, [
+      storedChunk(1, "user", { type: "text", text: "describe this" }),
+      storedChunk(2, "user", { type: "image", url: PNG, mimeType: "image/png" }),
+      storedChunk(3, "user", {
+        type: "text",
+        text: "[Image analysis (via kimi/k2)]: a red square",
+      }),
+      storedChunk(4, "assistant", { type: "text", text: "the square is red" }),
+    ]);
+    const msgs = selectMessages(s);
+    expect(msgs).toHaveLength(2); // one user message (3 chunks) + one assistant
+    expect(msgs[0]?.role).toBe("user");
+    expect(msgs[0]?.chunks).toHaveLength(3);
+    expect(msgs[0]?.chunks[1]).toEqual({ type: "image", url: PNG, mimeType: "image/png" });
   });
 });

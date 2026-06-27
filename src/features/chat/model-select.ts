@@ -1,3 +1,5 @@
+import type { ModelMetadata } from "@dispatch/transport-contract";
+
 /**
  * Pure helpers for the two-step model picker.
  *
@@ -46,4 +48,17 @@ export function modelsForKey(models: readonly string[], key: string): string[] {
     if (split.key === key) out.push(split.model);
   }
   return out;
+}
+
+/**
+ * Whether a given full model name (`<key>/<model>`) is vision-capable — i.e.
+ * `GET /models` `modelInfo[name].vision === true`. Absent/`false`/unknown →
+ * `false` (the server's vision handoff transcribes images to text for it).
+ * Pure lookup against the catalog metadata; zero DOM.
+ */
+export function isVisionModel(
+  modelInfo: Readonly<Record<string, ModelMetadata>>,
+  fullName: string,
+): boolean {
+  return modelInfo[fullName]?.vision === true;
 }

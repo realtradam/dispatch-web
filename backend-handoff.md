@@ -9,6 +9,12 @@ _Last updated: 2026-06-26 (backend: concurrency limits now PERSISTED across rebo
 re-pin/re-mirror needed; §2j updated. FE: brief "Saved." confirmation on the limit row after a successful save. 926 tests
 green.) Prior: CR-13 (`"queued"` ConversationStatus) RESOLVED; dev merged (e81df4c)._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
+_Last updated: 2026-06-26 (§2j UPDATED — Image storage: persisted `ImageChunk.url`s are now compact relative HTTP
+paths (`/images/<conv>/<uuid>.png`) served by `GET /images/:conversationId/:imageId` (images stored on disk under tmp,
+not SQLite). FE resolves relative urls against the API base via a new pure `resolveImageUrl` helper; the optimistic
+echo's data URL passes through unchanged; `ChatRequest.images` (send) is unchanged. typecheck 0/0, 959 tests green
+(+11), biome clean, build OK. §2i unchanged.)_
+**FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED. CR-13 (`"queued"` ConversationStatus) is RESOLVED.
 Backend shipped CR-10 (workspace id on `conversation.open` / `conversation.statusChanged`), CR-11
@@ -844,6 +850,183 @@ provider calls; the agent/model prompt never sees it (does not affect prompt cac
 point at `../dispatch-backend/...` (kept canonical — no worktree hack committed). An UNTRACKED symlink
 `dispatch-backend → backend` was created in the worktree parent, then `bun install` re-synced
 `node_modules/@dispatch/*` to pick up `transport-contract@0.23.0`.
+## 2j. Vision & vision handoff → **CONSUMED ✅ (backend shipped; FE built + verified)**
+
+The backend shipped image/vision support: a user can attach images to a chat message, vision-capable
+models receive them natively, and non-vision models get an auto-transcribed text description (the
+"vision handoff"). The FE now pastes/picks/drops images in the composer, renders `image` chunks in the
+transcript, and shows a vision badge in the model picker. Additive to `wire@0.12.0` /
+`transport-contract@0.22.0` (**NO version bump** — `ImageChunk`/`ImageInput` were added to the existing
+versions; the FE's `file:` dep picks them up automatically, no re-pin needed).
+
+**New wire/transport types consumed + re-mirrored:**
+- `ImageChunk` (`{ type: "image", url, mimeType? }`) — a NEW `Chunk` variant. `url` is a base64 data URL
+  (`data:image/…;base64,…`) OR an `http(s)://` URL. `ImageInput` (`{ url, mimeType? }`) is the transport-
+  facing input shape (`ChatRequest.images`); the orchestrator converts each into an `ImageChunk` on the
+  persisted user message.
+- `ChatRequest.images?: readonly ImageInput[]` (so `ChatSendMessage` — which `extends ChatRequest` —
+  carries it on `chat.send`). `ChatQueueMessage` (steering) does NOT carry `images` — steering is
+  text-only (correctly: a mid-turn injection has no image surface).
+- `ModelMetadata.vision?: boolean` — `true` when the model natively accepts images; absent/`false` → the
+  server's vision handoff transcribes images to text before the model sees them.
+- Re-mirrored `.dispatch/wire.reference.md` (added `ImageChunk` to the `Chunk` union + the `ImageChunk`/
+  `ImageInput` interfaces) and `.dispatch/transport-contract.reference.md` (added `images` to `ChatRequest`,
+  `vision` to `ModelMetadata`, + `ImageChunk`/`ImageInput`/`Computer`/`ComputerEntry` to the re-export).
+
+**FE (DONE + verified):**
+- **Core (`core/chunks`):** the `assertChunkExhaustive` conformance guard caught the new `image` variant
+  (its purpose) → added the `case "image"` (this was the build break). `appendUserMessage(state, text,
+  images?)` now echoes a `[text, image, image, …]` user run (text first, then images in order; images-only
+  when text is empty). The `user-message` event carries ONLY text (never images — images arrive via history/
+  loadSince + the optimistic echo), so its de-dup was generalized: it now scans the trailing provisional
+  USER run for a matching text chunk (not just the last chunk — which would be an image when images were
+  pasted, causing a duplicate text bubble). `applyHistory`'s during-generation de-dup was generalized to
+  match a multi-chunk user echo against the trailing committed user run by content equality
+  (`chunkContentEquals` — text/thinking/image/error/system/tool-call/tool-result), dropping the whole echo
+  only when fully backed (a partial match is kept until turn-seal drops all provisional wholesale). New
+  pure helpers `chunkContentEquals` + `trailingRun` (both internal). +16 reducer tests.
+- **Transcript (`ChatView.svelte`):** a user `image` chunk renders as an `<img>` (lazy + async-decoded,
+  max-h-80) inside the user bubble, using the chunk's `url` directly. A non-vision model's persisted user
+  message keeps the original `image` chunk AND a `text` transcription (`[Image analysis (via <model>)]: …`)
+  in the SAME message — both render (image, then analysis text). The `read_image` tool call/result
+  renders like any other tool (its `toolName` is generic — no special-casing). +3 ChatView tests.
+- **Composer (`Composer.svelte`):** image paste (clipboard `paste` — extracts image `File` items,
+  `preventDefault` only when an image is present so text paste still works), an attach-image button +
+  hidden `<input type=file accept=image/* multiple>`, and drag-drop onto the form. Files are read to
+  base64 data URLs (`FileReader.readAsDataURL`), capped at 8 MiB, staged as thumbnail previews with
+  remove buttons. `onSend` signature widened to `(text, images?)`; an image-only send (empty text) is
+  allowed; `images` is OMITTED on the wire (not `[]`) when none are staged (backward compatible). Steering
+  (`onQueue`) never forwards images. +6 Composer tests.
+- **Store wiring:** `ChatStore.send(text, images?)` forwards `images` on the `chat.send` WS op + echoes
+  them; `AppStore.send(text, images?)` threads images through the draft→tab promotion; `App.svelte`'s
+  `handleSend(text, images?)` passes them through. The model catalog already captured `modelInfo` (now
+  with `vision`); `GET /models` is unchanged. +5 store/app tests.
+- **Model picker (`ModelSelector.svelte` + `model-select.ts`):** new pure `isVisionModel(modelInfo,
+  fullName)`; the model dropdown marks vision-capable models (`" · vision"`), and an indicator below shows
+  "Vision — this model sees images natively" vs the handoff hint "Pasted images are auto-described". Wired
+  `modelInfo={store.modelInfo}` from `App.svelte`. +8 model-select/ModelSelector tests.
+
+**Invariants held:**
+- `chat.send` STILL omits `cwd` (the persisted cwd wins) — only `images` was added to the message.
+- The `user-message` event still carries only text; images are NEVER expected on it (a watcher fetches
+  them from history). The de-dup was made robust to the multi-chunk echo rather than reaching for images
+  on the event.
+- `providerRetry`/`generating` unchanged; `image` is a normal committed/provisional chunk (it IS in the
+  `Chunk.type` union, unlike the transient `provider-retry`), so it persists + replays on reload.
+- The `read_image` tool is rendered generically (no surface-id special-casing — the tool-name dispatch is
+  already identity-free).
+
+**Verification:** `svelte-check` 0/0; vitest **901/901** (run TWICE — no cross-test pollution; +34 new:
+16 reducer, 3 ChatView, 6 Composer, 5 store/app, 4 model-select), biome clean, `vite build` succeeds (the
+one CSS warning is PRE-EXISTING — `[file:path]`/`[heartbeat:elapsed]` attribute selectors, unrelated).
+**Live probe NOT run:** the backend was not reachable headless at verify time (it is the user's process;
+never booted headless). The full data path (paste → data URL → `chat.send` `images` → reducer echo →
+transcript render; `GET /models` `vision` → badge; history `image` chunk → render) is covered by unit +
+component + store tests. To confirm end-to-end: start the backend, paste an image into the composer with
+a vision model selected (e.g. any `kimi/*`), send, confirm the image renders + the model responds to it;
+then switch to a non-vision model (e.g. `umans/glm-5.2`), paste an image, send, confirm the image renders
+AND a numbered placeholder `[Image N attached — call consult_vision…]` text bubble appears (the non-vision
+handoff — see the update below; the old `[Image analysis (via …)]` auto-transcription is GONE); confirm
+the vision badge shows/hides per model in the picker.
+
+### 2j-update. consult_vision tool + vision settings API → **CONSUMED ✅ (backend updated; FE built + verified)**
+
+A follow-up to §2j. The backend revised the vision surface: the `read_image` tool is REPLACED by
+`consult_vision`, non-vision models get NUMBERED PLACEHOLDERS (not auto-transcriptions), and there is a
+NEW global vision-settings API. Additive to `wire@0.12.0` / `transport-contract@0.22.0` (NO version bump);
+re-mirrored `.dispatch/transport-contract.reference.md` (added `VisionSettingsResponse` /
+`SetVisionSettingsRequest` + a delta note).
+
+**What changed (backend):**
+- **`read_image` → `consult_vision`** (`{ question: string (req), imageIds?: number[], path?: string }`):
+  opens a NEW conversation tab with a vision-capable model (Kimi), attaches the image + question, returns
+  the conversation id + the vision model's answer (suggests the dispatch CLI for follow-ups). Rendered like
+  any tool call/result (generic `toolName` dispatch — no special-casing).
+- **Non-vision models get NUMBERED PLACEHOLDERS** instead of auto-transcriptions: a pasted image on a
+  non-vision model persists an `image` chunk + a `text` chunk `[Image N attached — call consult_vision
+  with imageIds=[N] and a specific question to analyze it]`. (The old `[Image analysis (via <model>)]: …`
+  auto-transcription is GONE.)
+- **Image compaction** (transparent): when a vision model has > `imageLimit` images in history, the oldest
+  are transcribed to `[Compacted image]: <description>` `text` chunks (the persisted `image` chunk stays
+  for rendering). Both placeholder + compacted chunks are REGULAR `text` chunks — render as-is (no special
+  handling).
+- **NEW global vision settings API:** `GET /settings/vision` → `VisionSettingsResponse`
+  (`{ imageLimit: number (default 10), compactionModel: string|null (null = auto) }`); `PUT /settings/vision`
+  ← `SetVisionSettingsRequest` (partial: `imageLimit?` non-negative int, 0 = disable compaction;
+  `compactionModel?` `<key>/<model>` or null).
+
+**FE (DONE + verified):**
+- **Tool rendering:** the ChatView `read_image` test → `consult_vision` (rendering is generic — renders by
+  `toolName`, so no component change; only the test name/input updated). +2 ChatView tests for the
+  placeholder text chunk + the compacted-image text chunk (both render as regular text).
+- **New `vision` feature library** (`src/features/vision/`): pure `logic/view-model.ts` (32 tests) —
+  `VisionSettings`/`VisionSettingsPatch` (owned locally, consumer-defines-port; the shapes are a plain REST
+  surface, mirroring heartbeat/mcp), `LoadVisionSettings`/`SaveVisionSettings` ports + result types,
+  `normalizeVisionSettings` (network-seam coercion — a malformed body can't crash the renderer),
+  `parseImageLimit`/`imageLimitChanged` (dirty-check), `compactionModelOptions` (filters `GET /models` to
+  vision-capable models via the chat feature's public `isVisionModel` export + an "Auto" sentinel),
+  `selectedCompactionValue`/`compactionModelFromValue` round-trip, `imageLimitLabel`; `ui/VisionSettingsView.svelte`
+  (imageLimit text input + Save, compactionModel dropdown with Auto + vision-capable models, load-on-mount,
+  save-on-change, error/saved feedback; 9 component tests); `index.ts`.
+- **Cross-unit seam:** `isVisionModel` was added to `features/chat`'s public `index.ts` (additive — the
+  vision feature imports it through the public surface, not the chat internals).
+- **Store wiring** (`src/app/store.svelte.ts`): `visionSettings` reactive state + `refreshVisionSettings()`
+  (`GET /settings/vision`, normalized at the seam) + `setVisionSettings(patch)` (`PUT /settings/vision`,
+  returns merged settings) + `VisionSettingsResult`; seeded on boot; exposed on `AppStore`. +4 store tests.
+- **Mounted in `App.svelte`:** a new "Vision" sidebar view kind (`viewKinds`) + `VisionSettingsView` in the
+  `viewContent` snippet (not conversation-scoped — no `{#key}`); `loadVisionSettings`/`saveVisionSettings`
+  adapters wrap the store; `visionManifest` in `loadedModules`.
+
+**Verification:** `svelte-check` 0/0; vitest **948/948** (run TWICE — no cross-test pollution; +47 new
+since the §2j baseline: 32 vision view-model, 9 VisionSettingsView, 4 store, +2 ChatView
+placeholder/compacted, and the read_image→consult_vision test update), biome clean, `vite build` succeeds.
+**Live probe NOT run** (backend not reachable headless). To confirm end-to-end: open the Vision sidebar
+view, confirm the imageLimit + compactionModel load; change imageLimit → Save → confirm it persists on
+reload; set compactionModel to a vision model → confirm the dropdown reflects it; paste an image with a
+non-vision model → confirm the `[Image N attached — call consult_vision…]` placeholder renders (not an
+auto-transcription); trigger a `consult_vision` tool call → confirm it renders like a tool.
+
+### 2j-update-2. Image storage (tmp, not SQLite) → **CONSUMED ✅ (backend updated; FE built + verified)**
+
+A follow-up to §2j. The backend no longer persists images as base64 data URLs in the conversation store —
+they are saved to a tmp directory and served via HTTP. The `ImageChunk.url` field's FORMAT changed (the
+TYPE is unchanged — still `string`); `GET /images/:conversationId/:imageId` is a new endpoint serving raw
+bytes + the correct Content-Type. **NO wire/transport-contract type change** (behavior only); re-mirrored
+the delta notes in `.dispatch/wire.reference.md` + `.dispatch/transport-contract.reference.md`.
+
+**What changed (backend):**
+- **BEFORE:** `ImageChunk.url` was a base64 data URL (`data:image/png;base64,…`).
+- **NOW:** `ImageChunk.url` for PERSISTED chunks (history/replay) is a compact relative HTTP path
+  (`/images/<conversationId>/<uuid>.png`), served by `GET /images/:conversationId/:imageId` (raw image
+  bytes + Content-Type). Images live on disk under tmp, NOT in the SQLite conversation store (keeps
+  payloads small).
+- **`ChatRequest.images` (`ImageInput.url`) is UNCHANGED** — the FE still sends data URLs; the backend
+  saves them to tmp and returns compact paths in the persisted chunks.
+- **Optimistic echo:** the FE's provisional echo still uses the data URL it sent (immediate render);
+  when the persisted chunk arrives (via `loadSince`/`syncTail`/event stream), it carries the compact path
+  and the FE switches to rendering via the HTTP endpoint.
+- The vision settings API, `consult_vision`, and image compaction are UNCHANGED (compaction resolves
+  compact URLs internally).
+
+**FE (DONE + verified):**
+- **New pure helper `resolveImageUrl(url, apiBase)`** (`core/chunks/image-url.ts`, +8 tests, exported from
+  `core/chunks` + re-exported from `features/chat`): a `data:` URL or an `http(s)://` URL passes through
+  unchanged; a relative path (`/images/…`) is prepended with the API base (no double slash; an empty base
+  yields a root-relative path a browser resolves against its origin). Pure — zero DOM/Svelte.
+- **`ChatView.svelte`:** new `apiBaseUrl` prop (default `""`); the `<img src>` now uses
+  `resolveImageUrl(rendered.chunk.url, apiBaseUrl)`. The optimistic echo's data URL + any absolute URL
+  pass through; persisted relative paths resolve against the base. +3 ChatView tests (relative-path
+  resolution, data-URL pass-through with a base set, root-relative when no base).
+- **Store + wiring:** `httpBase` (the resolved HTTP API base) is now exposed as a getter on `AppStore`;
+  `App.svelte` passes `apiBaseUrl={store.httpBase}` to `ChatView` AND to the heartbeat `RunModal` (its
+  `ChatView` also renders image chunks — added an `apiBaseUrl` prop there, threaded from `App.svelte`).
+
+**Verification:** `svelte-check` 0/0; vitest **959/959** (run TWICE — no cross-test pollution; +11 since the
+prior commit: 8 `resolveImageUrl`, 3 ChatView resolution), biome clean, `vite build` succeeds.
+**Live probe NOT run** (backend not reachable headless). To confirm end-to-end: paste an image with a
+vision model, send, confirm the image renders immediately (data-URL echo) AND continues to render after
+the turn seals (the persisted compact-path `/images/…` resolved against `httpBase`); reload the
+conversation → confirm the persisted image renders from the `/images/…` endpoint (not a data URL).
 
 ---
 
