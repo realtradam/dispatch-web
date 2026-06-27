@@ -277,9 +277,9 @@ describe("TabList", () => {
       },
     });
 
-    // c1 is queued → a ring (spinner), labeled "Queued".
+    // c1 is queued → a ring (DaisyUI `loading-ring`), labeled "Queued".
     const queuedRing = screen.getByLabelText("Queued");
-    expect(queuedRing.className).toContain("loading-spinner");
+    expect(queuedRing.className).toContain("loading-ring");
     expect(queuedRing.closest('[role="tab"]')).toHaveTextContent("First");
 
     const tabs = screen.getAllByRole("tab");
@@ -288,9 +288,9 @@ describe("TabList", () => {
     const idleTab = tabs[2];
     if (activeTab === undefined || idleTab === undefined) throw new Error("missing tabs");
 
-    // c2 is active → loading dots (NOT a spinner).
+    // c2 is active → loading dots (NOT a ring).
     expect(activeTab.querySelector(".loading-dots")).not.toBeNull();
-    expect(activeTab.querySelector(".loading-spinner")).toBeNull();
+    expect(activeTab.querySelector(".loading-ring")).toBeNull();
 
     // c3 has no status → no spinner at all.
     expect(idleTab.querySelector(".loading")).toBeNull();
