@@ -40,7 +40,7 @@
 	import { parseMessageQueuePayload } from "../features/surface-host/logic/message-queue";
 	import { parseTodoPayload } from "../features/surface-host/logic/todo";
 	import TodoList from "../features/surface-host/ui/TodoList.svelte";
-	import { manifest as tabsManifest, TabBar } from "../features/tabs";
+	import { manifest as tabsManifest, TabList } from "../features/tabs";
 	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
 	import {
 		CwdField,
@@ -90,7 +90,7 @@
 	import { createLocalStore } from "../adapters/local-storage";
 	import { untrack } from "svelte";
 
-	let { store }: { store: AppStore } = $props();
+	let { store, onNavigate }: { store: AppStore; onNavigate: (path: string) => void } = $props();
 
 	// The backend's conversation-scoped cache-warming surface. Referenced by id at
 	// the composition root (sanctioned discovery-by-id) to give it a dedicated view
@@ -107,6 +107,7 @@
 	// The view kinds offered in the sidebar's dropdown. Generic data — the
 	// `viewContent` snippet below maps each kind id to its renderer.
 	const viewKinds = [
+		{ id: "tabs", label: "Tabs" },
 		{ id: "model", label: "Model" },
 		{ id: "lsp", label: "Language Servers" },
 		{ id: "mcp", label: "MCP Servers" },
@@ -120,8 +121,9 @@
 		{ id: "settings", label: "Settings" },
 	] as const;
 
-	// Default sidebar layout: just the Model view.
-	const DEFAULT_VIEWS: readonly string[] = ["model"];
+	// Default sidebar layout: the Tabs list (the moved-from-top tab bar) plus the
+	// Model view, so a fresh user sees their conversations + model controls.
+	const DEFAULT_VIEWS: readonly string[] = ["tabs", "model"];
 	const sidebarStore = createLocalStore<readonly string[]>("dispatch.sidebar.views", {
 		storage: untrack(() => store.storage),
 	});
@@ -222,6 +224,18 @@
 		const field = spec.fields.find((f) => f.kind === "custom" && f.rendererId === TODO_ID);
 		if (field === undefined || field.kind !== "custom") return null;
 		return parseTodoPayload(field.payload);
+	});
+
+	// Top-bar title: the active tab's title, or "New Tab" when no tab is active
+	// (a fresh, unstarted draft — the conversation hasn't been sent yet, so no
+	// tab exists). Pure-derived from the (workspace-filtered) tab set + the
+	// active id; reflects whichever tab is selected in the sidebar's Tabs view.
+	const NEW_TAB_TITLE = "New Tab";
+	const topBarTitle = $derived.by(() => {
+		const id = store.activeConversationId;
+		if (id === null) return NEW_TAB_TITLE;
+		const tab = store.tabs.find((t) => t.conversationId === id);
+		return tab?.title ?? NEW_TAB_TITLE;
 	});
 
 	// Conversation/tab switch → snap to the bottom of the new transcript.
@@ -438,30 +452,56 @@
 
 <main class="relative flex h-screen overflow-hidden">
 	<!-- LEFT: everything except the sidebar. The full-height sidebar is a sibling
-	     (below), so opening it shrinks this ENTIRE column — tab row included, which
-	     slides the hamburger left. -->
+	     (below), so opening it shrinks this ENTIRE column. -->
 	<div class="flex min-w-0 flex-1 flex-col overflow-hidden pt-[5px]">
-		<!-- Tab row: the tab strip fills + scrolls internally (flex-1 min-w-0), with
-		     a permanently seated hamburger pinned to the far right. -->
-		<div class="flex min-w-0 items-center">
-			<TabBar
-				tabs={store.tabs}
-				activeConversationId={store.activeConversationId}
-				statusFor={(id) => store.conversationStatus(id)}
-				onSelect={(id) => store.selectTab(id)}
-				onClose={(id) => store.closeTab(id)}
-				onNewDraft={() => store.newDraft()}
-				onRename={(id, title) => store.renameTab(id, title)}
-			/>
+		<!-- Slim header: the tab bar moved into the sidebar (the "Tabs" view), so
+		     the top row now shows the active tab's title on the left (or "New Tab"
+		     for an unstarted draft), with the build version + sidebar toggle on
+		     the right. -->
+		<div class="flex items-center justify-between gap-2 px-2">
+			<span
+				class="min-w-0 flex-1 shrink truncate pl-2 text-sm font-medium opacity-70"
+				data-testid="top-bar-title"
+				title={topBarTitle}
+				aria-label="Active conversation title"
+			>
+				{topBarTitle}
+			</span>
+			<a
+				href="/"
+				class="btn btn-ghost btn-sm shrink-0 px-2"
+				aria-label="Back to dashboard"
+				title="Back to dashboard"
+				onclick={(e) => {
+					e.preventDefault();
+					onNavigate("/");
+				}}
+			>
+				<svg
+					xmlns="http://www.w3.org/2000/svg"
+					fill="none"
+					viewBox="0 0 24 24"
+					stroke-width="2"
+					stroke="currentColor"
+					class="size-4"
+					aria-hidden="true"
+				>
+					<path
+						stroke-linecap="round"
+						stroke-linejoin="round"
+						d="m2.25 12 8.954-8.955c.44-.439 1.152-.439 1.591 0L21.75 12M4.5 9.75v10.5a.75.75 0 0 0 .75.75h4.5a.75.75 0 0 0 .75-.75V15a.75.75 0 0 1 .75-.75h3a.75.75 0 0 1 .75.75v5.25a.75.75 0 0 0 .75.75h4.5a.75.75 0 0 0 .75-.75V9.75M8.25 21h8.25"
+					/>
+				</svg>
+			</a>
 			<span
 				class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-base-content/30"
 				title="Build version (git short hash)"
 			>
-				{__APP_VERSION__}
+				build: {__APP_VERSION__}
 			</span>
 			<button
 				class="btn btn-square btn-ghost btn-sm mx-1 shrink-0"
-				aria-label="Toggle sidebar"
+				aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
 				aria-expanded={sidebarOpen}
 				onclick={() => (sidebarOpen = !sidebarOpen)}
 			>
@@ -474,11 +514,21 @@
 					class="size-5"
 					aria-hidden="true"
 				>
-					<path
-						stroke-linecap="round"
-						stroke-linejoin="round"
-						d="M3.75 6.75h16.5M3.75 12h16.5M3.75 17.25h16.5"
-					/>
+					{#if sidebarOpen}
+						<!-- Sidebar open → chevrons point right -->
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="m11.25 4.5 7.5 7.5-7.5 7.5m-7.5-15 7.5 7.5-7.5 7.5"
+						/>
+					{:else}
+						<!-- Sidebar closed → chevrons point left -->
+						<path
+							stroke-linecap="round"
+							stroke-linejoin="round"
+							d="M18.75 19.5l-7.5-7.5 7.5-7.5m-6 15L5.25 12l7.5-7.5"
+						/>
+					{/if}
 				</svg>
 			</button>
 		</div>
@@ -497,7 +547,7 @@
 			</div>
 		{/if}
 
-		<div class="relative min-h-0 min-w-0 flex-1">
+		<div class="relative min-h-0 min-w-0 flex-1 pr-4">
 			<div bind:this={transcriptEl} class="h-full overflow-y-auto">
 				<div bind:this={transcriptContentEl}>
 					{#key store.activeConversationId}
@@ -555,7 +605,7 @@
 		class:w-0={!sidebarOpen}
 	>
 		<div
-			class="flex h-full w-80 flex-col gap-2 overflow-y-auto border-l border-base-300 bg-base-100 p-3 transition-transform duration-300 ease-out"
+			class="flex h-full w-80 flex-col gap-2 overflow-y-auto bg-base-100 pt-3 pr-3 pb-3 transition-transform duration-300 ease-out"
 			style="transform: translateX({sidebarOpen ? '0' : '100%'})"
 		>
 			<ViewSidebar kinds={viewKinds} initial={sidebarPanels} onChange={handleSidebarChange} content={viewContent} />
@@ -607,7 +657,22 @@
 {/if}
 
 {#snippet viewContent(kind: string)}
-	{#if kind === "model"}
+	{#if kind === "tabs"}
+		<!-- The conversation tab list (moved out of the top bar into the sidebar).
+		     Re-mount per workspace so the filtered tab set + scroll reset cleanly
+		     on a workspace switch. -->
+		{#key store.activeWorkspaceId}
+			<TabList
+				tabs={store.tabs}
+				activeConversationId={store.activeConversationId}
+				statusFor={(id) => store.conversationStatus(id)}
+				onSelect={(id) => store.selectTab(id)}
+				onClose={(id) => store.closeTab(id)}
+				onNewDraft={() => store.newDraft()}
+				onRename={(id, title) => store.renameTab(id, title)}
+			/>
+		{/key}
+	{:else if kind === "model"}
 		<div class="flex flex-col gap-3">
 			<ModelSelector models={store.models} selected={store.activeModel} onSelect={handleSelectModel} />
 			<!-- Keyed on the workspace conversation (active tab OR draft) so the inputs

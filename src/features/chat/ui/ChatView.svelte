@@ -210,7 +210,7 @@
   {/if}
 {/snippet}
 
-<div class="flex flex-col gap-2 p-4 pl-6" role="log" aria-live="polite">
+<div class="flex flex-col gap-2 pt-4 pb-4 pl-6" role="log" aria-live="polite">
   {#if hasEarlier && onShowEarlier}
     <!-- Chat limit: older chunks are unloaded; offer to page them back in. -->
     <div class="flex justify-center">
