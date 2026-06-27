@@ -5,13 +5,12 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2j ADDED — Provider concurrency limits: per-provider in-flight caps with oldest-agent-first
-queueing + 429-pause backoff. New `concurrency` REST surface (`GET`/`PUT`/`DELETE /concurrency/limits[/:id]`,
-`GET /concurrency/status`) + `transport-contract@0.23.0` bump (5 concurrency types). FE re-pinned + re-mirrored; new
-`features/concurrency` feature library + AppStore wiring + a sidebar "Concurrency" view. typecheck 0/0, 914 tests
-green, biome clean, build OK. §2i/§2h/§2g/§2f unchanged.)_
+_Last updated: 2026-06-26 (dev merged — sidebar-tabs tab rework into feature/provider-concurrency; merge commit e81df4c,
+clean auto-merge, 921 tests green. CR-13 OPEN: per-conversation `"queued"` ConversationStatus for the concurrency
+queue — sent to backend agent `e1d7`; FE side designed + blocked on the `wire` bump.) §2j concurrency unchanged._
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
-(`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
+(`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump) + **CR-13**
+(add `"queued"` to `ConversationStatus` + emit from the concurrency extension — `wire` bump). The SSH-divergence
 (§2d) is RESOLVED.
 Backend shipped CR-10 (workspace id on `conversation.open` / `conversation.statusChanged`), CR-11
 (per-conversation model persistence), and CR-12 (`GET /conversations/:id/mcp`); FE has consumed all three.
@@ -92,6 +91,43 @@ return a richer OS string:
 No wire/transport-contract/ui-contract change needed — this is a backend behavior change in
 how the `system:os` variable is resolved (the type shape is unchanged: it's still a `string`).
 The FE is unaffected (it only inserts `[system:os]` into the template; the backend resolves it).
+
+### CR-13 — Per-conversation `"queued"` status for the concurrency queue → **OPEN** (sent to backend agent `e1d7`)
+
+Small UX ask: when a conversation's request is WAITING in the per-provider concurrency queue (not yet
+generating tokens), the FE should show the loading **RING** (spinner) on that tab + in the composer
+corner, instead of the loading **DOTS** (dots = actively generating). Currently both states show dots.
+
+**Why a backend change is needed (no FE-derivable signal):**
+- The FE tab spinner keys off the `conversation.statusChanged` broadcast (`ConversationStatus`:
+  `active`/`idle`/`closed`). There is no per-conversation `"queued"` state.
+- `GET /concurrency/status` is per-PROVIDER aggregate (`inFlight`/`queued` counts) — it can't tell
+  which SPECIFIC conversation is queued.
+- `turn-start` is emitted at turn entry (`run-turn.ts:617`) BEFORE `provider.stream()` → concurrency
+  `acquire()` (which may block). So the FE's `generating` flag is already `true` during the queue wait
+  — there is no `active && !generating` window to derive `"queued"` from.
+- Background tabs (not the active conversation) only receive the `conversation.statusChanged`
+  broadcast (the FE does not subscribe to every tab's chat event stream), so the queued signal MUST
+  flow through that broadcast — not a transient `AgentEvent`.
+
+**The change requested:**
+1. Add `"queued"` to the `ConversationStatus` type in `@dispatch/wire` (a wire version bump — additive
+   enum value; no `transport-contract` or `ui-contract` change). The `conversation.statusChanged` WS
+   message already carries `workspaceId` (CR-10); only the `status` value set widens.
+2. The `concurrency` extension: when a request BLOCKS on `acquire()` (enqueued in the per-provider
+   queue awaiting a slot), emit `conversation.statusChanged` with `status: "queued"` (carrying
+   `workspaceId`). When the slot is GRANTED and generation begins, flip to `"active"`. The existing
+   `"idle"` on turn seal is unchanged.
+   - Net lifecycle for a queued request: `queued` (waiting for slot) → `active` (generating) → `idle`
+     (turn sealed). A request that gets a slot immediately never emits `"queued"` (goes straight to
+     `active`) — fine.
+   - Edge: the FE opens a tab only on `"active"` (store handler), not on `"queued"`; in practice a
+     queued conversation is already an open tab, so `"queued"` just updates the status map.
+
+**FE side (BLOCKED on the wire bump — will implement the moment it ships):** re-pin `@dispatch/wire` →
+re-mirror `.dispatch/wire.reference.md` → accept `"queued"` in the WS parser (`adapters/ws/logic.ts`) →
+`TabList`: loading-ring for `status === "queued"`, loading-dots for `"active"` → Composer corner
+`status` gains `"queued"` → loading-ring, derived from the active conversation's `conversationStatus`.
 
 ### CR-7 — Workspace cwd fallthrough bug + relative-path resolution → **RESOLVED ✅ (backend shipped; FE code unchanged)**
 
