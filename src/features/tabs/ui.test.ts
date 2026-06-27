@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Tab } from "./tabs";
@@ -228,5 +228,35 @@ describe("TabList", () => {
 
     expect(onRename).toHaveBeenCalledTimes(1);
     expect(onRename).toHaveBeenCalledWith("c1", "Renamed");
+  });
+
+  it("copies the full conversation id to the clipboard and shows 'Copied!' when the ID badge is clicked", async () => {
+    const writeText = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      value: { writeText },
+      configurable: true,
+    });
+
+    const onSelect = vi.fn();
+
+    render(TabList, {
+      props: {
+        tabs: sampleTabs,
+        activeConversationId: "c1",
+        onSelect,
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+      },
+    });
+
+    const idBadge = screen.getByRole("button", { name: "Copy conversation id c1" });
+    await fireEvent.click(idBadge);
+
+    expect(writeText).toHaveBeenCalledTimes(1);
+    expect(writeText).toHaveBeenCalledWith("c1");
+    // The badge briefly shows a "Copied!" confirmation.
+    expect(idBadge).toHaveTextContent("Copied!");
+    // Clicking the ID must NOT switch tabs (the badge stops propagation).
+    expect(onSelect).not.toHaveBeenCalled();
   });
 });

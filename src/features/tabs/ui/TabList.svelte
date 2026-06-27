@@ -55,6 +55,46 @@
 	function cancelRename(): void {
 		editingId = null;
 	}
+
+	// Click-to-copy the agent (conversation) id: clicking the ID badge copies the
+	// FULL conversationId to the clipboard (the stable, useful id — the badge
+	// only shows a short prefix) and briefly highlights the badge as feedback.
+	// Clipboard is the edge effect; absent (insecure context) → select the badge
+	// text so the user can Ctrl+C manually.
+	let copiedId = $state<string | null>(null);
+	let copyTimer: ReturnType<typeof setTimeout> | undefined;
+
+	async function copyId(conversationId: string, el: HTMLElement): Promise<void> {
+		const clipboard = navigator.clipboard;
+		if (clipboard === undefined) {
+			selectText(el);
+			flashCopied(conversationId);
+			return;
+		}
+		try {
+			await clipboard.writeText(conversationId);
+			flashCopied(conversationId);
+		} catch {
+			selectText(el);
+			flashCopied(conversationId);
+		}
+	}
+
+	function flashCopied(conversationId: string): void {
+		copiedId = conversationId;
+		clearTimeout(copyTimer);
+		copyTimer = setTimeout(() => {
+			copiedId = null;
+		}, 1200);
+	}
+
+	function selectText(el: HTMLElement): void {
+		const range = document.createRange();
+		range.selectNodeContents(el);
+		const selection = window.getSelection();
+		selection?.removeAllRanges();
+		selection?.addRange(range);
+	}
 </script>
 
 <div class="flex flex-col gap-2">
@@ -75,12 +115,24 @@
 					if (e.key === "Enter") onSelect(tab.conversationId);
 				}}
 			>
-				<span
-					class="shrink-0 rounded bg-base-300 px-1 py-0.5 font-mono text-[10px] leading-none text-base-content/60"
-					title="Tab ID"
+				<button
+					type="button"
+					class="shrink-0 rounded px-1 py-0.5 font-mono text-[10px] leading-none transition-colors {copiedId ===
+					tab.conversationId
+						? "bg-success text-success-content"
+						: "bg-base-300 text-base-content/60 hover:bg-primary hover:text-primary-content"}"
+					data-copy-id={tab.conversationId}
+					title={copiedId === tab.conversationId ? "Copied!" : "Click to copy conversation id"}
+					aria-label={`Copy conversation id ${tab.conversationId}`}
+					onclick={(e) => {
+						e.stopPropagation();
+						void copyId(tab.conversationId, e.currentTarget);
+					}}
 				>
-					{handles.get(tab.conversationId) ?? tab.conversationId}
-				</span>
+					{copiedId === tab.conversationId
+						? "Copied!"
+						: (handles.get(tab.conversationId) ?? tab.conversationId)}
+				</button>
 				{#if editingId === tab.conversationId}
 					<input
 						bind:this={editEl}
