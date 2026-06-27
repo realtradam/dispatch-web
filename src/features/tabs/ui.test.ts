@@ -230,7 +230,7 @@ describe("TabList", () => {
     expect(onRename).toHaveBeenCalledWith("c1", "Renamed");
   });
 
-  it("copies the full conversation id to the clipboard and shows 'Copied!' when the ID badge is clicked", async () => {
+  it("copies the conversation id to the clipboard and highlights the badge text when clicked", async () => {
     const writeText = vi.fn().mockResolvedValue(undefined);
     Object.defineProperty(navigator, "clipboard", {
       value: { writeText },
@@ -254,8 +254,13 @@ describe("TabList", () => {
 
     expect(writeText).toHaveBeenCalledTimes(1);
     expect(writeText).toHaveBeenCalledWith("c1");
-    // The badge briefly shows a "Copied!" confirmation.
-    expect(idBadge).toHaveTextContent("Copied!");
+    // The badge text is NOT swapped (no width shift) — the highlight (selection)
+    // is the only indicator.
+    expect(idBadge).toHaveTextContent("c1");
+    expect(idBadge).not.toHaveTextContent("Copied");
+    // The badge text is selected (highlighted) as the copy indicator.
+    const selection = window.getSelection();
+    expect(selection?.toString()).toBe("c1");
     // Clicking the ID must NOT switch tabs (the badge stops propagation).
     expect(onSelect).not.toHaveBeenCalled();
   });
