@@ -63,6 +63,39 @@ export function normalizeLimit(value: unknown): number {
   return int >= 1 ? int : 1;
 }
 
+// ── Provider options (the Add-form dropdown) ───────────────────────────────────
+//
+// A concurrency `providerId` is the credential name that prefixes a model name
+// (`<provider>/<model>` — the same key the model picker groups by). The dropdown
+// is the UNION of providers discoverable from the available models AND providers
+// already carrying a configured limit (so a limit set out-of-band but whose
+// model list is empty still appears), in first-seen order. Models are the
+// authority; a provider with models but no limit is still selectable (Add sets it).
+
+/** The provider id prefix of a `<provider>/<model>` name (the part before the first `/`, or the whole string). */
+export function providerFromModel(full: string): string {
+  const i = full.indexOf("/");
+  return i === -1 ? full : full.slice(0, i);
+}
+
+/** Distinct provider ids to offer in the Add dropdown, first-seen order. */
+export function providerOptions(
+  models: readonly string[],
+  limits: readonly ConcurrencyLimitEntry[],
+): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  const add = (p: string): void => {
+    if (p !== "" && !seen.has(p)) {
+      seen.add(p);
+      out.push(p);
+    }
+  };
+  for (const m of models) add(providerFromModel(m));
+  for (const l of limits) add(l.providerId);
+  return out;
+}
+
 // ── Status → display view ──────────────────────────────────────────────────────
 
 const NO_LIMITS = "No limits configured";

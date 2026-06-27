@@ -4,6 +4,7 @@
   import {
     type Badge,
     parseLimitInput,
+    providerOptions,
     summarizeLimits,
     summarizeStatus,
     viewConcurrencyLimits,
@@ -19,11 +20,14 @@
   import ConcurrencyLimitRow from "./ConcurrencyLimitRow.svelte";
 
   let {
+    models,
     loadLimits,
     saveLimit,
     deleteLimit,
     loadStatus,
   }: {
+    /** Available models (`<provider>/<model>`) — the source of provider ids for the Add dropdown. */
+    models: readonly string[];
     loadLimits: LoadConcurrencyLimits;
     saveLimit: SaveConcurrencyLimit;
     deleteLimit: DeleteConcurrencyLimit;
@@ -43,22 +47,38 @@
   let limitsError = $state<string | null>(null);
   let hasLoadedLimits = $state(false);
 
-  // Add-form state.
+  // Add-form state. The provider id is chosen from a dropdown of known providers
+  // (derived from the available models + any already-configured limit providers).
   let newProviderId = $state("");
   let newLimitInput = $state("");
   let adding = $state(false);
   let addError = $state<string | null>(null);
 
+  const providerOpts = $derived(providerOptions(models, limits));
   const limitViews = $derived(viewConcurrencyLimits(limits));
   const limitsSummary = $derived(summarizeLimits(limits));
   const parsedNewLimit = $derived(parseLimitInput(newLimitInput));
-  const trimmedProviderId = $derived(newProviderId.trim());
   const canAdd = $derived(
-    trimmedProviderId !== "" &&
+    newProviderId !== "" &&
       parsedNewLimit !== null &&
-      !limits.some((l) => l.providerId === trimmedProviderId) &&
+      !limits.some((l) => l.providerId === newProviderId) &&
       !adding,
   );
+
+  // Keep the dropdown selection valid: default to the first option, and if the
+  // selected provider is removed from the options (e.g. its limit was deleted and
+  // it has no models), fall back to the first remaining option. Runs untracked so
+  // it doesn't loop on its own assignment.
+  $effect(() => {
+    const opts = providerOpts;
+    untrack(() => {
+      if (opts.length === 0) {
+        if (newProviderId !== "") newProviderId = "";
+        return;
+      }
+      if (!opts.includes(newProviderId)) newProviderId = opts[0] ?? "";
+    });
+  });
 
   async function refreshLimits(): Promise<void> {
     limitsLoading = true;
@@ -74,13 +94,12 @@
   }
 
   async function handleAdd(): Promise<void> {
-    if (parsedNewLimit === null || trimmedProviderId === "") return;
+    if (parsedNewLimit === null || newProviderId === "") return;
     adding = true;
     addError = null;
-    const result = await saveLimit(trimmedProviderId, parsedNewLimit);
+    const result = await saveLimit(newProviderId, parsedNewLimit);
     adding = false;
     if (result.ok) {
-      newProviderId = "";
       newLimitInput = "";
       void refreshLimits();
       void refreshStatus();
@@ -191,15 +210,21 @@
       }}
     >
       <label class="flex flex-col gap-1">
-        <span class="text-[10px] uppercase opacity-60">Provider id</span>
-        <input
-          class="input input-bordered input-xs w-40 font-mono"
-          placeholder="umans"
-          autocomplete="off"
-          spellcheck="false"
+        <span class="text-[10px] uppercase opacity-60">Provider</span>
+        <select
+          class="select select-bordered select-xs w-40 font-mono"
+          aria-label="Provider"
           bind:value={newProviderId}
-          disabled={adding}
-        />
+          disabled={adding || providerOpts.length === 0}
+        >
+          {#if providerOpts.length === 0}
+            <option value="" disabled>No providers available</option>
+          {:else}
+            {#each providerOpts as provider (provider)}
+              <option value={provider}>{provider}</option>
+            {/each}
+          {/if}
+        </select>
       </label>
       <label class="flex flex-col gap-1">
         <span class="text-[10px] uppercase opacity-60">Limit</span>
