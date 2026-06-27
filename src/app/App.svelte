@@ -501,7 +501,7 @@
 		     the top row now shows the active tab's title on the left (or "New Tab"
 		     for an unstarted draft), with the build version + sidebar toggle on
 		     the right. -->
-		<div class="flex items-center justify-between gap-2 px-2">
+		<div class="flex items-center justify-between gap-2 px-2 py-2">
 			<span
 				class="min-w-0 flex-1 shrink truncate pl-2 text-sm font-medium opacity-70"
 				data-testid="top-bar-title"
