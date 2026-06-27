@@ -449,7 +449,7 @@
 				class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-base-content/30"
 				title="Build version (git short hash)"
 			>
-				{__APP_VERSION__}
+				build: {__APP_VERSION__}
 			</span>
 			<button
 				class="btn btn-square btn-ghost btn-sm mx-1 shrink-0"
