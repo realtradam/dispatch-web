@@ -216,6 +216,18 @@
 		return parseTodoPayload(field.payload);
 	});
 
+	// Top-bar title: the active tab's title, or "New Tab" when no tab is active
+	// (a fresh, unstarted draft — the conversation hasn't been sent yet, so no
+	// tab exists). Pure-derived from the (workspace-filtered) tab set + the
+	// active id; reflects whichever tab is selected in the sidebar's Tabs view.
+	const NEW_TAB_TITLE = "New Tab";
+	const topBarTitle = $derived.by(() => {
+		const id = store.activeConversationId;
+		if (id === null) return NEW_TAB_TITLE;
+		const tab = store.tabs.find((t) => t.conversationId === id);
+		return tab?.title ?? NEW_TAB_TITLE;
+	});
+
 	// Conversation/tab switch → snap to the bottom of the new transcript.
 	$effect(() => {
 		void store.activeConversationId;
@@ -421,9 +433,18 @@
 	     (below), so opening it shrinks this ENTIRE column. -->
 	<div class="flex min-w-0 flex-1 flex-col overflow-hidden pt-[5px]">
 		<!-- Slim header: the tab bar moved into the sidebar (the "Tabs" view), so
-		     the top row now holds only the build version + the sidebar toggle,
-		     right-aligned. -->
-		<div class="flex items-center justify-end px-1">
+		     the top row now shows the active tab's title on the left (or "New Tab"
+		     for an unstarted draft), with the build version + sidebar toggle on
+		     the right. -->
+		<div class="flex items-center justify-between gap-2 px-2">
+			<span
+				class="min-w-0 flex-1 shrink truncate text-sm font-medium opacity-70"
+				data-testid="top-bar-title"
+				title={topBarTitle}
+				aria-label="Active conversation title"
+			>
+				{topBarTitle}
+			</span>
 			<span
 				class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-base-content/30"
 				title="Build version (git short hash)"

@@ -136,6 +136,46 @@ describe("App component interaction tests", () => {
     store.dispose();
   });
 
+  it("shows 'New Tab' in the top bar for an unstarted draft (no active tab)", () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    render(App, { props: { store } });
+
+    expect(store.activeConversationId).toBeNull();
+    expect(screen.getByTestId("top-bar-title")).toHaveTextContent("New Tab");
+
+    store.dispose();
+  });
+
+  it("shows the active tab's title in the top bar once a tab is started", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    render(App, { props: { store } });
+
+    // Promote draft → tab: the tab's title is derived from the first message.
+    store.send("Refactor the auth module");
+    expect(store.activeConversationId).not.toBeNull();
+
+    // The top-bar title updates reactively; findByTestId awaits the flush.
+    expect(await screen.findByTestId("top-bar-title")).toHaveTextContent(
+      "Refactor the auth module",
+    );
+
+    store.dispose();
+  });
+
   it("auto-subscribes to every catalog entry on render (no buttons to click)", () => {
     const ws = fakeSocket();
     const store = createAppStore({
