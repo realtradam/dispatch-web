@@ -58,34 +58,19 @@
 
 	// Click-to-copy the agent (conversation) id: clicking the ID badge copies the
 	// FULL conversationId to the clipboard (the stable, useful id — the badge
-	// only shows a short prefix) and briefly highlights the badge as feedback.
-	// Clipboard is the edge effect; absent (insecure context) → select the badge
-	// text so the user can Ctrl+C manually.
-	let copiedId = $state<string | null>(null);
-	let copyTimer: ReturnType<typeof setTimeout> | undefined;
-
+	// only shows a short prefix) and highlights the badge text as feedback. The
+	// highlight (text selection) is the indicator — no text is swapped, so the
+	// badge keeps a stable width. If the clipboard write fails, the selection is
+	// already in place so the user can Ctrl+C the text manually.
 	async function copyId(conversationId: string, el: HTMLElement): Promise<void> {
+		selectText(el);
 		const clipboard = navigator.clipboard;
-		if (clipboard === undefined) {
-			selectText(el);
-			flashCopied(conversationId);
-			return;
-		}
+		if (clipboard === undefined) return;
 		try {
 			await clipboard.writeText(conversationId);
-			flashCopied(conversationId);
 		} catch {
-			selectText(el);
-			flashCopied(conversationId);
+			// Selection already lets the user copy manually.
 		}
-	}
-
-	function flashCopied(conversationId: string): void {
-		copiedId = conversationId;
-		clearTimeout(copyTimer);
-		copyTimer = setTimeout(() => {
-			copiedId = null;
-		}, 1200);
 	}
 
 	function selectText(el: HTMLElement): void {
@@ -117,21 +102,16 @@
 			>
 				<button
 					type="button"
-					class="shrink-0 rounded px-1 py-0.5 font-mono text-[10px] leading-none transition-colors {copiedId ===
-					tab.conversationId
-						? "bg-success text-success-content"
-						: "bg-base-300 text-base-content/60 hover:bg-primary hover:text-primary-content"}"
+					class="shrink-0 rounded bg-base-300 px-1 py-0.5 font-mono text-[10px] leading-none text-base-content/60 transition-colors hover:bg-primary hover:text-primary-content"
 					data-copy-id={tab.conversationId}
-					title={copiedId === tab.conversationId ? "Copied!" : "Click to copy conversation id"}
+					title="Click to copy conversation id"
 					aria-label={`Copy conversation id ${tab.conversationId}`}
 					onclick={(e) => {
 						e.stopPropagation();
 						void copyId(tab.conversationId, e.currentTarget);
 					}}
 				>
-					{copiedId === tab.conversationId
-						? "Copied!"
-						: (handles.get(tab.conversationId) ?? tab.conversationId)}
+					{handles.get(tab.conversationId) ?? tab.conversationId}
 				</button>
 				{#if editingId === tab.conversationId}
 					<input
