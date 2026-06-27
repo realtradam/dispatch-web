@@ -43,9 +43,14 @@
 
   // ── Limits (config: list / add / update / remove) ────────────────────────────
   let limits = $state<readonly ConcurrencyLimitEntry[]>([]);
-  let limitsLoading = $state(false);
   let limitsError = $state<string | null>(null);
+  /** True after the first load settles (gates the empty state). */
   let hasLoadedLimits = $state(false);
+  /** Re-entrancy guard for background/silent refreshes (no UI — prevents
+   *  overlapping fetches). The refresh is near-instant, so a visible loading
+   *  indicator would flicker every poll/reload; it stays INVISIBLE (mirrors the
+   *  heartbeat runs list). */
+  let limitsInFlight = false;
 
   // Add-form state. The provider id is chosen from a dropdown of known providers
   // (derived from the available models + any already-configured limit providers).
@@ -81,13 +86,16 @@
   });
 
   async function refreshLimits(): Promise<void> {
-    limitsLoading = true;
-    limitsError = null;
+    if (limitsInFlight) return;
+    limitsInFlight = true;
     const result = await loadLimits();
-    limitsLoading = false;
+    limitsInFlight = false;
     hasLoadedLimits = true;
     if (result.ok) {
       limits = result.limits;
+      // Clear the error only on success so it stays visible (stable, no flicker)
+      // during an in-flight retry rather than vanishing mid-refresh.
+      limitsError = null;
     } else {
       limitsError = result.error;
     }
@@ -130,9 +138,13 @@
 
   // ── Live status (polls while mounted) ───────────────────────────────────────
   let statusEntries = $state<readonly ConcurrencyStatusEntry[]>([]);
-  let statusLoading = $state(false);
   let statusError = $state<string | null>(null);
+  /** True after the first load settles (gates the empty state). */
   let hasLoadedStatus = $state(false);
+  /** Re-entrancy guard for the 2s background poll (no UI — a visible loading
+   *  indicator flickered every poll because the refresh is near-instant; it stays
+   *  INVISIBLE, mirroring the heartbeat runs list). */
+  let statusInFlight = false;
   let now = $state(Date.now());
 
   // A 1s clock so a `paused — resumes in Ns` countdown ticks live between polls.
@@ -147,13 +159,16 @@
   const statusSummary = $derived(summarizeStatus(statusEntries, now));
 
   async function refreshStatus(): Promise<void> {
-    statusLoading = true;
-    statusError = null;
+    if (statusInFlight) return;
+    statusInFlight = true;
     const result = await loadStatus();
-    statusLoading = false;
+    statusInFlight = false;
     hasLoadedStatus = true;
     if (result.ok) {
       statusEntries = result.providers;
+      // Clear the error only on success so it stays visible (stable, no flicker)
+      // during an in-flight retry rather than vanishing mid-poll.
+      statusError = null;
     } else {
       statusError = result.error;
     }
@@ -184,15 +199,10 @@
       <button
         type="button"
         class="btn btn-ghost btn-xs"
-        disabled={limitsLoading}
         onclick={() => refreshLimits()}
         aria-label="Refresh concurrency limits"
       >
-        {#if limitsLoading}
-          <span class="loading loading-spinner loading-xs"></span>
-        {:else}
-          Refresh
-        {/if}
+        Refresh
       </button>
     </div>
     <p class="text-xs opacity-60">
@@ -257,7 +267,7 @@
 
     {#if limitsError}
       <p class="text-xs text-error">{limitsError}</p>
-    {:else if hasLoadedLimits && limitViews.length === 0 && !limitsLoading}
+    {:else if hasLoadedLimits && limitViews.length === 0}
       <p class="text-xs opacity-60">No limits configured — providers run unlimited.</p>
     {:else}
       <ul class="flex flex-col gap-2">
@@ -277,15 +287,10 @@
       <button
         type="button"
         class="btn btn-ghost btn-xs"
-        disabled={statusLoading}
         onclick={() => refreshStatus()}
         aria-label="Refresh concurrency status"
       >
-        {#if statusLoading}
-          <span class="loading loading-spinner loading-xs"></span>
-        {:else}
-          Refresh
-        {/if}
+        Refresh
       </button>
     </div>
     <p class="text-xs opacity-60">
@@ -297,7 +302,7 @@
 
     {#if statusError}
       <p class="text-xs text-error">{statusError}</p>
-    {:else if hasLoadedStatus && statusViews.length === 0 && !statusLoading}
+    {:else if hasLoadedStatus && statusViews.length === 0}
       <p class="text-xs opacity-60">No limits configured — nothing to report.</p>
     {:else}
       <ul class="flex flex-col gap-2">
