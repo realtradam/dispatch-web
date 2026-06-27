@@ -628,6 +628,58 @@ describe("ChatView", () => {
     expect(img?.getAttribute("loading")).toBe("lazy");
   });
 
+  it("resolves a persisted image chunk's relative url against apiBaseUrl", () => {
+    // Persisted image chunks now carry a compact relative path (`/images/…`)
+    // served by the backend — prepend the API base to render them.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "image", url: "/images/conv-123/abc-456.png", mimeType: "image/png" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, {
+      props: { chunks, apiBaseUrl: "http://localhost:24203" },
+    });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "http://localhost:24203/images/conv-123/abc-456.png",
+    );
+  });
+
+  it("passes a data URL through unchanged even with apiBaseUrl set (optimistic echo)", () => {
+    // The optimistic echo (what the FE just sent) is still a data URL; it must
+    // NOT be mangled by the base-URL prepend.
+    const dataUrl = "data:image/png;base64,iVBOR=";
+    const chunks: RenderedChunk[] = [
+      { seq: null, role: "user", chunk: { type: "image", url: dataUrl }, provisional: true },
+    ];
+
+    const { container } = render(ChatView, {
+      props: { chunks, apiBaseUrl: "http://localhost:24203" },
+    });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(dataUrl);
+  });
+
+  it("leaves a relative image url root-relative when apiBaseUrl is absent", () => {
+    // No apiBaseUrl → a browser resolves `/images/…` against the document origin.
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "user",
+        chunk: { type: "image", url: "/images/conv-1/x.png" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, { props: { chunks } });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("/images/conv-1/x.png");
+  });
+
   it("renders a multi-chunk user message [text, image] and a transcription text", () => {
     // A non-vision model: the server persists the original image chunk AND a
     // transcription text chunk in the SAME user message — render both.

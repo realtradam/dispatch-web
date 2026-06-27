@@ -5,12 +5,11 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-26 (§2j UPDATED — consult_vision tool + vision settings API: `read_image` is REPLACED by
-`consult_vision` (non-vision models now get numbered placeholder text chunks, not auto-transcriptions); NEW global
-`GET`/`PUT /settings/vision` (`VisionSettingsResponse`/`SetVisionSettingsRequest` — `imageLimit` + `compactionModel`);
-image compaction transcribes old images to `[Compacted image]: …` text chunks (all regular text — render as-is). New
-`vision` feature library + "Vision" sidebar view (imageLimit input + compactionModel dropdown of vision-capable models +
-"Auto"). typecheck 0/0, 948 tests green (+47), biome clean, build OK. §2i unchanged.)_
+_Last updated: 2026-06-26 (§2j UPDATED — Image storage: persisted `ImageChunk.url`s are now compact relative HTTP
+paths (`/images/<conv>/<uuid>.png`) served by `GET /images/:conversationId/:imageId` (images stored on disk under tmp,
+not SQLite). FE resolves relative urls against the API base via a new pure `resolveImageUrl` helper; the optimistic
+echo's data URL passes through unchanged; `ChatRequest.images` (send) is unchanged. typecheck 0/0, 959 tests green
+(+11), biome clean, build OK. §2i unchanged.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.22.0` / `wire@0.12.0`.** Open asks: **CR-9**
 (`system:os` should detect WSL + include Linux distro — backend behavior change, no contract bump). The SSH-divergence
 (§2d) is RESOLVED.
@@ -853,6 +852,48 @@ view, confirm the imageLimit + compactionModel load; change imageLimit → Save 
 reload; set compactionModel to a vision model → confirm the dropdown reflects it; paste an image with a
 non-vision model → confirm the `[Image N attached — call consult_vision…]` placeholder renders (not an
 auto-transcription); trigger a `consult_vision` tool call → confirm it renders like a tool.
+
+### 2j-update-2. Image storage (tmp, not SQLite) → **CONSUMED ✅ (backend updated; FE built + verified)**
+
+A follow-up to §2j. The backend no longer persists images as base64 data URLs in the conversation store —
+they are saved to a tmp directory and served via HTTP. The `ImageChunk.url` field's FORMAT changed (the
+TYPE is unchanged — still `string`); `GET /images/:conversationId/:imageId` is a new endpoint serving raw
+bytes + the correct Content-Type. **NO wire/transport-contract type change** (behavior only); re-mirrored
+the delta notes in `.dispatch/wire.reference.md` + `.dispatch/transport-contract.reference.md`.
+
+**What changed (backend):**
+- **BEFORE:** `ImageChunk.url` was a base64 data URL (`data:image/png;base64,…`).
+- **NOW:** `ImageChunk.url` for PERSISTED chunks (history/replay) is a compact relative HTTP path
+  (`/images/<conversationId>/<uuid>.png`), served by `GET /images/:conversationId/:imageId` (raw image
+  bytes + Content-Type). Images live on disk under tmp, NOT in the SQLite conversation store (keeps
+  payloads small).
+- **`ChatRequest.images` (`ImageInput.url`) is UNCHANGED** — the FE still sends data URLs; the backend
+  saves them to tmp and returns compact paths in the persisted chunks.
+- **Optimistic echo:** the FE's provisional echo still uses the data URL it sent (immediate render);
+  when the persisted chunk arrives (via `loadSince`/`syncTail`/event stream), it carries the compact path
+  and the FE switches to rendering via the HTTP endpoint.
+- The vision settings API, `consult_vision`, and image compaction are UNCHANGED (compaction resolves
+  compact URLs internally).
+
+**FE (DONE + verified):**
+- **New pure helper `resolveImageUrl(url, apiBase)`** (`core/chunks/image-url.ts`, +8 tests, exported from
+  `core/chunks` + re-exported from `features/chat`): a `data:` URL or an `http(s)://` URL passes through
+  unchanged; a relative path (`/images/…`) is prepended with the API base (no double slash; an empty base
+  yields a root-relative path a browser resolves against its origin). Pure — zero DOM/Svelte.
+- **`ChatView.svelte`:** new `apiBaseUrl` prop (default `""`); the `<img src>` now uses
+  `resolveImageUrl(rendered.chunk.url, apiBaseUrl)`. The optimistic echo's data URL + any absolute URL
+  pass through; persisted relative paths resolve against the base. +3 ChatView tests (relative-path
+  resolution, data-URL pass-through with a base set, root-relative when no base).
+- **Store + wiring:** `httpBase` (the resolved HTTP API base) is now exposed as a getter on `AppStore`;
+  `App.svelte` passes `apiBaseUrl={store.httpBase}` to `ChatView` AND to the heartbeat `RunModal` (its
+  `ChatView` also renders image chunks — added an `apiBaseUrl` prop there, threaded from `App.svelte`).
+
+**Verification:** `svelte-check` 0/0; vitest **959/959** (run TWICE — no cross-test pollution; +11 since the
+prior commit: 8 `resolveImageUrl`, 3 ChatView resolution), biome clean, `vite build` succeeds.
+**Live probe NOT run** (backend not reachable headless). To confirm end-to-end: paste an image with a
+vision model, send, confirm the image renders immediately (data-URL echo) AND continues to render after
+the turn seals (the persisted compact-path `/images/…` resolved against `httpBase`); reload the
+conversation → confirm the persisted image renders from the `/images/…` endpoint (not a data URL).
 
 ---
 

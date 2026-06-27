@@ -27,6 +27,14 @@
 > `PUT /settings/vision` ← `SetVisionSettingsRequest` (partial: `imageLimit?` non-negative int, 0 = disable
 > compaction; `compactionModel?` `<key>/<model>` or null = auto). See `backend-handoff.md` §2j.
 >
+> **2026-06-26 update (image storage — NO type change, behavior only):** persisted `ImageChunk.url`s are now
+> compact relative HTTP paths (`/images/<conversationId>/<uuid>.png`) served by the new
+> `GET /images/:conversationId/:imageId` endpoint (raw image bytes + correct Content-Type) — NOT base64 data
+> URLs (images are stored on disk under tmp, not in the SQLite store). `ChatRequest.images` (`ImageInput.url`)
+> is UNCHANGED — clients still send data URLs; the backend saves them to tmp and returns compact paths in
+> the persisted chunks. A client resolves a relative `url` against its API base (`resolveImageUrl`); the
+> optimistic echo's data URL and any absolute URL pass through. See `backend-handoff.md` §2j.
+>
 > **2026-06-25 delta (SSH handoff #2 — ADDITIVE to `transport-contract@0.22.0`, NO version bump):** adds the
 > computer HTTP API types: `ComputerListResponse` (`GET /computers`), `ComputerResponse` (`GET /computers/:alias`),
 > `ComputerStatusResponse` (`GET /computers/:alias/status`), `TestComputerResponse` (`POST /computers/:alias/test`),

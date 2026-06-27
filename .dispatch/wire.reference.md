@@ -14,6 +14,15 @@
 > — the orchestrator's vision handoff transcribes each to a text description (persisted as a separate
 > `text` chunk in the SAME user message). See `backend-handoff.md` §2j.
 >
+> **2026-06-26 update (image storage — NO type change, behavior only):** `ImageChunk.url` for PERSISTED
+> chunks is now a compact relative HTTP path (`/images/<conversationId>/<uuid>.png`) served by the backend's
+> new `GET /images/:conversationId/:imageId` endpoint (raw bytes + correct Content-Type), NOT a base64 data
+> URL — images are stored on disk under tmp, not in the SQLite conversation store (keeps payloads small).
+> `ImageInput.url` (what a client SENDS on `ChatRequest.images`) is UNCHANGED — still a data URL or
+> `http(s)://` URL; the backend saves it to tmp and returns the compact path in the persisted chunk. A client
+> resolves a relative `url` against its API base (`resolveImageUrl`); a data URL (the optimistic echo) or an
+> absolute URL passes through unchanged. See `backend-handoff.md` §2j.
+>
 > **2026-06-23 delta (workspaces handoff — package bumped `0.11.0` → `0.12.0`, ADDITIVE):** adds
 > `Workspace` + `WorkspaceEntry` (a list entry with a conversation count) and a required
 > `workspaceId: string` on `ConversationMeta` (`"default"` for legacy/unspecified conversations). A
@@ -156,12 +165,17 @@ export interface SystemChunk {
 /**
  * An image attached to a message (e.g. a user-pasted screenshot or pasted
  * photo). Carries a `url` that is EITHER a base64 data URL
- * (`data:image/png;base64,…`) OR an `http(s)://` URL. Vision-capable models
- * receive it natively (the provider serializes it to its image-content
- * format); non-vision models never see it directly — the orchestrator's
- * **vision handoff** transcribes it to a text description (via a
- * vision-capable model) and feeds that text instead, so a text-only model can
- * still reason about the image's contents.
+ * (`data:image/png;base64,…`) OR an `http(s)://` URL OR — for PERSISTED chunks
+ * (history/replay) — a compact relative HTTP path (`/images/<conversationId>/
+ * <uuid>.png`) served by the backend's `GET /images/:conversationId/:imageId`
+ * endpoint (images are stored on disk under tmp, NOT in the conversation store,
+ * to keep SQLite payloads small). A client resolves a relative path against its
+ * API base URL; a data URL (the optimistic echo / a pasted image) or an
+ * absolute URL is rendered as-is. Vision-capable models receive it natively
+ * (the provider serializes it to its image-content format); non-vision models
+ * never see it directly — the orchestrator's **vision handoff** transcribes it
+ * to a text description (via a vision-capable model) and feeds that text
+ * instead, so a text-only model can still reason about the image's contents.
  *
  * When a transcription was performed, it is persisted as a separate `text`
  * chunk alongside the `image` chunk in the SAME user message, so the
@@ -170,7 +184,7 @@ export interface SystemChunk {
  */
 export interface ImageChunk {
 	readonly type: "image";
-	/** Image source: a base64 data URL (`data:image/…;base64,…`) or an `http(s)://` URL. */
+	/** Image source: a base64 data URL (`data:image/…;base64,…`), an `http(s)://` URL, or a compact relative path (`/images/<conv>/<uuid>.png`) for persisted chunks. */
 	readonly url: string;
 	/**
 	 * Optional MIME type of the image (e.g. `"image/png"`). Inferred from the
