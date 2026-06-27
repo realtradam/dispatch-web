@@ -13,9 +13,19 @@
 > (each entry: `{ url, mimeType? }` — a base64 data URL or `http(s)://` URL; validated non-array/no-url/
 > empty-url → 400, empty array treated as absent). `ModelMetadata` gains `vision?: boolean` (true when the
 > model natively accepts images; absent → the server's vision handoff transcribes images to text before the
-> model sees them). `ImageChunk`/`ImageInput` are `@dispatch/wire` types (re-exported here). A non-vision
-> model's persisted user message keeps the original `image` chunk AND adds a `text` transcription chunk
-> (`[Image analysis (via <model>)]: …`) in the SAME message — render both. See `backend-handoff.md` §2j.
+> model sees them). `ImageChunk`/`ImageInput` are `@dispatch/wire` types (re-exported here).
+>
+> **2026-06-26 update (consult_vision + vision settings — ADDITIVE, NO version bump):** the `read_image`
+> tool is REPLACED by `consult_vision` (`{ question: string, imageIds?: number[], path?: string }`) — it
+> opens a NEW conversation tab with a vision-capable model, attaches the image + question, and returns the
+> vision model's answer (rendered like any tool call/result). Non-vision models now get NUMBERED
+> PLACEHOLDERS (`[Image N attached — call consult_vision with imageIds=[N] and a specific question to
+> analyze it]`) instead of auto-transcriptions — these are regular `text` chunks (render as-is). Image
+> compaction transcribes the oldest images past `imageLimit` to `[Compacted image]: <description>` text
+> chunks (also regular `text` — render as-is; the persisted `image` chunk stays for rendering). NEW global
+> vision settings API: `GET /settings/vision` → `VisionSettingsResponse` (`{ imageLimit, compactionModel }`),
+> `PUT /settings/vision` ← `SetVisionSettingsRequest` (partial: `imageLimit?` non-negative int, 0 = disable
+> compaction; `compactionModel?` `<key>/<model>` or null = auto). See `backend-handoff.md` §2j.
 >
 > **2026-06-25 delta (SSH handoff #2 — ADDITIVE to `transport-contract@0.22.0`, NO version bump):** adds the
 > computer HTTP API types: `ComputerListResponse` (`GET /computers`), `ComputerResponse` (`GET /computers/:alias`),
@@ -457,6 +467,27 @@ export interface SystemPromptVariable {
 /** Response of `GET /system-prompt/variables`. */
 export interface SystemPromptVariablesResponse {
 	readonly variables: readonly SystemPromptVariable[];
+}
+
+// ─── Vision settings (global) ───────────────────────────────────────────────
+
+/**
+ * Response of `GET /settings/vision` — the global vision configuration shared
+ * across all conversations and vision models.
+ */
+export interface VisionSettingsResponse {
+	/** Max native images per turn (default 10); 0 disables image compaction. */
+	readonly imageLimit: number;
+	/** Which model transcribes old images (null = auto-select a vision model). */
+	readonly compactionModel: string | null;
+}
+
+/** Body of `PUT /settings/vision` — a partial update. */
+export interface SetVisionSettingsRequest {
+	/** Non-negative integer (0 = disable compaction). */
+	readonly imageLimit?: number;
+	/** A model name (`<key>/<model>`) or null (auto). */
+	readonly compactionModel?: string | null;
 }
 
 // ─── Message queue (steering) ─────────────────────────────────────────────────

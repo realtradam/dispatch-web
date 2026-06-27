@@ -77,6 +77,13 @@
 		type SaveSystemPrompt as SaveSystemPromptAlias,
 		manifest as systemPromptManifest,
 	} from "../features/system-prompt";
+	import {
+		VisionSettingsView,
+		manifest as visionManifest,
+		type LoadVisionSettingsResult,
+		type SaveVisionSettingsResult,
+		type VisionSettingsPatch,
+	} from "../features/vision";
 	import type { AppStore } from "./store.svelte";
 	import ErrorModal from "./ErrorModal.svelte";
 	import { createLocalStore } from "../adapters/local-storage";
@@ -106,6 +113,7 @@
 		{ id: "cache-warming", label: "Cache Warming" },
 		{ id: "tasks", label: "Tasks" },
 		{ id: "compaction", label: "Compaction" },
+		{ id: "vision", label: "Vision" },
 		{ id: "heartbeat", label: "Heartbeat" },
 		{ id: "system-prompt", label: "System Prompt" },
 		{ id: "settings", label: "Settings" },
@@ -143,6 +151,7 @@
 		settingsManifest,
 		systemPromptManifest,
 		heartbeatManifest,
+		visionManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -301,6 +310,27 @@
 		if (result === null) return null;
 		return result.ok
 			? { ok: true, percent: result.percent }
+			: { ok: false, error: result.error };
+	}
+
+	// Adapt the store's global vision-settings API to the vision feature's ports.
+	async function loadVisionSettings(): Promise<LoadVisionSettingsResult> {
+		// The store seeds `visionSettings` on boot; a refresh keeps it current.
+		await store.refreshVisionSettings();
+		const settings = store.visionSettings;
+		if (settings === null) {
+			return { ok: false, error: "Vision settings not available." };
+		}
+		return { ok: true, settings };
+	}
+
+	async function saveVisionSettings(
+		patch: VisionSettingsPatch,
+	): Promise<SaveVisionSettingsResult> {
+		const result = await store.setVisionSettings(patch);
+		if (result === null) return { ok: false, error: "Vision settings not available." };
+		return result.ok
+			? { ok: true, settings: result.settings }
 			: { ok: false, error: result.error };
 	}
 
@@ -660,6 +690,14 @@
 				savePercent={saveCompactPercent}
 			/>
 		{/key}
+	{:else if kind === "vision"}
+		<!-- Global vision settings (image compaction). Not conversation-scoped (no {#key}). -->
+		<VisionSettingsView
+			models={store.models}
+			modelInfo={store.modelInfo}
+			load={loadVisionSettings}
+			save={saveVisionSettings}
+		/>
 	{:else if kind === "system-prompt"}
 		<!-- Global system prompt template. Opens a full-page modal editor (half
 		     template / half variable palette). Not conversation-scoped (no {#key}). -->
