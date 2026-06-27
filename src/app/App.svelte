@@ -499,7 +499,7 @@
 			</div>
 		{/if}
 
-		<div class="relative min-h-0 min-w-0 flex-1">
+		<div class="relative min-h-0 min-w-0 flex-1 pr-4">
 			<div bind:this={transcriptEl} class="h-full overflow-y-auto">
 				<div bind:this={transcriptContentEl}>
 					{#key store.activeConversationId}
