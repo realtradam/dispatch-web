@@ -145,7 +145,7 @@
 					</span>
 				{/if}
 				{#if statusFor?.(tab.conversationId) === "active"}
-					<span class="loading loading-spinner loading-xs shrink-0 text-primary"></span>
+					<span class="loading loading-dots loading-xs shrink-0 text-primary"></span>
 				{/if}
 				<button
 					class="btn btn-ghost btn-xs shrink-0"
