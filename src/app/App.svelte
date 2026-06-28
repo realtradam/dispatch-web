@@ -76,6 +76,7 @@
 		type DeleteConcurrencyLimit,
 		type LoadConcurrencyLimits,
 		type LoadConcurrencyStatus,
+		type SaveConcurrencyCooldown,
 		type SaveConcurrencyLimit,
 	} from "../features/concurrency";
 	import type { ChatStore } from "../features/chat";
@@ -491,6 +492,8 @@
 	const deleteConcurrencyLimit: DeleteConcurrencyLimit = (providerId) =>
 		store.deleteConcurrencyLimit(providerId);
 	const loadConcurrencyStatus: LoadConcurrencyStatus = () => store.concurrencyStatus();
+	const saveConcurrencyCooldown: SaveConcurrencyCooldown = (providerId, cooldownMs) =>
+		store.setConcurrencyCooldown(providerId, cooldownMs);
 </script>
 
 <main class="relative flex h-screen overflow-hidden">
@@ -841,6 +844,7 @@
 			saveLimit={saveConcurrencyLimit}
 			deleteLimit={deleteConcurrencyLimit}
 			loadStatus={loadConcurrencyStatus}
+			saveCooldown={saveConcurrencyCooldown}
 		/>
 	{/if}
 {/snippet}

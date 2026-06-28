@@ -1462,6 +1462,20 @@ describe("createAppStore", () => {
       if (url.includes("/concurrency/limits/") && method === "DELETE") {
         return new Response(JSON.stringify({ ok: true, providerId: "umans" }), { status: 200 });
       }
+      if (url.includes("/concurrency/cooldown/") && method === "GET") {
+        return new Response(JSON.stringify({ providerId: "umans", cooldownMs: 350 }), {
+          status: 200,
+        });
+      }
+      if (url.includes("/concurrency/cooldown/") && method === "PUT") {
+        const seg = url.slice(
+          url.lastIndexOf("/concurrency/cooldown/") + "/concurrency/cooldown/".length,
+        );
+        const body = init?.body ? JSON.parse(init.body as string) : {};
+        return new Response(JSON.stringify({ providerId: seg, cooldownMs: body.cooldownMs ?? 0 }), {
+          status: 200,
+        });
+      }
       return base(input, init);
     };
   }
@@ -1645,11 +1659,15 @@ describe("createAppStore", () => {
       inFlight: 2,
       queued: 1,
       paused: false,
+      cooldownMs: 350,
+      autoReduced: false,
     });
     expect(result.providers[1]).toMatchObject({
       providerId: "openai-compat",
       paused: true,
       pausedUntil: 1_719_408_000_000,
+      cooldownMs: 350,
+      autoReduced: false,
     });
     store.dispose();
   });
@@ -1664,6 +1682,100 @@ describe("createAppStore", () => {
     expect(result.ok).toBe(true);
     if (!result.ok) throw new Error("unreachable");
     expect(result.providers).toEqual([]);
+    store.dispose();
+  });
+
+  it("getConcurrencyCooldown loads + coerces the cooldown", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: concurrencyFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.getConcurrencyCooldown("umans");
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.providerId).toBe("umans");
+    expect(result.cooldownMs).toBe(350);
+    store.dispose();
+  });
+
+  it("getConcurrencyCooldown surfaces a 404 (no concurrency config) as ok:false", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/concurrency/cooldown/")) {
+          return new Response(
+            JSON.stringify({ error: "No concurrency configuration for this provider" }),
+            {
+              status: 404,
+            },
+          );
+        }
+        return fakeFetchImpl()(input);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.getConcurrencyCooldown("ghost");
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("No concurrency configuration");
+    store.dispose();
+  });
+
+  it("setConcurrencyCooldown PUTs { cooldownMs } + returns the echoed value", async () => {
+    const calls: { url: string; method: string; body: unknown }[] = [];
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        const method = init?.method ?? "GET";
+        calls.push({ url, method, body: init?.body ? JSON.parse(init.body as string) : null });
+        if (url.includes("/concurrency/cooldown/") && method === "PUT") {
+          const body = init?.body ? JSON.parse(init.body as string) : {};
+          return new Response(
+            JSON.stringify({ providerId: "umans", cooldownMs: body.cooldownMs }),
+            { status: 200 },
+          );
+        }
+        return fakeFetchImpl()(input, init);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.setConcurrencyCooldown("umans", 500);
+    expect(result.ok).toBe(true);
+    if (!result.ok) throw new Error("unreachable");
+    expect(result.cooldownMs).toBe(500);
+    const cooldownCall = calls.find(
+      (c) => c.url.includes("/concurrency/cooldown/") && c.method === "PUT",
+    );
+    expect(cooldownCall?.url).toContain("/concurrency/cooldown/umans");
+    expect(cooldownCall?.body).toEqual({ cooldownMs: 500 });
+    store.dispose();
+  });
+
+  it("setConcurrencyCooldown surfaces a 400 (invalid body) as ok:false", async () => {
+    const store = createAppStore({
+      socketFactory: () => fakeSocket(),
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/concurrency/cooldown/") && init?.method === "PUT") {
+          return new Response(
+            JSON.stringify({ error: "Body must be { cooldownMs: <non-negative integer> }" }),
+            { status: 400 },
+          );
+        }
+        return fakeFetchImpl()(input, init);
+      },
+      localStorage: createFakeStorage(),
+    });
+    const result = await store.setConcurrencyCooldown("umans", -1);
+    expect(result.ok).toBe(false);
+    if (result.ok) throw new Error("unreachable");
+    expect(result.error).toContain("non-negative integer");
     store.dispose();
   });
 
