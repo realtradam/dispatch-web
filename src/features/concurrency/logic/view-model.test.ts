@@ -14,6 +14,7 @@ import {
   pauseLabel,
   providerFromModel,
   providerOptions,
+  statusLabel,
   summarizeLimits,
   summarizeStatus,
   viewAutoReduce,
@@ -259,6 +260,42 @@ describe("viewConcurrencyStatus", () => {
     expect(v.badge).toBe("warning");
     // autoReduced alone does NOT flip busy (a reduced limit still admits agents).
     expect(v.busy).toBe(false);
+  });
+});
+
+// ── statusLabel (the row's status badge word) ──────────────────────────────────
+
+describe("statusLabel", () => {
+  it("idle (no in-flight) → Idle", () => {
+    expect(
+      statusLabel(viewConcurrencyStatus(status({ inFlight: 0, limit: 4, queued: 0 }), 0)),
+    ).toBe("Idle");
+  });
+
+  it("serving under capacity → Active", () => {
+    expect(
+      statusLabel(viewConcurrencyStatus(status({ inFlight: 2, limit: 4, queued: 0 }), 0)),
+    ).toBe("Active");
+  });
+
+  it("at capacity with a queue → At capacity", () => {
+    expect(
+      statusLabel(viewConcurrencyStatus(status({ inFlight: 4, limit: 4, queued: 3 }), 0)),
+    ).toBe("At capacity");
+  });
+
+  it("at capacity but no queue → Active (not At capacity)", () => {
+    expect(
+      statusLabel(viewConcurrencyStatus(status({ inFlight: 4, limit: 4, queued: 0 }), 0)),
+    ).toBe("Active");
+  });
+
+  it("paused → Paused (regardless of in-flight/queue)", () => {
+    expect(
+      statusLabel(
+        viewConcurrencyStatus(status({ paused: true, inFlight: 4, limit: 4, queued: 3 }), 0),
+      ),
+    ).toBe("Paused");
   });
 });
 

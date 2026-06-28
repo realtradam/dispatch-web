@@ -151,6 +151,35 @@ describe("ConcurrencyView", () => {
     expect((cooldownInput as HTMLInputElement).value).toBe("350");
   });
 
+  it("renders a status line (in-flight count left + badge right) below the edit line", async () => {
+    // Default status: limit 4, inFlight 2, queued 1, not paused → Active, "2/4".
+    const fakes = makeFakes();
+    render(ConcurrencyView, { props: props(fakes) });
+
+    expect(await screen.findByText("2/4 in flight")).toBeVisible();
+    expect(await screen.findByText("Active")).toBeVisible();
+  });
+
+  it("shows the At-capacity badge when in-flight is at the cap with a queue", async () => {
+    const fakes = makeFakes({
+      status: [statusEntry({ inFlight: 4, limit: 4, queued: 3 })],
+    });
+    render(ConcurrencyView, { props: props(fakes) });
+
+    expect(await screen.findByText("4/4 in flight")).toBeVisible();
+    expect(await screen.findByText("At capacity")).toBeVisible();
+  });
+
+  it("shows the Idle badge when no slots are in flight", async () => {
+    const fakes = makeFakes({
+      status: [statusEntry({ inFlight: 0, limit: 4, queued: 0 })],
+    });
+    render(ConcurrencyView, { props: props(fakes) });
+
+    expect(await screen.findByText("0/4 in flight")).toBeVisible();
+    expect(await screen.findByText("Idle")).toBeVisible();
+  });
+
   it("surfaces NO loading indicator during refresh (background poll is silent — no flicker)", async () => {
     // The 2s status poll + post-mutation reloads are SILENT: they never toggle a
     // visible loading state, so the Refresh button is plain-text (no spinner).

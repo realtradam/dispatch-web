@@ -1,9 +1,13 @@
 <script lang="ts">
   import { untrack } from "svelte";
   import {
+    DEFAULT_COOLDOWN_MS,
     parseCooldownInput,
     parseLimitInput,
+    statusLabel,
+    type Badge,
     type ConcurrencyLimitView,
+    type ConcurrencyStatusView,
   } from "../logic/view-model";
   import type {
     DeleteConcurrencyLimit,
@@ -13,19 +17,32 @@
 
   let {
     limit,
-    cooldownMs,
+    status,
     save,
     saveCooldown,
     remove,
   }: {
     /** The configured limit row (providerId + current limit). */
     limit: ConcurrencyLimitView;
-    /** The current per-slot release cooldown (ms) from the live status poll. */
-    cooldownMs: number;
+    /** The provider's live status view (in-flight/queue/badge), or null when no
+     *  status entry exists yet. Drives the status line + seeds the cooldown input. */
+    status: ConcurrencyStatusView | null;
     save: SaveConcurrencyLimit;
     saveCooldown: SaveConcurrencyCooldown;
     remove: DeleteConcurrencyLimit;
   } = $props();
+
+  // The badge→color map (presentational). Mirrors the old status-card mapping.
+  const badgeClass: Record<Badge, string> = {
+    success: "badge-success",
+    warning: "badge-warning",
+    error: "badge-error",
+    neutral: "badge-ghost",
+  };
+
+  // The cooldown input seed: the live cooldown when a status entry exists, else
+  // the server default (350).
+  const cooldownMs = $derived(status?.cooldownMs ?? DEFAULT_COOLDOWN_MS);
 
   // Inline-edit state for the limit + cooldown inputs. Each is seeded from its
   // canonical value, but only while untouched — so a save echo / status-poll
@@ -111,6 +128,7 @@
 </script>
 
 <div class="flex flex-col gap-1 rounded-box bg-base-200 p-2 text-sm">
+  <!-- Line 1: provider + limit + cooldown + Set + ✕ (all on one line). -->
   <div class="flex flex-wrap items-center gap-2">
     <span class="min-w-0 flex-1 truncate font-medium font-mono" title={limit.providerId}
       >{limit.providerId}</span
@@ -161,6 +179,21 @@
       {/if}
     </button>
   </div>
+
+  <!-- Line 2: in-flight count (left) + status badge (right). Hidden until the
+       first status poll for this provider lands. -->
+  {#if status !== null}
+    <div class="flex items-center justify-between gap-2 text-xs opacity-70">
+      <span title="In-flight slots held vs cap">{status.inFlightLabel} in flight</span>
+      <span class="badge badge-sm {badgeClass[status.badge]} gap-1">
+        {#if status.busy}
+          <span class="loading loading-spinner loading-xs"></span>
+        {/if}
+        {statusLabel(status)}
+      </span>
+    </div>
+  {/if}
+
   {#if error}
     <span class="font-mono text-xs text-error">{error}</span>
   {:else if justSaved && !dirty}

@@ -261,6 +261,19 @@ export function viewConcurrencyStatus(
 }
 
 /**
+ * A short status word for a status view, for the row's status badge:
+ * "Paused" · "At capacity" (in-flight at the cap with a queue) · "Active"
+ * (in-flight > 0) · "Idle". Mirrors the badge-text branching so the template
+ * holds no branching logic.
+ */
+export function statusLabel(view: ConcurrencyStatusView): string {
+  if (view.paused) return "Paused";
+  if (view.inFlight >= view.limit && view.queued > 0) return "At capacity";
+  if (view.inFlight > 0) return "Active";
+  return "Idle";
+}
+
+/**
  * The auto-reduce banner view for a status entry, or `null` when it is not
  * auto-reduced. `message` prefers the backend's `notice` (verbatim, when present
  * + non-empty); otherwise a synthesized fallback is built from
