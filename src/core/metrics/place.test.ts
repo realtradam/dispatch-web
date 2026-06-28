@@ -354,6 +354,81 @@ describe("interleaveTurnMetrics", () => {
     expectGroupAt(rows, 7, g6);
   });
 
+  it("trimmed leading turns: a mixed tool+text transcript tail-aligns text-only turns to their OWN (newest) entries, not stale trimmed ones", () => {
+    // A long conversation where the chat limit unloaded the oldest turn (t1).
+    // Metrics still hold all three turns; the loaded transcript is turns 2-3.
+    // Turn 2 is a tool turn (matched by stepId); turn 3 is text-only (no
+    // stepId groups) — the failure case. The text-only turn MUST get its OWN
+    // entry (t3), NOT the trimmed t1's stale metrics.
+    const g3 = userGroup(3, "q2");
+    const g4 = toolBatchGroup("s2", ["c2"]);
+    const g5 = assistantGroup(4, "tool-reply");
+    const g6 = userGroup(5, "q3");
+    const g7 = assistantGroup(6, "text-reply");
+    const step1 = makeStep("s1", 11, 1); // t1 (trimmed)
+    const step2 = makeStep("s2", 22, 2); // t2 (loaded, tool)
+    const step3 = makeStep("s3", 33, 3); // t3 (loaded, text-only — unanchored)
+    const entries = [
+      makeEntry("t1", 11, 1, [step1]),
+      makeEntry("t2", 22, 2, [step2]),
+      makeEntry("t3", 33, 3, [step3]),
+    ];
+    const rows = interleaveTurnMetrics([g3, g4, g5, g6, g7], entries);
+
+    const tmRows = rows.filter(
+      (r): r is Extract<MetricsRow, { kind: "turn-metrics" }> => r.kind === "turn-metrics",
+    );
+    // Two loaded turns → two turn-metrics rows. The trimmed t1 does NOT render.
+    expect(tmRows).toHaveLength(2);
+    // CRITICAL: the text-only turn (segment 1) got t3 (its own newest entry),
+    // not t1 (the stale trimmed one). A misaligned head-align would show t1.
+    expect(tmRows[1]?.turn.turnId).toBe("t3");
+    expect(tmRows[0]?.turn.turnId).toBe("t2");
+    // And t1 never appears as a rendered row.
+    expect(tmRows.some((r) => r.turn.turnId === "t1")).toBe(false);
+  });
+
+  it("trimmed turn still counts toward the cumulative 'chat total' on the first visible turn", () => {
+    // t1 is trimmed (no segment) but finalized; t2 is the loaded visible turn.
+    // t2's "Chat Total" cumulative must INCLUDE t1's usage (the whole chat),
+    // even though t1 renders no row of its own.
+    const g1 = userGroup(2, "q2");
+    const g2 = assistantGroup(3, "a2");
+    const entries = [
+      {
+        turnId: "t1",
+        steps: [],
+        total: {
+          turnId: "t1",
+          usage: { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 500 },
+          steps: [],
+        },
+      },
+      {
+        turnId: "t2",
+        steps: [],
+        total: {
+          turnId: "t2",
+          usage: { inputTokens: 2000, outputTokens: 20, cacheReadTokens: 1600 },
+          steps: [],
+        },
+      },
+    ];
+    const rows = interleaveTurnMetrics([g1, g2], entries);
+    const tmRows = rows.filter(
+      (r): r is Extract<MetricsRow, { kind: "turn-metrics" }> => r.kind === "turn-metrics",
+    );
+    // Only the loaded turn renders a row; the trimmed t1 does not.
+    expect(tmRows).toHaveLength(1);
+    expect(tmRows[0]?.turn.turnId).toBe("t2");
+    // Cumulative includes BOTH turns (t1 + t2): input 3000, cacheRead 2100.
+    expect(tmRows[0]?.cumulativeUsage.inputTokens).toBe(3000);
+    expect(tmRows[0]?.cumulativeUsage.cacheReadTokens).toBe(2100);
+    // Retention baseline is the prior finalized turn (t1, even though trimmed).
+    expect(tmRows[0]?.prevTurnUsage?.inputTokens).toBe(1000);
+    expect(tmRows[0]?.prevTurnUsage?.cacheReadTokens).toBe(500);
+  });
+
   it("in-flight turn (no durationMs) still produces turn row", () => {
     const g1 = userGroup(1, "q1");
     const g2 = toolCallGroup(2, "s1", "c1");
@@ -391,7 +466,7 @@ describe("interleaveTurnMetrics", () => {
     expectTurnMetricsAt(rows, 4, "t1");
   });
 
-  it("more metrics than segments: unmatched entry emits standalone turn-metrics", () => {
+  it("trimmed turn (more metrics than segments) does NOT emit a standalone row at the top", () => {
     const g1 = userGroup(1, "q1");
     const g2 = toolCallGroup(2, "s1", "c1");
     const step1 = makeStep("s1", 100, 50);
@@ -401,13 +476,19 @@ describe("interleaveTurnMetrics", () => {
       [makeEntry("t1", 100, 50, [step1]), makeEntry("t2", 200, 80, [step2])],
     );
 
-    // Unmatched entry (t2) emits a standalone turn-metrics row at the top.
-    expect(rows).toHaveLength(5);
-    expectTurnMetricsAt(rows, 0, "t2");
-    expectGroupAt(rows, 1, g1);
-    expectGroupAt(rows, 2, g2);
-    expectStepMetricsAt(rows, 3, "s1", 0);
-    expectTurnMetricsAt(rows, 4, "t1");
+    // t2's content was unloaded by the chat limit (no segment for it); its
+    // metrics must NOT render a standalone row piled at the top. Only the
+    // loaded turn's content + its matched metrics appear. (t2 still counts
+    // toward the cumulative "chat total" — see the cache-total tests.)
+    expect(rows).toHaveLength(4);
+    expectGroupAt(rows, 0, g1);
+    expectGroupAt(rows, 1, g2);
+    expectStepMetricsAt(rows, 2, "s1", 0);
+    expectTurnMetricsAt(rows, 3, "t1");
+    // No standalone turn-metrics row for t2 anywhere.
+    const tmRows = rows.filter((r) => r.kind === "turn-metrics");
+    expect(tmRows).toHaveLength(1);
+    expect((tmRows[0] as { readonly turn: TurnMetrics }).turn.turnId).toBe("t1");
   });
 
   it("turn with no steps emits only turn-metrics (no step-metrics)", () => {
