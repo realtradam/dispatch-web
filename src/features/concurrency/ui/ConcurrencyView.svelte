@@ -3,13 +3,12 @@
   import type { ConcurrencyStatusEntry } from "@dispatch/transport-contract";
   import {
     autoReduceNotices,
-    type Badge,
+    DEFAULT_COOLDOWN_MS,
+    parseCooldownInput,
     parseLimitInput,
     providerOptions,
     summarizeLimits,
-    summarizeStatus,
     viewConcurrencyLimits,
-    viewConcurrencyStatuses,
   } from "../logic/view-model";
   import type {
     ConcurrencyLimitEntry,
@@ -21,7 +20,6 @@
     SaveConcurrencyLimit,
   } from "../logic/types";
   import AutoReduceBanner from "./AutoReduceBanner.svelte";
-  import ConcurrencyCooldownRow from "./ConcurrencyCooldownRow.svelte";
   import ConcurrencyLimitRow from "./ConcurrencyLimitRow.svelte";
 
   let {
@@ -41,13 +39,6 @@
     saveCooldown: SaveConcurrencyCooldown;
   } = $props();
 
-  const badgeClass: Record<Badge, string> = {
-    success: "badge-success",
-    warning: "badge-warning",
-    error: "badge-error",
-    neutral: "badge-ghost",
-  };
-
   // ── Limits (config: list / add / update / remove) ────────────────────────────
   let limits = $state<readonly ConcurrencyLimitEntry[]>([]);
   let limitsError = $state<string | null>(null);
@@ -59,10 +50,13 @@
    *  heartbeat runs list). */
   let limitsInFlight = false;
 
-  // Add-form state. The provider id is chosen from a dropdown of known providers
+  // Add-row state. The provider id is chosen from a dropdown of known providers
   // (derived from the available models + any already-configured limit providers).
+  // The row is revealed by the "Add" button; "Set" saves it, ✕ cancels.
+  let addOpen = $state(false);
   let newProviderId = $state("");
   let newLimitInput = $state("");
+  let newCooldownInput = $state("");
   let adding = $state(false);
   let addError = $state<string | null>(null);
 
@@ -70,9 +64,15 @@
   const limitViews = $derived(viewConcurrencyLimits(limits));
   const limitsSummary = $derived(summarizeLimits(limits));
   const parsedNewLimit = $derived(parseLimitInput(newLimitInput));
-  const canAdd = $derived(
+  const parsedNewCooldown = $derived(parseCooldownInput(newCooldownInput));
+  /** Only send a cooldown PUT when the user moved it off the server default. */
+  const newCooldownChanged = $derived(
+    parsedNewCooldown !== null && parsedNewCooldown !== DEFAULT_COOLDOWN_MS,
+  );
+  const canSet = $derived(
     newProviderId !== "" &&
       parsedNewLimit !== null &&
+      parsedNewCooldown !== null &&
       !limits.some((l) => l.providerId === newProviderId) &&
       !adding,
   );
@@ -108,19 +108,55 @@
     }
   }
 
+  function startAdd(): void {
+    addOpen = true;
+    addError = null;
+    newLimitInput = "";
+    newCooldownInput = String(DEFAULT_COOLDOWN_MS);
+    // newProviderId is kept valid (defaults to the first option) by the effect above.
+  }
+
+  function cancelAdd(): void {
+    addOpen = false;
+    addError = null;
+    newLimitInput = "";
+    newCooldownInput = "";
+  }
+
+  // "Set" on the add row: save the limit, then the cooldown (only when the user
+  // moved it off the server default of 350ms — the backend defaults to 350 when a
+  // limit is set, so an unchanged value needs no extra PUT). On full success the
+  // add row closes + the limits/status reload (the new limit appears as a row).
   async function handleAdd(): Promise<void> {
-    if (parsedNewLimit === null || newProviderId === "") return;
+    if (parsedNewLimit === null || parsedNewCooldown === null || newProviderId === "") return;
     adding = true;
     addError = null;
-    const result = await saveLimit(newProviderId, parsedNewLimit);
-    adding = false;
-    if (result.ok) {
-      newLimitInput = "";
-      void refreshLimits();
-      void refreshStatus();
-    } else {
-      addError = result.error;
+    const limitResult = await saveLimit(newProviderId, parsedNewLimit);
+    if (!limitResult.ok) {
+      adding = false;
+      addError = limitResult.error;
+      return;
     }
+    if (newCooldownChanged) {
+      const cooldownResult = await saveCooldown(newProviderId, parsedNewCooldown);
+      adding = false;
+      if (!cooldownResult.ok) {
+        // The limit was saved (→ a row will appear after reload); the cooldown PUT
+        // failed. Surface the error but keep the add row open so it's visible. The
+        // user can edit the cooldown on the now-saved row.
+        addError = cooldownResult.error;
+        void refreshLimits();
+        void refreshStatus();
+        return;
+      }
+    } else {
+      adding = false;
+    }
+    addOpen = false;
+    newLimitInput = "";
+    newCooldownInput = "";
+    void refreshLimits();
+    void refreshStatus();
   }
 
   // Wrap the ports so a row's save/remove reloads the authoritative list + status
@@ -145,8 +181,7 @@
 
   // Wrap the cooldown save so a successful PUT refreshes the live status (which
   // re-carries the new `cooldownMs`). The row still gets the result to drive its
-  // own UI. `getCooldown` is exposed for completeness/future use (the live status
-  // already carries `cooldownMs`, so the row seeds from the status view).
+  // own UI.
   async function cooldownSave(providerId: string, cooldownMs: number) {
     const result = await saveCooldown(providerId, cooldownMs);
     if (result.ok) {
@@ -155,7 +190,8 @@
     return result;
   }
 
-  // ── Live status (polls while mounted) ───────────────────────────────────────
+  // ── Live status (polls while mounted — seeds cooldown inputs + drives the
+  //    auto-reduce banners; the poll is silent, no status cards) ────────────────
   let statusEntries = $state<readonly ConcurrencyStatusEntry[]>([]);
   let statusError = $state<string | null>(null);
   /** True after the first load settles (gates the empty state). */
@@ -164,18 +200,15 @@
    *  indicator flickered every poll because the refresh is near-instant; it stays
    *  INVISIBLE, mirroring the heartbeat runs list). */
   let statusInFlight = false;
-  let now = $state(Date.now());
 
-  // A 1s clock so a `paused — resumes in Ns` countdown ticks live between polls.
-  $effect(() => {
-    const h = setInterval(() => {
-      now = Date.now();
-    }, 1000);
-    return () => clearInterval(h);
+  // Per-provider cooldown lookup (from the live status poll) so each saved limit
+  // row seeds its cooldown input. Defaults to the server default (350) when a
+  // provider has no status entry yet.
+  const cooldownByProvider = $derived.by(() => {
+    const map = new Map<string, number>();
+    for (const s of statusEntries) map.set(s.providerId, s.cooldownMs);
+    return map;
   });
-
-  const statusViews = $derived(viewConcurrencyStatuses(statusEntries, now));
-  const statusSummary = $derived(summarizeStatus(statusEntries, now));
 
   // ── Auto-reduce banners (persist while autoReduced===true; dismissible) ───────
   //
@@ -259,8 +292,8 @@
   const STATUS_POLL_MS = 2000;
 
   // Load limits + status on mount, and poll the live status while the view is
-  // alive (a running provider's in-flight/queued/paused transitions stay fresh
-  // without a manual refresh). Runs once — no reactive deps read inside.
+  // alive (so a saved limit's cooldown input re-seeds + auto-reduce banners stay
+  // fresh without a manual refresh). Runs once — no reactive deps read inside.
   $effect(() => {
     untrack(() => {
       void refreshLimits();
@@ -278,161 +311,113 @@
   {#if visibleNotices.length > 0}
     <section class="flex flex-col gap-2" aria-label="Concurrency auto-reduce notices">
       {#each visibleNotices as notice (notice.providerId)}
-        <AutoReduceBanner
-          {notice}
-          onRestore={restoreLimit}
-          onDismiss={dismissAutoReduce}
-        />
+        <AutoReduceBanner {notice} onRestore={restoreLimit} onDismiss={dismissAutoReduce} />
       {/each}
     </section>
   {/if}
 
-  <!-- Limits (config) -->
+  <!-- Limits (config) — a single list of editable rows. -->
   <section class="flex flex-col gap-2">
     <div class="flex items-center justify-between gap-2">
       <h3 class="text-xs font-semibold uppercase opacity-60">Concurrency limits</h3>
       <button
         type="button"
         class="btn btn-ghost btn-xs"
-        onclick={() => refreshLimits()}
+        onclick={() => {
+          void refreshLimits();
+          void refreshStatus();
+        }}
         aria-label="Refresh concurrency limits"
       >
         Refresh
       </button>
     </div>
 
-    <!-- Add form -->
-    <form
-      class="flex flex-wrap items-end gap-2"
-      onsubmit={(e) => {
-        e.preventDefault();
-        void handleAdd();
-      }}
-    >
-      <label class="flex flex-col gap-1">
-        <span class="text-[10px] uppercase opacity-60">Provider</span>
-        <select
-          class="select select-bordered select-xs w-40 font-mono"
-          aria-label="Provider"
-          bind:value={newProviderId}
-          disabled={adding || providerOpts.length === 0}
-        >
-          {#if providerOpts.length === 0}
-            <option value="" disabled>No providers available</option>
-          {:else}
-            {#each providerOpts as provider (provider)}
-              <option value={provider}>{provider}</option>
-            {/each}
-          {/if}
-        </select>
-      </label>
-      <label class="flex flex-col gap-1">
-        <span class="text-[10px] uppercase opacity-60">Limit</span>
-        <input
-          type="text"
-          inputmode="numeric"
-          class="input input-bordered input-xs w-20 font-mono"
-          placeholder="4"
-          bind:value={newLimitInput}
-          disabled={adding}
-        />
-      </label>
-      <button
-        type="submit"
-        class="btn btn-primary btn-xs"
-        disabled={!canAdd}
-      >
-        {#if adding}
-          <span class="loading loading-spinner loading-xs"></span>
-        {:else}
-          Add
-        {/if}
-      </button>
-    </form>
-    {#if addError}
-      <p class="font-mono text-xs text-error">{addError}</p>
-    {/if}
-
     <span class="text-xs opacity-70">{limitsSummary}</span>
 
     {#if limitsError}
       <p class="text-xs text-error">{limitsError}</p>
-    {:else if hasLoadedLimits && limitViews.length === 0}
+    {:else if hasLoadedLimits && limitViews.length === 0 && !addOpen}
       <p class="text-xs opacity-60">No limits configured — providers run unlimited.</p>
-    {:else}
-      <ul class="flex flex-col gap-2">
-        {#each limitViews as limit (limit.providerId)}
-          <li>
-            <ConcurrencyLimitRow {limit} save={rowSave} remove={rowRemove} />
-          </li>
-        {/each}
-      </ul>
     {/if}
-  </section>
 
-  <!-- Live status -->
-  <section class="flex flex-col gap-2">
-    <div class="flex items-center justify-between gap-2">
-      <h3 class="text-xs font-semibold uppercase opacity-60">Live status</h3>
-      <button
-        type="button"
-        class="btn btn-ghost btn-xs"
-        onclick={() => refreshStatus()}
-        aria-label="Refresh concurrency status"
-      >
-        Refresh
-      </button>
-    </div>
+    <ul class="flex flex-col gap-2">
+      {#each limitViews as limit (limit.providerId)}
+        <li>
+          <ConcurrencyLimitRow
+            {limit}
+            cooldownMs={cooldownByProvider.get(limit.providerId) ?? DEFAULT_COOLDOWN_MS}
+            save={rowSave}
+            saveCooldown={cooldownSave}
+            remove={rowRemove}
+          />
+        </li>
+      {/each}
+    </ul>
 
-    <span class="text-xs opacity-70">{statusSummary}</span>
-
-    {#if statusError}
-      <p class="text-xs text-error">{statusError}</p>
-    {:else if hasLoadedStatus && statusViews.length === 0}
-      <p class="text-xs opacity-60">No limits configured — nothing to report.</p>
+    <!-- Add row: an "Add" button reveals a new item (dropdown + limit + cooldown
+         + Set + ✕). Set saves the limit (+ cooldown when moved off the default);
+         ✕ cancels the draft. -->
+    {#if addOpen}
+      <div class="flex flex-col gap-1 rounded-box bg-base-200 p-2 text-sm">
+        <div class="flex flex-wrap items-center gap-2">
+          <select
+            class="select select-bordered select-xs min-w-0 flex-1 font-mono"
+            aria-label="Provider"
+            bind:value={newProviderId}
+            disabled={adding || providerOpts.length === 0}
+          >
+            {#if providerOpts.length === 0}
+              <option value="" disabled>No providers available</option>
+            {:else}
+              {#each providerOpts as provider (provider)}
+                <option value={provider}>{provider}</option>
+              {/each}
+            {/if}
+          </select>
+          <input
+            type="text"
+            inputmode="numeric"
+            class="input input-bordered input-xs w-20 font-mono"
+            placeholder="4"
+            aria-label="New concurrency limit"
+            bind:value={newLimitInput}
+            disabled={adding}
+          />
+          <input
+            type="text"
+            inputmode="numeric"
+            class="input input-bordered input-xs w-24 font-mono"
+            aria-label="New release cooldown (ms)"
+            bind:value={newCooldownInput}
+            disabled={adding}
+          />
+          <span class="text-[10px] opacity-50">ms</span>
+          <button type="button" class="btn btn-primary btn-xs" disabled={!canSet} onclick={handleAdd}>
+            {#if adding}
+              <span class="loading loading-spinner loading-xs"></span>
+            {:else}
+              Set
+            {/if}
+          </button>
+          <button
+            type="button"
+            class="btn btn-ghost btn-xs text-error"
+            aria-label="Cancel add"
+            disabled={adding}
+            onclick={cancelAdd}
+          >
+            ✕
+          </button>
+        </div>
+        {#if addError}
+          <p class="font-mono text-xs text-error">{addError}</p>
+        {/if}
+      </div>
     {:else}
-      <ul class="flex flex-col gap-2">
-        {#each statusViews as s (s.providerId)}
-          <li class="flex flex-col gap-1 rounded-box bg-base-200 p-2 text-sm">
-            <div class="flex items-center justify-between gap-2">
-              <span class="font-medium font-mono" title={s.providerId}>{s.providerId}</span>
-              <span class="badge badge-sm {badgeClass[s.badge]} gap-1">
-                {#if s.busy}
-                  <span class="loading loading-spinner loading-xs"></span>
-                {/if}
-                {#if s.paused}
-                  Paused
-                {:else if s.inFlight >= s.limit && s.queued > 0}
-                  At capacity
-                {:else if s.inFlight > 0}
-                  Active
-                {:else}
-                  Idle
-                {/if}
-              </span>
-            </div>
-            <div class="flex flex-wrap items-center justify-between gap-2 text-xs opacity-70">
-              <span title="In-flight slots held vs cap">{s.inFlightLabel} in flight</span>
-              <span>{s.queuedLabel}</span>
-              <span title="Per-slot release cooldown">cooldown {s.cooldownLabel}</span>
-            </div>
-            {#if s.pausedLabel}
-              <span class="text-xs text-warning">{s.pausedLabel}</span>
-            {/if}
-            {#if s.autoReduced}
-              <span class="text-xs text-warning">
-                Limit auto-reduced{#if s.autoReducedFrom !== null}
-                  from {s.autoReducedFrom} to {s.limit}{/if}.
-              </span>
-            {/if}
-            <ConcurrencyCooldownRow
-              providerId={s.providerId}
-              cooldownMs={s.cooldownMs}
-              save={cooldownSave}
-            />
-          </li>
-        {/each}
-      </ul>
+      <button type="button" class="btn btn-ghost btn-xs w-fit" onclick={startAdd}>
+        + Add
+      </button>
     {/if}
   </section>
 </div>

@@ -131,103 +131,171 @@ function props(fakes: ReturnType<typeof makeFakes>) {
 }
 
 describe("ConcurrencyView", () => {
-  it("loads + renders the configured limits and live status on mount", async () => {
+  it("loads + renders the configured limits list on mount", async () => {
     const fakes = makeFakes();
     render(ConcurrencyView, { props: props(fakes) });
 
-    // The provider dropdown is populated from the available models' providers.
-    const providerSelect = await screen.findByLabelText("Provider");
-    expect(providerSelect).toBeVisible();
-    // Limits summary (unique to the limits section) + the row's remove control.
+    // The limits summary + the row's remove control (unique to the limits list).
     expect(await screen.findByText(/1 limit configured/)).toBeInTheDocument();
     expect(await screen.findByLabelText("Remove concurrency limit for umans")).toBeVisible();
-    // Status summary (unique to the status section).
-    expect(await screen.findByText(/1 provider · 2\/4 in flight · 1 queued/)).toBeInTheDocument();
     expect(fakes.calls.loadLimits).toBeGreaterThanOrEqual(1);
     expect(fakes.calls.loadStatus).toBeGreaterThanOrEqual(1);
   });
 
-  it("renders the per-provider cooldown label from the live status", async () => {
+  it("renders the per-provider cooldown input seeded from the live status", async () => {
     const fakes = makeFakes({ status: [statusEntry({ cooldownMs: 350 })] });
     render(ConcurrencyView, { props: props(fakes) });
 
-    // The status card shows the cooldown alongside in-flight/queue.
-    expect(await screen.findByText(/cooldown 350ms/)).toBeInTheDocument();
+    // The saved row's cooldown input (in the same row as the limit) is seeded 350.
+    const cooldownInput = await screen.findByLabelText("Release cooldown (ms) for umans");
+    expect((cooldownInput as HTMLInputElement).value).toBe("350");
   });
 
   it("surfaces NO loading indicator during refresh (background poll is silent — no flicker)", async () => {
     // The 2s status poll + post-mutation reloads are SILENT: they never toggle a
-    // visible loading state, so the Refresh buttons are plain-text (no spinner)
-    // and the list area never reflows mid-refresh. Regression guard for the
-    // flicker fix (mirrors the heartbeat runs list).
+    // visible loading state, so the Refresh button is plain-text (no spinner).
     const fakes = makeFakes();
     render(ConcurrencyView, { props: props(fakes) });
 
-    await screen.findByText(/1 provider · 2\/4 in flight · 1 queued/);
-
-    const statusRefresh = screen.getByLabelText("Refresh concurrency status");
-    expect(statusRefresh).toHaveTextContent("Refresh");
-    expect(statusRefresh.querySelector(".loading-spinner")).toBeNull();
-    expect(statusRefresh).not.toBeDisabled();
+    await screen.findByText(/1 limit configured/);
 
     const limitsRefresh = screen.getByLabelText("Refresh concurrency limits");
     expect(limitsRefresh).toHaveTextContent("Refresh");
     expect(limitsRefresh.querySelector(".loading-spinner")).toBeNull();
+    expect(limitsRefresh).not.toBeDisabled();
 
     // A manual refresh stays silent too (no spinner appears).
     await fakes.loadStatus();
-    expect(statusRefresh.querySelector(".loading-spinner")).toBeNull();
+    expect(limitsRefresh.querySelector(".loading-spinner")).toBeNull();
   });
 
-  it("adds a provider limit via the dropdown form (calls saveLimit + reloads)", async () => {
+  it("shows an empty state + Add button when no limits are configured", async () => {
+    const fakes = makeFakes({ limits: [], status: [] });
+    render(ConcurrencyView, { props: props(fakes) });
+
+    expect(await screen.findByText(/No limits configured/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "+ Add" })).toBeVisible();
+    // No provider dropdown until Add is clicked.
+    expect(screen.queryByLabelText("Provider")).toBeNull();
+  });
+
+  it("reveals a new item row (dropdown + limit + cooldown + Set + ✕) when Add is clicked", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ limits: [], status: [] });
     render(ConcurrencyView, { props: props(fakes) });
 
-    const providerSelect = await screen.findByLabelText("Provider");
+    await screen.findByText(/No limits configured/);
+    await user.click(screen.getByRole("button", { name: "+ Add" }));
+
+    // The new-item row appears with a provider dropdown (auto-selected first),
+    // a limit input, a cooldown input (seeded with the default 350), Set + ✕.
+    const providerSelect = screen.getByLabelText("Provider");
+    expect((providerSelect as HTMLSelectElement).value).not.toBe("");
+    expect(screen.getByPlaceholderText("4")).toBeVisible();
+    const cooldownInput = screen.getByLabelText("New release cooldown (ms)");
+    expect((cooldownInput as HTMLInputElement).value).toBe("350");
+    expect(screen.getByRole("button", { name: "Set" })).toBeVisible();
+    expect(screen.getByRole("button", { name: "Cancel add" })).toBeVisible();
+  });
+
+  it("adds a provider limit via the new-item row Set (calls saveLimit + reloads)", async () => {
+    const user = userEvent.setup();
+    const fakes = makeFakes({ limits: [], status: [] });
+    render(ConcurrencyView, { props: props(fakes) });
+
+    await screen.findByText(/No limits configured/);
+    await user.click(screen.getByRole("button", { name: "+ Add" }));
+
+    const providerSelect = screen.getByLabelText("Provider");
     // Choose "anthropic" from the dropdown (the list is auto-selected first).
     await user.selectOptions(providerSelect, "anthropic");
     await user.type(screen.getByPlaceholderText("4"), "8");
-    await user.click(screen.getByRole("button", { name: "Add" }));
+    await user.click(screen.getByRole("button", { name: "Set" }));
 
     expect(fakes.calls.saves).toEqual([{ providerId: "anthropic", limit: 8 }]);
+    // The cooldown was left at the default (350) → no extra cooldown PUT fired.
+    expect(fakes.calls.cooldownSaves).toHaveLength(0);
     // After save the component reloads the limits list (now showing the row).
     expect(fakes.calls.loadLimits).toBeGreaterThanOrEqual(2);
     expect(await screen.findByText(/1 limit configured/)).toBeInTheDocument();
     expect(await screen.findByLabelText("Remove concurrency limit for anthropic")).toBeVisible();
+    // The add row closed back to the Add button.
+    expect(screen.getByRole("button", { name: "+ Add" })).toBeVisible();
   });
 
-  it("disables Add when the limit is empty/invalid (provider is auto-selected)", async () => {
+  it("sends a cooldown PUT when the new item's cooldown is moved off the default", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ limits: [], status: [] });
     render(ConcurrencyView, { props: props(fakes) });
 
-    const providerSelect = await screen.findByLabelText("Provider");
+    await screen.findByText(/No limits configured/);
+    await user.click(screen.getByRole("button", { name: "+ Add" }));
+
+    await user.selectOptions(screen.getByLabelText("Provider"), "anthropic");
+    await user.type(screen.getByPlaceholderText("4"), "8");
+    const cooldownInput = screen.getByLabelText("New release cooldown (ms)");
+    await user.clear(cooldownInput);
+    await user.type(cooldownInput, "500");
+    await user.click(screen.getByRole("button", { name: "Set" }));
+
+    expect(fakes.calls.saves).toEqual([{ providerId: "anthropic", limit: 8 }]);
+    expect(fakes.calls.cooldownSaves).toEqual([{ providerId: "anthropic", cooldownMs: 500 }]);
+  });
+
+  it("disables Set when the limit is empty/invalid (provider is auto-selected)", async () => {
+    const user = userEvent.setup();
+    const fakes = makeFakes({ limits: [], status: [] });
+    render(ConcurrencyView, { props: props(fakes) });
+
+    await screen.findByText(/No limits configured/);
+    await user.click(screen.getByRole("button", { name: "+ Add" }));
+
+    const providerSelect = screen.getByLabelText("Provider");
     // A provider is auto-selected from the dropdown.
     expect((providerSelect as HTMLSelectElement).value).not.toBe("");
-    const addBtn = screen.getByRole("button", { name: "Add" });
-    expect(addBtn).toBeDisabled(); // no limit entered yet
+    const setBtn = screen.getByRole("button", { name: "Set" });
+    expect(setBtn).toBeDisabled(); // no limit entered yet
 
-    // An invalid (non-numeric) limit keeps Add disabled.
+    // An invalid (non-numeric) limit keeps Set disabled.
     await user.type(screen.getByPlaceholderText("4"), "abc");
-    expect(addBtn).toBeDisabled();
+    expect(setBtn).toBeDisabled();
 
-    // A valid positive-integer limit enables Add.
+    // A valid positive-integer limit enables Set.
     const limitInput = screen.getByPlaceholderText("4");
     await user.clear(limitInput);
     await user.type(limitInput, "5");
-    expect(addBtn).toBeEnabled();
+    expect(setBtn).toBeEnabled();
   });
 
   it("shows no-providers + disables the dropdown when there are no models", async () => {
+    const user = userEvent.setup();
     const fakes = makeFakes({ limits: [], status: [] });
     render(ConcurrencyView, {
       props: { ...props(fakes), models: [] as unknown as readonly string[] },
     });
 
-    const providerSelect = await screen.findByLabelText("Provider");
+    await screen.findByText(/No limits configured/);
+    await user.click(screen.getByRole("button", { name: "+ Add" }));
+
+    const providerSelect = screen.getByLabelText("Provider");
     expect(providerSelect).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Add" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Set" })).toBeDisabled();
+  });
+
+  it("cancels the new-item row (✕) without saving", async () => {
+    const user = userEvent.setup();
+    const fakes = makeFakes({ limits: [], status: [] });
+    render(ConcurrencyView, { props: props(fakes) });
+
+    await screen.findByText(/No limits configured/);
+    await user.click(screen.getByRole("button", { name: "+ Add" }));
+    await user.type(screen.getByPlaceholderText("4"), "8");
+    await user.click(screen.getByRole("button", { name: "Cancel add" }));
+
+    // The row collapses back to the Add button; nothing was saved.
+    expect(screen.queryByLabelText("Provider")).toBeNull();
+    expect(screen.getByRole("button", { name: "+ Add" })).toBeVisible();
+    expect(fakes.calls.saves).toHaveLength(0);
   });
 
   it("removes a provider limit via the row ✕ (calls deleteLimit + reloads)", async () => {
@@ -308,9 +376,10 @@ describe("ConcurrencyView", () => {
 
     // The restore PUT the limit back to the original (autoReducedFrom = 4).
     expect(fakes.calls.saves).toEqual([{ providerId: "umans", limit: 4 }]);
-    // The banner is gone (no Restore button, no notice text); the status summary
-    // now reflects the restored limit (2/4 in flight).
-    await screen.findByText(/1 provider · 2\/4 in flight · 1 queued/);
+    // The banner is gone (no Restore button, no notice text); the limits list
+    // now reflects the restored limit (the row's limit input re-seeds to 4).
+    const limitInput = await screen.findByLabelText("Concurrency limit for umans");
+    expect((limitInput as HTMLInputElement).value).toBe("4");
     expect(screen.queryByRole("button", { name: /Restore to/ })).toBeNull();
     expect(screen.queryByText(/auto-reduced to 3 after a 429/)).toBeNull();
   });
@@ -400,31 +469,49 @@ describe("ConcurrencyView", () => {
 
     // Retry: the error clears, the banner drops (restore succeeded).
     await user.click(screen.getByRole("button", { name: /Restore to 4/ }));
-    await screen.findByText(/1 provider · 2\/4 in flight · 1 queued/);
+    const limitInput = await screen.findByLabelText("Concurrency limit for umans");
+    expect((limitInput as HTMLInputElement).value).toBe("4");
     expect(screen.queryByTestId("restore-error-umans")).toBeNull();
     expect(screen.queryByRole("button", { name: /Restore to/ })).toBeNull();
   });
 
-  it("edits the per-provider cooldown (PUT /concurrency/cooldown + reloads status)", async () => {
+  it("edits the per-provider cooldown in the limit row (PUT /concurrency/cooldown + reloads)", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ status: [statusEntry({ cooldownMs: 350 })] });
     render(ConcurrencyView, { props: props(fakes) });
 
-    // Wait for the status card + its cooldown input (seeded with 350).
+    // Wait for the saved row + its cooldown input (seeded with 350).
     const cooldownInput = await screen.findByLabelText("Release cooldown (ms) for umans");
     expect((cooldownInput as HTMLInputElement).value).toBe("350");
 
     await user.clear(cooldownInput);
     await user.type(cooldownInput, "500");
-    await user.click(screen.getByRole("button", { name: "Save cooldown for umans" }));
+    await user.click(screen.getByRole("button", { name: "Set concurrency for umans" }));
 
     // The cooldown PUT fired with the new value.
     expect(fakes.calls.cooldownSaves).toEqual([{ providerId: "umans", cooldownMs: 500 }]);
-    // After save the component reloads status (which now carries cooldownMs=500).
-    expect(await screen.findByText(/cooldown 500ms/)).toBeInTheDocument();
+    // The limit was NOT re-saved (unchanged) — only the cooldown PUT fired.
+    expect(fakes.calls.saves).toHaveLength(0);
   });
 
-  it("rejects a negative cooldown input (Save disabled — non-negative integer only)", async () => {
+  it("edits the per-provider limit in the row (PUT /concurrency/limits + reloads)", async () => {
+    const user = userEvent.setup();
+    const fakes = makeFakes();
+    render(ConcurrencyView, { props: props(fakes) });
+
+    const limitInput = await screen.findByLabelText("Concurrency limit for umans");
+    expect((limitInput as HTMLInputElement).value).toBe("4");
+
+    await user.clear(limitInput);
+    await user.type(limitInput, "8");
+    await user.click(screen.getByRole("button", { name: "Set concurrency for umans" }));
+
+    expect(fakes.calls.saves).toEqual([{ providerId: "umans", limit: 8 }]);
+    // Cooldown unchanged → no cooldown PUT.
+    expect(fakes.calls.cooldownSaves).toHaveLength(0);
+  });
+
+  it("rejects a negative cooldown input (Set disabled — non-negative integer only)", async () => {
     const user = userEvent.setup();
     const fakes = makeFakes({ status: [statusEntry({ cooldownMs: 350 })] });
     render(ConcurrencyView, { props: props(fakes) });
@@ -433,11 +520,11 @@ describe("ConcurrencyView", () => {
     // 0 is valid (no cooldown); a negative is not.
     await user.clear(cooldownInput);
     await user.type(cooldownInput, "0");
-    expect(screen.getByRole("button", { name: "Save cooldown for umans" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Set concurrency for umans" })).toBeEnabled();
 
     await user.clear(cooldownInput);
     await user.type(cooldownInput, "-5");
-    expect(screen.getByRole("button", { name: "Save cooldown for umans" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Set concurrency for umans" })).toBeDisabled();
     expect(fakes.calls.cooldownSaves).toHaveLength(0);
   });
 });
