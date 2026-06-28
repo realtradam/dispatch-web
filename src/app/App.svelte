@@ -773,13 +773,10 @@
 			/>
 		{/key}
 	{:else if kind === "tasks"}
-		<!-- Re-mount per conversation so the task list is isolated per conversation. -->
+		<!-- Re-mount per conversation so the task list is isolated per conversation.
+		     TodoList always reserves its fixed 60vh height (empty or full). -->
 		{#key store.activeConversationId}
-			{#if todoData !== null && todoData.todos.length > 0}
-				<TodoList payload={todoData} />
-			{:else}
-				<p class="text-xs opacity-60">No tasks yet.</p>
-			{/if}
+			<TodoList payload={todoData} />
 		{/key}
 	{:else if kind === "compaction"}
 		<!-- Message compaction is per-conversation (keyed so the percent + feedback
