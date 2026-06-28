@@ -383,7 +383,7 @@
           <input
             type="text"
             inputmode="numeric"
-            class="input input-bordered input-xs w-20 font-mono"
+            class="input input-bordered input-xs w-14 min-w-0 font-mono"
             placeholder="4"
             aria-label="New concurrency limit"
             bind:value={newLimitInput}
@@ -392,13 +392,18 @@
           <input
             type="text"
             inputmode="numeric"
-            class="input input-bordered input-xs w-24 font-mono"
+            class="input input-bordered input-xs w-20 min-w-0 font-mono"
             aria-label="New release cooldown (ms)"
             bind:value={newCooldownInput}
             disabled={adding}
           />
-          <span class="text-[10px] opacity-50">ms</span>
-          <button type="button" class="btn btn-primary btn-xs" disabled={!canSet} onclick={handleAdd}>
+          <span class="shrink-0 text-[10px] opacity-50">ms</span>
+          <button
+            type="button"
+            class="btn btn-primary btn-xs shrink-0"
+            disabled={!canSet}
+            onclick={handleAdd}
+          >
             {#if adding}
               <span class="loading loading-spinner loading-xs"></span>
             {:else}
@@ -407,7 +412,7 @@
           </button>
           <button
             type="button"
-            class="btn btn-ghost btn-xs text-error"
+            class="btn btn-ghost btn-xs shrink-0 text-error"
             aria-label="Cancel add"
             disabled={adding}
             onclick={cancelAdd}

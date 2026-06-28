@@ -137,7 +137,7 @@
     <input
       type="text"
       inputmode="numeric"
-      class="input input-bordered input-xs w-20 font-mono"
+      class="input input-bordered input-xs w-14 min-w-0 font-mono"
       aria-label={`Concurrency limit for ${limit.providerId}`}
       bind:value={limitDraft}
       oninput={onInput}
@@ -146,16 +146,16 @@
     <input
       type="text"
       inputmode="numeric"
-      class="input input-bordered input-xs w-24 font-mono"
+      class="input input-bordered input-xs w-20 min-w-0 font-mono"
       aria-label={`Release cooldown (ms) for ${limit.providerId}`}
       bind:value={cooldownDraft}
       oninput={onInput}
       disabled={saving || removing}
     />
-    <span class="text-[10px] opacity-50">ms</span>
+    <span class="shrink-0 text-[10px] opacity-50">ms</span>
     <button
       type="button"
-      class="btn btn-primary btn-xs"
+      class="btn btn-primary btn-xs shrink-0"
       aria-label={`Set concurrency for ${limit.providerId}`}
       disabled={!dirty || saving || removing}
       onclick={handleSet}
@@ -168,7 +168,7 @@
     </button>
     <button
       type="button"
-      class="btn btn-ghost btn-xs text-error"
+      class="btn btn-ghost btn-xs shrink-0 text-error"
       aria-label={`Remove concurrency limit for ${limit.providerId}`}
       disabled={saving || removing}
       onclick={handleRemove}
