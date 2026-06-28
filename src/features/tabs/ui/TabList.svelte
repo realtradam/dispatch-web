@@ -88,7 +88,7 @@
 	<div class="flex h-[60vh] flex-col gap-1 overflow-y-auto pr-1">
 		{#each tabs as tab (tab.conversationId)}
 			<div
-				class="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm hover:bg-base-200"
+				class="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm hover:bg-base-300"
 				class:bg-base-300={tab.conversationId === activeConversationId}
 				role="tab"
 				tabindex="0"
