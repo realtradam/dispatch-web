@@ -7,7 +7,9 @@
 </script>
 
 {#if data !== null && data.todos.length > 0}
-  <ul class="flex flex-col gap-1">
+  <!-- Fixed at 60% of the viewport height so a long task list scrolls inside
+       this region instead of growing the whole sidebar (mirrors the tabs view). -->
+  <ul class="flex h-[60vh] flex-col gap-1 overflow-y-auto pr-1">
     {#each data.todos as todo, i (i)}
       <li class="flex items-start gap-2 rounded-box bg-base-200 px-3 py-2 text-sm">
         <!-- Status indicator -->
