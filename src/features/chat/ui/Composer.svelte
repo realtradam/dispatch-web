@@ -39,8 +39,10 @@
     onQueue?: (text: string) => void;
     /** Stop the in-flight generation (`POST /conversations/:id/stop`). */
     onStop?: () => void;
-    // Current context occupancy (latest turn's contextSize), or `undefined`
-    // when unknown — the status bar then shows "— tokens", never 0%.
+    // Current context occupancy — updated progressively during a turn (the
+    // latest step's input+output) and finalized to the turn's `contextSize` on
+    // seal, or `undefined` when unknown — the status bar then shows
+    // "— tokens", never 0%.
     contextSize?: number | undefined;
     /** Per-model context window (max tokens) from `GET /models` modelInfo. */
     contextWindow?: number | undefined;
@@ -66,7 +68,6 @@
   const canSend = $derived(hasText || hasImages);
   const effectiveMax = $derived(contextWindow ?? FALLBACK_CONTEXT_WINDOW);
   const usage = $derived(computeContextUsage(contextSize, effectiveMax));
-  const hasUsage = $derived(contextSize !== undefined);
 
   // One button, three modes:
   // - idle → "Send" (starts a turn via chat.send)
@@ -395,7 +396,7 @@
     {/if}
 
     <span class="shrink-0 whitespace-nowrap font-mono">
-      {#if hasUsage}
+      {#if usage.current !== null}
         {formatCompactTokens(usage.current)}{#if usage.max !== null}<span
             class="text-base-content/40"
           >
