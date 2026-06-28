@@ -5,6 +5,17 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
+_Last updated: 2026-06-27 (§2j-update-3 — concurrency-fixes: configurable + persisted per-provider release
+cooldown, adaptive headroom auto-reduce banner, usage gate. ADDITIVE to `transport-contract@0.23.0`, NO version
+bump — `ConcurrencyStatusEntry` gained `cooldownMs`/`autoReduced`/`autoReducedFrom?`/`notice?`; NEW
+`ConcurrencyCooldownResponse`/`SetConcurrencyCooldownRequest` + `GET`/`PUT /concurrency/cooldown/:providerId`.
+FE re-synced the `file:` dep + re-mirrored `.dispatch/transport-contract.reference.md`; built the cooldown
+view-model + inline-edit row, a dismissible auto-reduce banner with "Restore to N", store `getConcurrencyCooldown`/
+`setConcurrencyCooldown`, + 49 new tests. typecheck 0/0, 1050 tests green (run TWICE), biome clean, build OK.
+Worktree env note: an untracked `dispatch-backend → backend` symlink was created in the worktree parent so the
+canonical `file:../dispatch-backend/...` paths resolve — NOT committed.) Prior: §2j (vision consult_vision + image
+storage)._
+**FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 _Last updated: 2026-06-26 (backend: concurrency limits now PERSISTED across reboots — no API contract change, no FE
 re-pin/re-mirror needed; §2j updated. FE: brief "Saved." confirmation on the limit row after a successful save. 926 tests
 green.) Prior: CR-13 (`"queued"` ConversationStatus) RESOLVED; dev merged (e81df4c)._
@@ -53,6 +64,8 @@ WS `conversation.statusChanged` (broadcast: lifecycle status change — `active`
 `GET /concurrency/limits` · `GET`/`PUT`/`DELETE /concurrency/limits/:providerId` · `GET /concurrency/status`
 (per-provider in-flight caps + oldest-agent-first queueing + 429-pause backoff; the `concurrency` extension — when not
 loaded the list + status endpoints return empty arrays, the single/PUT/DELETE return `503`).
+`GET`/`PUT /concurrency/cooldown/:providerId` (per-slot release cooldown — configurable + persisted; 0 = no cooldown;
+`GET` 404 when the provider has no concurrency config at all, `PUT` 400 on a non-negative-int body — see §2j-update-3).
 
 Mirrored in-repo for headless agents: `.dispatch/{ui-contract,wire,transport-contract}.reference.md`
 (regenerate on any contract bump; all current as of `ui-contract@0.2.0` /
@@ -1027,6 +1040,92 @@ prior commit: 8 `resolveImageUrl`, 3 ChatView resolution), biome clean, `vite bu
 vision model, send, confirm the image renders immediately (data-URL echo) AND continues to render after
 the turn seals (the persisted compact-path `/images/…` resolved against `httpBase`); reload the
 conversation → confirm the persisted image renders from the `/images/…` endpoint (not a data URL).
+
+---
+
+## 2j-update-3. Concurrency-fixes (cooldown + adaptive headroom + usage gate) → **CONSUMED ✅ (backend shipped; FE built + verified)**
+
+A follow-up to §2j. The backend's per-provider concurrency surface gained (a) a configurable + persisted
+per-provider release **cooldown**, (b) **adaptive headroom** — a 429 auto-reduces the provider's limit by 1
+(one-way, persisted) and the FE renders a visible banner, and (c) a **usage gate** (backend polls upstream
+`concurrent_sessions` before admitting a queued agent — no FE surface). The signal rides on
+`GET /concurrency/status` (no new WS push). **Additive to `transport-contract@0.23.0`, NO version bump**
+(the FE's `file:` dep picks the new types up via re-sync, no re-pin needed). Backend commit
+`feature/concurrency-fixes` `2d27666` ("usage-gate + adaptive headroom + configurable cooldown").
+
+**Contract changes (re-mirrored in `.dispatch/transport-contract.reference.md`):**
+- `ConcurrencyStatusEntry` gains FOUR new fields: `cooldownMs: number` (REQUIRED — per-slot release cooldown in
+  ms, default 350; a recycled slot is held this long before the next waiter is admitted, covering the upstream
+  provider's accounting lag — configurable + persisted), `autoReduced: boolean` (REQUIRED — true when the limit
+  was auto-reduced by 1 after a 429, one-way + persisted; the FE renders a banner), `autoReducedFrom?: number`
+  (present only when `autoReduced===true` — the original limit before reduction), and `notice?: string`
+  (present only when `autoReduced===true` — a human-readable banner message).
+- NEW cooldown types: `ConcurrencyCooldownResponse` (`{ providerId, cooldownMs }`) +
+  `SetConcurrencyCooldownRequest` (`{ cooldownMs }` — non-negative integer, 0 = no cooldown / instant re-admission).
+- NEW endpoints: `GET /concurrency/cooldown/:providerId` → `ConcurrencyCooldownResponse` (404 when the provider
+  has no concurrency config at all — no limit AND no cooldown; 503 when the extension isn't loaded);
+  `PUT /concurrency/cooldown/:providerId` ← `SetConcurrencyCooldownRequest` → `ConcurrencyCooldownResponse`
+  (400 on an invalid body; 503 when not loaded). Persists + applies immediately to subsequently recycled slots.
+- A manual `PUT /concurrency/limits/:providerId` CLEARS `autoReduced` server-side (the restore path).
+
+**FE (DONE + verified):**
+- **Pure core (`logic/view-model.ts`):** `DEFAULT_COOLDOWN_MS = 350`; `parseCooldownInput` (non-negative integer —
+  unlike the limit, **0 is valid**); `normalizeCooldown` (defensive default 350 on garbage);
+  `cooldownLabel` ("350ms" / "1.2s" / "0ms (off)"); `viewConcurrencyStatus` extended to carry `cooldownMs` +
+  `cooldownLabel` + `autoReduced` + `autoReducedFrom` (auto-reduce → `warning` badge but NOT `busy` — a reduced
+  limit still admits agents); `viewAutoReduce`/`autoReduceNotices` (banner view — prefers the backend `notice`
+  verbatim, synthesizes a fallback when absent, `fromLimit` = `autoReducedFrom` for "Restore to N");
+  `summarizeStatus` gained an "N auto-reduced" fragment; `normalizeConcurrencyStatus` coerces the new fields
+  (builds the readonly entry immutably — `autoReducedFrom`/`notice` only when `autoReduced===true`, dropped when
+  false even if present in the JSON); `normalizeConcurrencyCooldown` (network-seam coercion).
+- **Types (`logic/types.ts`):** re-exports the 2 new contract types + `ConcurrencyCooldownResult` +
+  `GetConcurrencyCooldown`/`SaveConcurrencyCooldown` ports.
+- **UI:** new `ui/ConcurrencyCooldownRow.svelte` (per-provider inline-edit cooldown input + Save → PUT, seeded via
+  the ChatLimitField pattern so a status-poll refresh re-syncs without clobbering an in-flight edit; "Saved."
+  confirmation); new `ui/AutoReduceBanner.svelte` (the dismissible banner — backend `notice` + "Was N, now M." +
+  "Restore to N" PUT button + ✕ dismiss). `ConcurrencyView.svelte`: cooldown label per status card +
+  `ConcurrencyCooldownRow`; an auto-reduce banner section at the top of the panel. The banner is DISMISSIBLE +
+  persists while `autoReduced===true`: a dismissed provider stays hidden while still auto-reduced, and is
+  un-dismissed the moment a poll shows it restored (a `$effect` reconciles the dismissed set against the live
+  auto-reduced providers). "Restore to N" PUTs the limit back to `autoReducedFrom` via `saveLimit` → the next
+  status poll shows `autoReduced===false` → the banner drops automatically.
+- **Store (`store.svelte.ts`):** `getConcurrencyCooldown` (`GET .../cooldown/:id`) + `setConcurrencyCooldown`
+  (`PUT .../cooldown/:id` ← `{ cooldownMs }`) — both surface 400/404/503 as `ok:false` with the backend's `error`
+  string + normalize the body at the seam. Interface declarations added. (Mirrors the §2j "FE implements all API
+  client functions but the UI uses a subset" note: the UI seeds cooldown from the live status `cooldownMs`, so
+  `getConcurrencyCooldown` is an API-client function for completeness/future use — `saveCooldown` is the wired one.)
+- **Wired in `App.svelte`:** `saveConcurrencyCooldown` adapter → `ConcurrencyView`'s `saveCooldown` prop.
+- **Tests:** +47 (view-model: `parseCooldownInput`/`cooldownLabel`/`normalizeConcurrencyCooldown`/`viewAutoReduce`/
+  `autoReduceNotices`/`summarizeStatus` auto-reduced/`normalizeConcurrencyStatus` new-field coercion; component:
+  cooldown label render, cooldown PUT flow, negative-input rejection, auto-reduce banner render, restore clears
+  banner, dismiss-while-auto-reduced; store: `getCooldown` load/404, `setCooldown` PUT echo + 400).
+
+**Verification:** `svelte-check` 0/0; vitest **1050/1050** (run TWICE — no cross-test pollution; the polling
+intervals are per-component, cleaned up on unmount by `@testing-library/svelte`'s auto-cleanup), biome clean,
+`vite build` succeeds (the one CSS warning is PRE-EXISTING — `[file:path]`/`[heartbeat:elapsed]` attribute
+selectors, unrelated). **Live probe NOT run** (the backend is the user's process; never booted headless). To
+confirm end-to-end: start the backend with the `concurrency` extension loaded, open the Concurrency sidebar view,
+confirm the cooldown label + edit field per provider; set a cooldown → Save → confirm it persists on reload;
+trigger a 429 on a limited provider → confirm the auto-reduce banner appears (with `notice` + "Was N, now M.") →
+click "Restore to N" → confirm the banner drops on the next poll.
+
+**Post-review fixes (folded into the same commit):** a Kimi review flagged a MEDIUM bug + 2 LOW issues, all fixed:
+- **MEDIUM — restore failure gave no inline feedback:** `restoreLimit` now returns a `RestoreOutcome`
+  (`{ ok: true } | { ok: false; error }`) and `AutoReduceBanner.handleRestore` shows the error INLINE next to the
+  restore button (cleared on retry) instead of silently re-enabling the button. New `RestoreOutcome` type in
+  `logic/types.ts` + exported. 2 new tests (inline error on failure; error clears on a retry that succeeds).
+- **LOW — a11y:** the "Restore to N" text now stays visible while loading (spinner prepended, not replacing the
+  text), so the button keeps its accessible name during the PUT (a spinner-only button loses its name for SR users).
+- **LOW — dismissed-banner persistence:** confirmed INTENTIONAL (not a bug). The dismissed set is component-local
+  (resets on remount): `autoReduced` is a REAL persisted degraded state, so re-showing the banner on a fresh mount
+  (sidebar view switch / reload) reminds the user; persisting dismissal in localStorage would risk HIDING an ongoing
+  degradation (a footgun), and AGENTS.md forbids module-global ambient state. Documented in a code comment.
+
+**Worktree environment note (same as §2d/§2j):** this worktree lays the repos out as
+`…/worktrees/concurrency-fixes/{backend,frontend}`, but `package.json`'s canonical `file:` paths point at
+`../dispatch-backend/...` (kept canonical — no worktree hack committed). An UNTRACKED symlink
+`dispatch-backend → backend` was created in the worktree parent, then `bun install` re-synced
+`node_modules/@dispatch/*` to pick up the additive `transport-contract@0.23.0` types.
 
 ---
 

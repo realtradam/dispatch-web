@@ -1,16 +1,22 @@
 import type { ConcurrencyStatusEntry } from "@dispatch/transport-contract";
 import { describe, expect, it } from "vitest";
 import {
+  autoReduceNotices,
+  cooldownLabel,
+  DEFAULT_COOLDOWN_MS,
   formatPauseDuration,
+  normalizeConcurrencyCooldown,
   normalizeConcurrencyLimit,
   normalizeConcurrencyLimits,
   normalizeConcurrencyStatus,
+  parseCooldownInput,
   parseLimitInput,
   pauseLabel,
   providerFromModel,
   providerOptions,
   summarizeLimits,
   summarizeStatus,
+  viewAutoReduce,
   viewConcurrencyLimit,
   viewConcurrencyLimits,
   viewConcurrencyStatus,
@@ -23,6 +29,8 @@ const status = (over: Partial<ConcurrencyStatusEntry> = {}): ConcurrencyStatusEn
   inFlight: 2,
   queued: 0,
   paused: false,
+  cooldownMs: 350,
+  autoReduced: false,
   ...over,
 });
 
@@ -43,6 +51,41 @@ describe("parseLimitInput", () => {
     expect(parseLimitInput("   ")).toBeNull();
     expect(parseLimitInput("abc")).toBeNull();
     expect(parseLimitInput("4abc")).toBeNull();
+  });
+});
+
+// ── parseCooldownInput (non-negative integer — 0 is valid, unlike the limit) ──
+
+describe("parseCooldownInput", () => {
+  it("accepts zero + positive integers", () => {
+    expect(parseCooldownInput("0")).toBe(0);
+    expect(parseCooldownInput("350")).toBe(350);
+    expect(parseCooldownInput(" 100 ")).toBe(100);
+  });
+
+  it("rejects negatives, non-integers, and garbage", () => {
+    expect(parseCooldownInput("-1")).toBeNull();
+    expect(parseCooldownInput("4.5")).toBeNull();
+    expect(parseCooldownInput("")).toBeNull();
+    expect(parseCooldownInput("abc")).toBeNull();
+    expect(parseCooldownInput("100ms")).toBeNull();
+  });
+});
+
+// ── cooldownLabel ─────────────────────────────────────────────────────────────
+
+describe("cooldownLabel", () => {
+  it("0 → off label", () => {
+    expect(cooldownLabel(0)).toBe("0ms (off)");
+  });
+  it("sub-second → ms", () => {
+    expect(cooldownLabel(350)).toBe("350ms");
+    expect(cooldownLabel(999)).toBe("999ms");
+  });
+  it("≥1s → seconds (trims trailing .0)", () => {
+    expect(cooldownLabel(1000)).toBe("1s");
+    expect(cooldownLabel(1500)).toBe("1.5s");
+    expect(cooldownLabel(60_000)).toBe("60s");
   });
 });
 
@@ -178,6 +221,8 @@ describe("viewConcurrencyStatus", () => {
         inFlight: Number.NaN,
         queued: "oops" as unknown as number,
         paused: false,
+        cooldownMs: Number.NaN,
+        autoReduced: false,
       },
       0,
     );
@@ -185,6 +230,7 @@ describe("viewConcurrencyStatus", () => {
     expect(v.inFlight).toBe(0);
     expect(v.queued).toBe(0);
     expect(v.inFlightLabel).toBe("0/1");
+    expect(v.cooldownMs).toBe(DEFAULT_COOLDOWN_MS);
   });
 
   it("viewConcurrencyStatuses maps a list preserving order", () => {
@@ -193,6 +239,81 @@ describe("viewConcurrencyStatus", () => {
       0,
     );
     expect(views.map((v) => v.providerId)).toEqual(["a", "b"]);
+  });
+
+  it("carries cooldownMs + label + autoReduced fields onto the view", () => {
+    const v = viewConcurrencyStatus(status({ cooldownMs: 1500 }), 0);
+    expect(v.cooldownMs).toBe(1500);
+    expect(v.cooldownLabel).toBe("1.5s");
+    expect(v.autoReduced).toBe(false);
+    expect(v.autoReducedFrom).toBeNull();
+  });
+
+  it("auto-reduced → warning badge (not busy) + autoReducedFrom carried", () => {
+    const v = viewConcurrencyStatus(
+      status({ limit: 3, autoReduced: true, autoReducedFrom: 4, inFlight: 0 }),
+      0,
+    );
+    expect(v.autoReduced).toBe(true);
+    expect(v.autoReducedFrom).toBe(4);
+    expect(v.badge).toBe("warning");
+    // autoReduced alone does NOT flip busy (a reduced limit still admits agents).
+    expect(v.busy).toBe(false);
+  });
+});
+
+// ── viewAutoReduce / autoReduceNotices (the auto-reduce banner view) ───────────
+
+describe("viewAutoReduce", () => {
+  it("returns null when not auto-reduced", () => {
+    expect(viewAutoReduce(status({ autoReduced: false }))).toBeNull();
+  });
+
+  it("uses the backend notice verbatim + carries from/current limits", () => {
+    const notice = viewAutoReduce(
+      status({
+        limit: 3,
+        autoReduced: true,
+        autoReducedFrom: 4,
+        notice: "Concurrency limit auto-reduced to 3 after a 429.",
+      }),
+    );
+    expect(notice).toEqual({
+      providerId: "umans",
+      message: "Concurrency limit auto-reduced to 3 after a 429.",
+      fromLimit: 4,
+      currentLimit: 3,
+    });
+  });
+
+  it("synthesizes a fallback notice when the backend notice is absent/empty", () => {
+    expect(viewAutoReduce(status({ limit: 3, autoReduced: true, autoReducedFrom: 4 }))).toEqual({
+      providerId: "umans",
+      message: "Concurrency limit auto-reduced to 3 after a 429 — restore manually when ready.",
+      fromLimit: 4,
+      currentLimit: 3,
+    });
+    expect(
+      viewAutoReduce(status({ limit: 3, autoReduced: true, autoReducedFrom: 4, notice: "" })),
+    ).not.toBeNull();
+  });
+
+  it("falls back to currentLimit+1 when autoReducedFrom is missing/garbage", () => {
+    const notice = viewAutoReduce(status({ limit: 3, autoReduced: true }));
+    expect(notice?.fromLimit).toBe(4); // 3 + 1
+  });
+});
+
+describe("autoReduceNotices", () => {
+  it("collects one banner per auto-reduced provider (input order), empty when none", () => {
+    expect(autoReduceNotices([status({ providerId: "a" })])).toEqual([]);
+    const out = autoReduceNotices([
+      status({ providerId: "a", autoReduced: true, autoReducedFrom: 4, limit: 3 }),
+      status({ providerId: "b" }),
+      status({ providerId: "c", autoReduced: true, autoReducedFrom: 2, limit: 1 }),
+    ]);
+    expect(out.map((n) => n.providerId)).toEqual(["a", "c"]);
+    expect(out[1]?.fromLimit).toBe(2);
   });
 });
 
@@ -272,6 +393,16 @@ describe("summarizeStatus", () => {
     expect(summarizeStatus([status({ providerId: "a", limit: 4, inFlight: 1 })], 0)).toBe(
       "1 provider · 1/4 in flight",
     );
+  });
+  it("includes an auto-reduced fragment only when non-zero", () => {
+    const s = summarizeStatus(
+      [
+        status({ providerId: "a", limit: 3, inFlight: 1, autoReduced: true, autoReducedFrom: 4 }),
+        status({ providerId: "b", limit: 4, inFlight: 1 }),
+      ],
+      0,
+    );
+    expect(s).toBe("2 providers · 2/7 in flight · 1 auto-reduced");
   });
 });
 
@@ -359,6 +490,8 @@ describe("normalizeConcurrencyStatus", () => {
       inFlight: 2,
       queued: 1,
       paused: false,
+      cooldownMs: 350,
+      autoReduced: false,
     });
     expect(first !== undefined && !("pausedUntil" in first)).toBe(true);
     expect(second).toEqual({
@@ -368,6 +501,8 @@ describe("normalizeConcurrencyStatus", () => {
       queued: 3,
       paused: true,
       pausedUntil: now,
+      cooldownMs: 350,
+      autoReduced: false,
     });
   });
 
@@ -388,8 +523,24 @@ describe("normalizeConcurrencyStatus", () => {
       ],
     });
     expect(providers).toEqual([
-      { providerId: "umans", limit: 4, inFlight: 2, queued: 1, paused: false },
-      { providerId: "x", limit: 1, inFlight: 0, queued: 0, paused: false },
+      {
+        providerId: "umans",
+        limit: 4,
+        inFlight: 2,
+        queued: 1,
+        paused: false,
+        cooldownMs: 350,
+        autoReduced: false,
+      },
+      {
+        providerId: "x",
+        limit: 1,
+        inFlight: 0,
+        queued: 0,
+        paused: false,
+        cooldownMs: 350,
+        autoReduced: false,
+      },
     ]);
   });
 
@@ -401,5 +552,82 @@ describe("normalizeConcurrencyStatus", () => {
       ],
     });
     for (const p of providers) expect("pausedUntil" in p).toBe(false);
+  });
+
+  it("coerces cooldownMs (default 350) + carries auto-reduce fields only when true", () => {
+    const [reduced, healthy] = normalizeConcurrencyStatus({
+      providers: [
+        {
+          providerId: "umans",
+          limit: 3,
+          inFlight: 1,
+          queued: 0,
+          paused: false,
+          cooldownMs: 500,
+          autoReduced: true,
+          autoReducedFrom: 4,
+          notice: "auto-reduced to 3 after a 429.",
+        },
+        { providerId: "openai", limit: 4, inFlight: 0, queued: 0, paused: false },
+      ],
+    });
+    expect(reduced?.cooldownMs).toBe(500);
+    expect(reduced?.autoReduced).toBe(true);
+    expect(reduced?.autoReducedFrom).toBe(4);
+    expect(reduced?.notice).toBe("auto-reduced to 3 after a 429.");
+    // Healthy entry: cooldownMs defaults to 350 when absent; auto-reduce fields
+    // are NOT present (they are only included when autoReduced===true).
+    expect(healthy?.cooldownMs).toBe(DEFAULT_COOLDOWN_MS);
+    expect(healthy?.autoReduced).toBe(false);
+    expect(healthy && "autoReducedFrom" in healthy).toBe(false);
+    expect(healthy && "notice" in healthy).toBe(false);
+  });
+
+  it("drops autoReducedFrom/notice when autoReduced is false (even if present in JSON)", () => {
+    const [p] = normalizeConcurrencyStatus({
+      providers: [
+        {
+          providerId: "x",
+          limit: 4,
+          inFlight: 0,
+          queued: 0,
+          paused: false,
+          autoReduced: false,
+          autoReducedFrom: 9,
+          notice: "stale",
+        },
+      ],
+    });
+    expect(p?.autoReduced).toBe(false);
+    expect(p && "autoReducedFrom" in p).toBe(false);
+    expect(p && "notice" in p).toBe(false);
+  });
+});
+
+// ── normalizeConcurrencyCooldown ───────────────────────────────────────────────
+
+describe("normalizeConcurrencyCooldown", () => {
+  it("coerces a well-formed body", () => {
+    expect(normalizeConcurrencyCooldown({ providerId: "umans", cooldownMs: 500 })).toEqual({
+      providerId: "umans",
+      cooldownMs: 500,
+    });
+  });
+
+  it("defaults a malformed/absent cooldownMs to 350", () => {
+    expect(normalizeConcurrencyCooldown({ providerId: "x", cooldownMs: -1 })?.cooldownMs).toBe(
+      DEFAULT_COOLDOWN_MS,
+    );
+    expect(normalizeConcurrencyCooldown({ providerId: "x" })?.cooldownMs).toBe(DEFAULT_COOLDOWN_MS);
+    expect(normalizeConcurrencyCooldown({ providerId: "x", cooldownMs: "fast" })?.cooldownMs).toBe(
+      DEFAULT_COOLDOWN_MS,
+    );
+  });
+
+  it("returns null for a missing/malformed providerId", () => {
+    expect(normalizeConcurrencyCooldown({ cooldownMs: 350 })).toBeNull();
+    expect(normalizeConcurrencyCooldown({ providerId: "", cooldownMs: 350 })).toBeNull();
+    expect(normalizeConcurrencyCooldown(null)).toBeNull();
+    expect(normalizeConcurrencyCooldown({})).toBeNull();
   });
 });

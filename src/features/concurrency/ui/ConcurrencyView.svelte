@@ -2,6 +2,7 @@
   import { untrack } from "svelte";
   import type { ConcurrencyStatusEntry } from "@dispatch/transport-contract";
   import {
+    autoReduceNotices,
     type Badge,
     parseLimitInput,
     providerOptions,
@@ -15,8 +16,12 @@
     DeleteConcurrencyLimit,
     LoadConcurrencyLimits,
     LoadConcurrencyStatus,
+    RestoreOutcome,
+    SaveConcurrencyCooldown,
     SaveConcurrencyLimit,
   } from "../logic/types";
+  import AutoReduceBanner from "./AutoReduceBanner.svelte";
+  import ConcurrencyCooldownRow from "./ConcurrencyCooldownRow.svelte";
   import ConcurrencyLimitRow from "./ConcurrencyLimitRow.svelte";
 
   let {
@@ -25,6 +30,7 @@
     saveLimit,
     deleteLimit,
     loadStatus,
+    saveCooldown,
   }: {
     /** Available models (`<provider>/<model>`) — the source of provider ids for the Add dropdown. */
     models: readonly string[];
@@ -32,6 +38,7 @@
     saveLimit: SaveConcurrencyLimit;
     deleteLimit: DeleteConcurrencyLimit;
     loadStatus: LoadConcurrencyStatus;
+    saveCooldown: SaveConcurrencyCooldown;
   } = $props();
 
   const badgeClass: Record<Badge, string> = {
@@ -136,6 +143,18 @@
     return result;
   }
 
+  // Wrap the cooldown save so a successful PUT refreshes the live status (which
+  // re-carries the new `cooldownMs`). The row still gets the result to drive its
+  // own UI. `getCooldown` is exposed for completeness/future use (the live status
+  // already carries `cooldownMs`, so the row seeds from the status view).
+  async function cooldownSave(providerId: string, cooldownMs: number) {
+    const result = await saveCooldown(providerId, cooldownMs);
+    if (result.ok) {
+      void refreshStatus();
+    }
+    return result;
+  }
+
   // ── Live status (polls while mounted) ───────────────────────────────────────
   let statusEntries = $state<readonly ConcurrencyStatusEntry[]>([]);
   let statusError = $state<string | null>(null);
@@ -157,6 +176,69 @@
 
   const statusViews = $derived(viewConcurrencyStatuses(statusEntries, now));
   const statusSummary = $derived(summarizeStatus(statusEntries, now));
+
+  // ── Auto-reduce banners (persist while autoReduced===true; dismissible) ───────
+  //
+  // When a provider's limit is auto-reduced by a 429, `GET /concurrency/status`
+  // carries `autoReduced: true` (+ `autoReducedFrom` + `notice`). We render a
+  // banner per such provider. The banner is DISMISSIBLE: a dismissed provider
+  // stays hidden while it remains auto-reduced (persist-while-true), and is
+  // UN-dismissed the moment a poll shows it no longer auto-reduced — so a future
+  // auto-reduce re-shows the banner. Restoring the limit (PUT) clears
+  // `autoReduced` server-side → the next poll drops the banner automatically.
+  //
+  // The dismissed set is intentionally COMPONENT-LOCAL (NOT persisted to
+  // localStorage / a module-global): it resets on remount (sidebar view switch /
+  // reload). This is correct — `autoReduced` is a REAL persisted degraded state,
+  // so re-showing the banner on a fresh mount reminds the user. Persisting a
+  // dismissal across reloads would risk HIDING an ongoing degradation (a
+  // footgun), and AGENTS.md forbids module-global ambient state. Mirrors the
+  // component-local `limitsError`/`statusError` pattern.
+  let dismissedAutoReduce = $state<ReadonlySet<string>>(new Set());
+
+  const allNotices = $derived(autoReduceNotices(statusEntries));
+  const visibleNotices = $derived(
+    allNotices.filter((n) => !dismissedAutoReduce.has(n.providerId)),
+  );
+
+  // Reconcile the dismissed set against the live auto-reduced providers: keep a
+  // dismissed entry ONLY while its provider is still auto-reduced. A provider
+  // that has been restored (no longer in `allNotices`) is dropped from the
+  // dismissed set so a future auto-reduce re-shows its banner.
+  $effect(() => {
+    const autoReducedIds = new Set(allNotices.map((n) => n.providerId));
+    untrack(() => {
+      let changed = false;
+      const next = new Set<string>();
+      for (const id of dismissedAutoReduce) {
+        if (autoReducedIds.has(id)) next.add(id);
+        else changed = true;
+      }
+      if (changed) dismissedAutoReduce = next;
+    });
+  });
+
+  function dismissAutoReduce(providerId: string): void {
+    if (dismissedAutoReduce.has(providerId)) return;
+    dismissedAutoReduce = new Set([...dismissedAutoReduce, providerId]);
+  }
+
+  // "Restore to N" — PUT the limit back to `autoReducedFrom` via the limits
+  // endpoint (a manual PUT clears `autoReduced` server-side). Refreshes limits +
+  // status on success; the next status poll shows `autoReduced===false` and the
+  // banner drops (the dismissed-set effect above un-dismisses it too). The banner
+  // component owns its own restoring-spinner + inline error; on FAILURE the
+  // outcome is bubbled back so the banner shows the error inline (instead of
+  // silently re-enabling the button / surfacing it only in the limits section).
+  async function restoreLimit(providerId: string, limit: number): Promise<RestoreOutcome> {
+    const result = await saveLimit(providerId, limit);
+    if (result.ok) {
+      void refreshLimits();
+      void refreshStatus();
+      return { ok: true };
+    }
+    return { ok: false, error: result.error };
+  }
 
   async function refreshStatus(): Promise<void> {
     if (statusInFlight) return;
@@ -192,6 +274,19 @@
 </script>
 
 <div class="flex flex-col gap-4">
+  <!-- Auto-reduce banners (appear when a provider's limit was auto-reduced by a 429) -->
+  {#if visibleNotices.length > 0}
+    <section class="flex flex-col gap-2" aria-label="Concurrency auto-reduce notices">
+      {#each visibleNotices as notice (notice.providerId)}
+        <AutoReduceBanner
+          {notice}
+          onRestore={restoreLimit}
+          onDismiss={dismissAutoReduce}
+        />
+      {/each}
+    </section>
+  {/if}
+
   <!-- Limits (config) -->
   <section class="flex flex-col gap-2">
     <div class="flex items-center justify-between gap-2">
@@ -319,10 +414,22 @@
             <div class="flex flex-wrap items-center justify-between gap-2 text-xs opacity-70">
               <span title="In-flight slots held vs cap">{s.inFlightLabel} in flight</span>
               <span>{s.queuedLabel}</span>
+              <span title="Per-slot release cooldown">cooldown {s.cooldownLabel}</span>
             </div>
             {#if s.pausedLabel}
               <span class="text-xs text-warning">{s.pausedLabel}</span>
             {/if}
+            {#if s.autoReduced}
+              <span class="text-xs text-warning">
+                Limit auto-reduced{#if s.autoReducedFrom !== null}
+                  from {s.autoReducedFrom} to {s.limit}{/if}.
+              </span>
+            {/if}
+            <ConcurrencyCooldownRow
+              providerId={s.providerId}
+              cooldownMs={s.cooldownMs}
+              save={cooldownSave}
+            />
           </li>
         {/each}
       </ul>
