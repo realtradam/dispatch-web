@@ -130,4 +130,60 @@ describe("createWorkspaceHttp", () => {
     const result = await http.delete("default");
     expect(result).toEqual({ ok: false, error: "cannot delete default" });
   });
+
+  it("star PUTs /star with no body and returns the updated workspace", async () => {
+    const ws = {
+      id: "a",
+      title: "A",
+      defaultCwd: null,
+      defaultComputerId: null,
+      starred: true,
+      createdAt: 1,
+      lastActivityAt: 2,
+    };
+    const fetchImpl = fakeFetch([{ body: ws }]);
+    const http = createWorkspaceHttp(BASE, fetchImpl);
+    const result = await http.star("a");
+    expect(result).toEqual({ ok: true, value: ws });
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call?.[0]).toBe(`${BASE}/workspaces/a/star`);
+    expect(call?.[1]).toEqual({ method: "PUT" });
+  });
+
+  it("unstar DELETEs /star with no body and returns the updated workspace", async () => {
+    const ws = {
+      id: "a",
+      title: "A",
+      defaultCwd: null,
+      defaultComputerId: null,
+      starred: false,
+      createdAt: 1,
+      lastActivityAt: 2,
+    };
+    const fetchImpl = fakeFetch([{ body: ws }]);
+    const http = createWorkspaceHttp(BASE, fetchImpl);
+    const result = await http.unstar("a");
+    expect(result).toEqual({ ok: true, value: ws });
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call?.[0]).toBe(`${BASE}/workspaces/a/star`);
+    expect(call?.[1]).toEqual({ method: "DELETE" });
+  });
+
+  it("star surfaces a 400 for an invalid slug", async () => {
+    const http = createWorkspaceHttp(
+      BASE,
+      fakeFetch([{ status: 400, body: { error: "invalid slug" } }]),
+    );
+    const result = await http.star("UPPER");
+    expect(result).toEqual({ ok: false, error: "invalid slug" });
+  });
+
+  it("unstar surfaces the backend error on failure", async () => {
+    const http = createWorkspaceHttp(
+      BASE,
+      fakeFetch([{ status: 500, body: { error: "Failed to unstar workspace" } }]),
+    );
+    const result = await http.unstar("a");
+    expect(result).toEqual({ ok: false, error: "Failed to unstar workspace" });
+  });
 });

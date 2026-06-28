@@ -12,6 +12,7 @@ function fakeEntry(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
     title: "My Workspace",
     defaultCwd: null,
     defaultComputerId: null,
+    starred: false,
     createdAt: 1,
     lastActivityAt: 2,
     conversationCount: 3,
@@ -38,6 +39,12 @@ function fakeStore() {
       async (id: string, computerId: string | null): Promise<WorkspaceResult<WorkspaceEntry>> => ({
         ok: true,
         value: fakeEntry({ id, defaultComputerId: computerId }),
+      }),
+    ),
+    setStarred: vi.fn(
+      async (id: string, starred: boolean): Promise<WorkspaceResult<WorkspaceEntry>> => ({
+        ok: true,
+        value: fakeEntry({ id, starred }),
       }),
     ),
     remove: vi.fn(
@@ -134,5 +141,106 @@ describe("WorkspaceCard", () => {
     await user.click(open);
     expect(onNavigate).toHaveBeenCalledTimes(1);
     expect(onNavigate).toHaveBeenCalledWith("/my-ws");
+  });
+
+  it("renders an outline star button for an unstarred workspace", () => {
+    const store = fakeStore() as unknown as WorkspaceStore;
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: false }), store, onNavigate: vi.fn(), computers: [] },
+    });
+    const star = screen.getByRole("button", { name: "Star workspace" });
+    expect(star).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("renders a filled star button for a starred workspace", () => {
+    const store = fakeStore() as unknown as WorkspaceStore;
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: true }), store, onNavigate: vi.fn(), computers: [] },
+    });
+    const star = screen.getByRole("button", { name: "Unstar workspace" });
+    expect(star).toHaveAttribute("aria-pressed", "true");
+  });
+
+  it("toggles the star via the store on click", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore() as unknown as WorkspaceStore;
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: false }), store, onNavigate: vi.fn(), computers: [] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Star workspace" }));
+    expect(store.setStarred).toHaveBeenCalledWith("my-ws", true);
+  });
+
+  it("clicking a starred workspace's star calls setStarred(id, false)", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore() as unknown as WorkspaceStore;
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: true }), store, onNavigate: vi.fn(), computers: [] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Unstar workspace" }));
+    expect(store.setStarred).toHaveBeenCalledWith("my-ws", false);
+  });
+
+  it("renders no star error on a successful toggle", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore() as unknown as WorkspaceStore;
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: false }), store, onNavigate: vi.fn(), computers: [] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Star workspace" }));
+    expect(screen.queryByText(/Star toggle failed/i)).not.toBeInTheDocument();
+  });
+
+  it("shows an inline error when setStarred fails (result.ok false)", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore() as unknown as WorkspaceStore;
+    // The store reverts the optimistic flip on failure, so the entry's
+    // `starred` stays false — fake the revert by returning ok:false unchanged.
+    store.setStarred = vi.fn(
+      async (): Promise<WorkspaceResult<WorkspaceEntry>> => ({ ok: false, error: "boom" }),
+    );
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: false }), store, onNavigate: vi.fn(), computers: [] },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Star workspace" }));
+
+    expect(screen.getByText("boom")).toBeInTheDocument();
+  });
+
+  it("re-enables the star button after a failure (savingStar resets)", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore() as unknown as WorkspaceStore;
+    store.setStarred = vi.fn(
+      async (): Promise<WorkspaceResult<WorkspaceEntry>> => ({ ok: false, error: "boom" }),
+    );
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: false }), store, onNavigate: vi.fn(), computers: [] },
+    });
+
+    const star = screen.getByRole("button", { name: "Star workspace" });
+    await user.click(star);
+    // After the failed toggle, the button is NOT disabled (savingStar reset).
+    expect(star).not.toBeDisabled();
+  });
+
+  it("re-enables the star button even when setStarred throws", async () => {
+    const user = userEvent.setup();
+    const store = fakeStore() as unknown as WorkspaceStore;
+    store.setStarred = vi.fn(async (): Promise<WorkspaceResult<WorkspaceEntry>> => {
+      throw new Error("network");
+    });
+    render(WorkspaceCard, {
+      props: { ws: fakeEntry({ starred: false }), store, onNavigate: vi.fn(), computers: [] },
+    });
+
+    const star = screen.getByRole("button", { name: "Star workspace" });
+    await user.click(star);
+    // savingStar must reset via try/finally even on a throw.
+    expect(star).not.toBeDisabled();
+    expect(screen.getByText("network")).toBeInTheDocument();
   });
 });

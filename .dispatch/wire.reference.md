@@ -6,6 +6,13 @@
 >
 > **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers + provider-retry + concurrency-`queued` status). Regenerate whenever `@dispatch/wire` changes.
 >
+> **2026-06-27 delta (workspace starring — ADDITIVE to `wire@0.12.0`, NO version bump):** `Workspace` gains a
+> required `starred: boolean` (defaults to `false` on creation). A starred workspace's agents receive
+> PRIORITY in the concurrency limiter queue — they jump ahead of agents from non-starred workspaces
+> (oldest-agent-first within each group). Toggled via dedicated `PUT`/`DELETE /workspaces/:id/star` endpoints
+> (no body; both create-on-miss and return the updated `Workspace`). `PUT /workspaces/:id` does NOT accept a
+> `starred` field. See `backend-handoff.md`.
+>
 > **2026-06-26 delta (provider concurrency — ADDITIVE to `wire@0.12.0`, NO version bump):** `ConversationStatus`
 > widened to `"active" | "queued" | "idle" | "closed"`. `queued` = the turn is in flight but waiting for a
 > per-provider concurrency slot (broadcast-only via `conversation.statusChanged`, never persisted); the FE shows
@@ -708,6 +715,13 @@ export interface Workspace {
 	 * (per-conv `computerId` → this → `null`/local).
 	 */
 	readonly defaultComputerId: string | null;
+	/**
+	 * Whether the workspace is starred by the user. Starred workspaces receive
+	 * PRIORITY in the concurrency limiter queue — their agents jump ahead
+	 * of agents from non-starred workspaces (oldest-agent-first within each group).
+	 * Defaults to `false` on creation.
+	 */
+	readonly starred: boolean;
 	/** Epoch-ms when the workspace was first created. */
 	readonly createdAt: number;
 	/** Epoch-ms of the most recent conversation activity in this workspace. */
