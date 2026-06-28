@@ -21,11 +21,15 @@ view-model + inline-edit row, a dismissible auto-reduce banner with "Restore to 
 Worktree env note: an untracked `dispatch-backend → backend` symlink was created in the worktree parent so the
 canonical `file:../dispatch-backend/...` paths resolve — NOT committed.) Prior: §2j (vision consult_vision + image
 storage)._
+_Last updated: 2026-06-27 (workspace starring — backend `feature/workspace-star` shipped `Workspace.starred: boolean`
+(additive to `wire@0.12.0`, NO version bump) + `PUT`/`DELETE /workspaces/:id/star` endpoints (no body; create-on-miss;
+return the updated `Workspace`). FE consumed: `adapter/http` `star`/`unstar`, pure `sortWorkspaces`/`applyStarred`,
+`store.setStarred` (optimistic + revert, `$derived`-sorted list), `WorkspaceCard` star toggle (filled gold ★ / outline ☆).
+Re-mirrored `.dispatch/wire.reference.md`. typecheck 0/0, 1045 tests green (+27), biome clean, build OK. No open backend asks.)_
 **FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 _Last updated: 2026-06-26 (backend: concurrency limits now PERSISTED across reboots — no API contract change, no FE
 re-pin/re-mirror needed; §2j updated. FE: brief "Saved." confirmation on the limit row after a successful save. 926 tests
 green.) Prior: CR-13 (`"queued"` ConversationStatus) RESOLVED; dev merged (e81df4c)._
-**FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 _Last updated: 2026-06-26 (§2j UPDATED — Image storage: persisted `ImageChunk.url`s are now compact relative HTTP
 paths (`/images/<conv>/<uuid>.png`) served by `GET /images/:conversationId/:imageId` (images stored on disk under tmp,
 not SQLite). FE resolves relative urls against the API base via a new pure `resolveImageUrl` helper; the optimistic
@@ -51,7 +55,7 @@ Pinned as `file:` deps: **`ui-contract@0.2.0`; `wire@0.12.0`; `transport-contrac
 | Package | Used for |
 |---|---|
 | `@dispatch/ui-contract` | surfaces + surface WS protocol |
-| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`TurnProviderRetryEvent`(transient retry-warning)/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, `done.contextSize`/`TurnMetrics.contextSize`, `ReasoningEffort`, `QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`, `ConversationMeta`/`ConversationStatus`, `Workspace`/`WorkspaceEntry`(+`defaultComputerId`)/`Computer`/`ComputerEntry` (SSH handoff #1) |
+| `@dispatch/wire` | `Chunk`/`StoredChunk`(+`seq`)/`ChatMessage`/`AgentEvent`/`TurnSealedEvent`/`TurnProviderRetryEvent`(transient retry-warning)/`Usage`/`StepId` + metrics: `StepMetrics`/`TurnMetrics`, `usage.stepId`, `step-complete`, `done.durationMs`/`done.usage`, `tool-result.durationMs`, `done.contextSize`/`TurnMetrics.contextSize`, `ReasoningEffort`, `QueuedMessage`/`QueuePayload`/`TurnSteeringEvent`, `ConversationMeta`/`ConversationStatus`, `Workspace`/`WorkspaceEntry`(+`defaultComputerId`,+`starred`)/`Computer`/`ComputerEntry` (SSH handoff #1) |
 | `@dispatch/transport-contract` | `ChatRequest`(+`reasoningEffort`)/`ModelsResponse`/`ConversationHistoryResponse`/`ConversationMetricsResponse` + `WarmRequest`/`WarmResponse` + `CwdResponse`/`SetCwdRequest` + `ReasoningEffortResponse`/`SetReasoningEffortRequest` + `QueueRequest`/`QueueResponse`/`ChatQueueMessage` + `ConversationOpenMessage`/`ConversationStatusChangedMessage`/`ConversationListResponse`/`LastMessageResponse`/`OpenConversationResponse`/`SetTitleRequest`/`TitleResponse` + LSP (`LspStatusResponse`/`LspServerInfo`/`LspServerState`) + MCP (`McpStatusResponse`/`McpServerInfo`/`McpServerState`) + concurrency (`ConcurrencyLimitsResponse`/`SetConcurrencyLimitRequest`/`ConcurrencyLimitResponse`/`ConcurrencyStatusEntry`/`ConcurrencyStatusResponse`) + WS chat ops + `WsClientMessage`/`WsServerMessage` |
 
 Endpoints in use (HTTP **24203**, WS **24205**, CORS `*` incl. `PUT`):
@@ -257,6 +261,35 @@ the finalized contract (`wire@0.12.0`/`transport-contract@0.16.0`): `Workspace`/
 `DELETE /workspaces/:id`), `?workspaceId=` on `GET /conversations`, and `DELETE /conversations/:id/cwd`
 (clear-to-inherit). Q1–Q8 decisions + full shapes in `backend-handoff-workspaces-reply.md`. FE re-pinned +
 re-mirrored; FE feature build in progress.
+
+### Workspace starring (concurrency priority) → **CONSUMED ✅ (backend shipped `feature/workspace-star`; FE built + green)**
+
+**Backend contract change (additive to `wire@0.12.0`, NO version bump):** `Workspace` gains a required
+`starred: boolean` (defaults `false` on creation). A starred workspace's agents receive PRIORITY in the
+concurrency limiter queue — they jump ahead of agents from non-starred workspaces (oldest-agent-first
+within each group); takes effect immediately for already-queued agents (backend-owned, via
+`setWorkspaceStarred` + `concurrencyService.notifyWorkspaceStarred`). Two dedicated endpoints (no body;
+both create-on-miss; return the updated `Workspace`):
+- `PUT /workspaces/:id/star` → star (400 on invalid slug; 200 `Workspace{starred:true}`).
+- `DELETE /workspaces/:id/star` → unstar (400 on invalid slug; 200 `Workspace{starred:false}`).
+
+`PUT /workspaces/:id` does NOT accept a `starred` field (the dedicated endpoints are the only path). No
+new `transport-contract` request/response types — both reuse `WorkspaceResponse`.
+
+**FE consumed (all green — typecheck 0/0, 1045 tests, biome clean, build OK):**
+- `adapter/http.ts`: `star(id)`/`unstar(id)` → `WorkspaceResult<Workspace>` (PUT/DELETE `/workspaces/:id/star`, no body).
+- `logic/view-model.ts`: pure `sortWorkspaces` (starred-first, then `lastActivityAt` desc, stable) + pure
+  `applyStarred` (the optimistic apply/revert transformation). Both unit-tested.
+- `store.svelte.ts`: `setStarred(id, starred)` — optimistic flip (the `$derived` sorted list re-orders
+  reactively) with error revert; no full refresh on success (avoids flicker). Re-mirrored `.dispatch/wire.reference.md`.
+- `ui/WorkspaceCard.svelte`: a star toggle button (filled gold ★ when starred, outline ☆ when not; spinner
+  while in flight; `aria-pressed`/`aria-label`; tooltip notes concurrency priority). Clicking calls
+  `store.setStarred(ws.id, !ws.starred)`.
+- Tests: http star/unstar (5), view-model sort+applyStarred (12), store optimistic+revert+re-sort (6), WorkspaceCard star button (4).
+
+**No open asks for the backend.** Live probe of the star endpoints against a running backend is the only
+remaining human step (the `scripts/live-probe.ts` does not cover workspace endpoints; a manual `curl` or a
+click in the home view confirms the round-trip).
 
 ### CR-6 — Assign seq during generation → **RESOLVED ✅** (backend shipped; FE adoption pending)
 

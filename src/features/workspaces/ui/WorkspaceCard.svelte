@@ -96,6 +96,28 @@
     if (!result.ok) computerError = result.error;
   }
 
+  // ── Star (concurrency priority) ──────────────────────────────────────────────
+  let savingStar = $state(false);
+  let starError = $state<string | null>(null);
+
+  async function toggleStar(): Promise<void> {
+    if (savingStar) return;
+    savingStar = true;
+    starError = null;
+    try {
+      // Optimistic: the store flips `starred` immediately and re-sorts; revert
+      // on error is handled there. We read `ws.starred` for the target value.
+      const result = await store.setStarred(ws.id, !ws.starred);
+      if (!result.ok) starError = result.error;
+    } catch (err) {
+      // A throw (e.g. a rejected effect) — surface it; the store already
+      // reverted the optimistic flip if it got far enough to apply it.
+      starError = err instanceof Error ? err.message : "Star toggle failed";
+    } finally {
+      savingStar = false;
+    }
+  }
+
   // ── Delete ─────────────────────────────────────────────────────────────────
   let deleting = $state(false);
 
@@ -143,6 +165,25 @@
       >
     {/if}
     <span class="font-mono text-xs opacity-50">/{ws.id}</span>
+    <button
+      type="button"
+      class="btn btn-ghost btn-xs px-1"
+      disabled={savingStar}
+      aria-pressed={ws.starred}
+      aria-label={ws.starred ? "Unstar workspace" : "Star workspace"}
+      title={ws.starred
+        ? "Starred — its agents get concurrency priority. Click to unstar."
+        : "Star this workspace to give its agents concurrency priority."}
+      onclick={toggleStar}
+    >
+      {#if savingStar}
+        <span class="loading loading-spinner loading-xs"></span>
+      {:else if ws.starred}
+        <span class="text-warning" aria-hidden="true">★</span>
+      {:else}
+        <span class="opacity-40" aria-hidden="true">☆</span>
+      {/if}
+    </button>
     <span class="ml-auto text-xs opacity-50">
       {ws.conversationCount}
       {ws.conversationCount === 1 ? "conversation" : "conversations"}
@@ -166,6 +207,10 @@
 
   {#if titleError}
     <p class="text-xs text-error">{titleError}</p>
+  {/if}
+
+  {#if starError}
+    <p class="text-xs text-error">{starError}</p>
   {/if}
 
   <div class="flex items-center gap-2">

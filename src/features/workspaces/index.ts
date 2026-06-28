@@ -8,7 +8,7 @@ export {
   WORKSPACE_SLUG_RE,
   workspacePath,
 } from "./logic/route";
-export { pageTitle, relativeTime } from "./logic/view-model";
+export { applyStarred, pageTitle, relativeTime, sortWorkspaces } from "./logic/view-model";
 export type { WorkspaceStore } from "./store.svelte";
 export { createWorkspaceStore } from "./store.svelte";
 export { default as WorkspaceCard } from "./ui/WorkspaceCard.svelte";
