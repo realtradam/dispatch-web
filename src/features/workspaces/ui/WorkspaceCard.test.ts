@@ -200,6 +200,8 @@ describe("WorkspaceCard", () => {
       },
     });
     expect(seen).toEqual(["proj-x"]);
+  });
+
   it("renders an outline star button for an unstarred workspace", () => {
     const store = fakeStore() as unknown as WorkspaceStore;
     render(WorkspaceCard, {
