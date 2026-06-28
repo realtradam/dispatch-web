@@ -553,13 +553,17 @@ describe("createAppStore", () => {
       event: { type: "turn-sealed", conversationId: convId, turnId: "turn-1" },
     });
 
-    await new Promise((r) => setTimeout(r, 50));
+    // `turn-sealed` triggers an async `syncTail` (cache.sinceSeq → historySync
+    // → cache.commit → applyHistory). Poll for the side-effect rather than
+    // guessing a fixed delay — under suite load a fixed `setTimeout` raced the
+    // fetch chain and flaked here.
+    await vi.waitFor(() => {
+      expect(fetchedUrls.some((u) => u.includes(`/conversations/${convId}?sinceSeq=`))).toBe(true);
+    });
 
-    expect(fetchedUrls.some((u) => u.includes(`/conversations/${convId}?sinceSeq=`))).toBe(true);
-
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(store.activeChat.chunks.length).toBeGreaterThan(0);
+    await vi.waitFor(() => {
+      expect(store.activeChat.chunks.length).toBeGreaterThan(0);
+    });
 
     store.dispose();
   });
