@@ -9,6 +9,8 @@
     providerOptions,
     summarizeLimits,
     viewConcurrencyLimits,
+    viewConcurrencyStatus,
+    type ConcurrencyStatusView,
   } from "../logic/view-model";
   import type {
     ConcurrencyLimitEntry,
@@ -201,12 +203,13 @@
    *  INVISIBLE, mirroring the heartbeat runs list). */
   let statusInFlight = false;
 
-  // Per-provider cooldown lookup (from the live status poll) so each saved limit
-  // row seeds its cooldown input. Defaults to the server default (350) when a
-  // provider has no status entry yet.
-  const cooldownByProvider = $derived.by(() => {
-    const map = new Map<string, number>();
-    for (const s of statusEntries) map.set(s.providerId, s.cooldownMs);
+  // Per-provider status view (from the live status poll) so each saved limit row
+  // renders its in-flight count + status badge + seeds its cooldown input. Null
+  // when a provider has no status entry yet (the row falls back to Idle + the
+  // server-default cooldown of 350).
+  const statusByProvider = $derived.by(() => {
+    const map = new Map<string, ConcurrencyStatusView>();
+    for (const e of statusEntries) map.set(e.providerId, viewConcurrencyStatus(e));
     return map;
   });
 
@@ -346,7 +349,7 @@
         <li>
           <ConcurrencyLimitRow
             {limit}
-            cooldownMs={cooldownByProvider.get(limit.providerId) ?? DEFAULT_COOLDOWN_MS}
+            status={statusByProvider.get(limit.providerId) ?? null}
             save={rowSave}
             saveCooldown={cooldownSave}
             remove={rowRemove}

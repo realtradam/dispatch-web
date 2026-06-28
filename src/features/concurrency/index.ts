@@ -43,6 +43,7 @@ export {
   pauseLabel,
   providerFromModel,
   providerOptions,
+  statusLabel,
   summarizeLimits,
   summarizeStatus,
   viewAutoReduce,
