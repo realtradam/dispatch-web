@@ -55,12 +55,14 @@ import {
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore } from "../features/chat";
 import type {
+  ConcurrencyCooldownResult,
   ConcurrencyDeleteResult,
   ConcurrencyLimitResult,
   ConcurrencyLimitsResult,
   ConcurrencyStatusResult,
 } from "../features/concurrency";
 import {
+  normalizeConcurrencyCooldown,
   normalizeConcurrencyLimit,
   normalizeConcurrencyLimits,
   normalizeConcurrencyStatus,
@@ -442,10 +444,28 @@ export interface AppStore {
   /**
    * Fetch live concurrency status for every provider with a configured limit
    * (`GET /concurrency/status`): in-flight slots held, agents queued, and a paused
-   * state with a `pausedUntil` epoch-ms when a 429 backoff is in effect. Returns
+   * state with a `pausedUntil` epoch-ms when a 429 backoff is in effect. Each
+   * entry also carries the per-slot release `cooldownMs` + an `autoReduced` flag
+   * (true when a 429 auto-reduced the limit by 1; the FE renders a banner). Returns
    * an empty list when the extension isn't loaded (`{ providers: [] }`).
    */
   concurrencyStatus(): Promise<ConcurrencyStatusResult>;
+  /**
+   * Fetch the per-slot release cooldown (ms) for one provider
+   * (`GET /concurrency/cooldown/:providerId`). `404` (no concurrency config at
+   * all) and `503` (extension not loaded) both surface as `ok: false`.
+   */
+  getConcurrencyCooldown(providerId: string): Promise<ConcurrencyCooldownResult>;
+  /**
+   * Set the per-slot release cooldown (ms) for one provider
+   * (`PUT /concurrency/cooldown/:providerId`, body `{ cooldownMs }`). `cooldownMs`
+   * must be a non-negative integer (0 = no cooldown / instant re-admission); an
+   * invalid body is `400`. Persists + applies to subsequently recycled slots.
+   */
+  setConcurrencyCooldown(
+    providerId: string,
+    cooldownMs: number,
+  ): Promise<ConcurrencyCooldownResult>;
   /**
    * A critical error that blocks normal operation (e.g. the cross-device tab
    * restore fetch failed). When non-null, a full-screen modal is shown with the
@@ -1954,6 +1974,64 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         return {
           ok: false,
           error: err instanceof Error ? err.message : "Concurrency status request failed",
+        };
+      }
+    },
+
+    async getConcurrencyCooldown(providerId: string): Promise<ConcurrencyCooldownResult> {
+      try {
+        const res = await fetchImpl(
+          `${httpBase}/concurrency/cooldown/${encodeURIComponent(providerId)}`,
+        );
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Get concurrency cooldown failed (HTTP ${res.status})`,
+          };
+        }
+        const data = normalizeConcurrencyCooldown(await res.json());
+        if (data === null) {
+          return { ok: false, error: "Malformed concurrency cooldown response" };
+        }
+        return { ok: true, providerId: data.providerId, cooldownMs: data.cooldownMs };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Get concurrency cooldown request failed",
+        };
+      }
+    },
+
+    async setConcurrencyCooldown(
+      providerId: string,
+      cooldownMs: number,
+    ): Promise<ConcurrencyCooldownResult> {
+      try {
+        const res = await fetchImpl(
+          `${httpBase}/concurrency/cooldown/${encodeURIComponent(providerId)}`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ cooldownMs }),
+          },
+        );
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Set concurrency cooldown failed (HTTP ${res.status})`,
+          };
+        }
+        const data = normalizeConcurrencyCooldown(await res.json());
+        if (data === null) {
+          return { ok: false, error: "Malformed concurrency cooldown response" };
+        }
+        return { ok: true, providerId: data.providerId, cooldownMs: data.cooldownMs };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Set concurrency cooldown request failed",
         };
       }
     },
