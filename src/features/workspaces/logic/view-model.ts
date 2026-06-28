@@ -20,6 +20,36 @@ export function pageTitle(route: Route, workspaces: readonly WorkspaceEntry[]): 
 }
 
 /**
+ * Sort workspaces for display: starred first, then most-recently-active. Pure:
+ * the list in, a NEW sorted array out (the input is not mutated). Starred
+ * workspaces jump to the top (the FE-side echo of their concurrency-priority);
+ * within each group (starred / not) `lastActivityAt` desc breaks ties, matching
+ * the backend's list ordering. Stable for equal `lastActivityAt`.
+ */
+export function sortWorkspaces<T extends WorkspaceEntry>(workspaces: readonly T[]): T[] {
+  return [...workspaces].sort((a, b) => {
+    if (a.starred !== b.starred) return a.starred ? -1 : 1;
+    return b.lastActivityAt - a.lastActivityAt;
+  });
+}
+
+/**
+ * Return a NEW list with the one workspace's `starred` flag set (immutably —
+ * the entry is replaced, the rest keep their identity). Pure: the optimistic
+ * star/unstar transformation shared by the apply + the error revert. A missing
+ * `id` (not yet in the list — e.g. starring a workspace the home view hasn't
+ * loaded) leaves the list unchanged; the backend's create-on-miss still applies
+ * server-side and a subsequent refresh reconciles.
+ */
+export function applyStarred<T extends WorkspaceEntry>(
+  workspaces: readonly T[],
+  id: string,
+  starred: boolean,
+): T[] {
+  return workspaces.map((w) => (w.id === id ? { ...w, starred } : w));
+}
+
+/**
  * Format an epoch-ms timestamp as a short relative string ("now", "3m", "2h",
  * "5d", or a date). Pure: `now` + `then` in, string out. Future timestamps
  * (a workspace just created) read as "now".
