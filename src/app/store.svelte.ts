@@ -54,6 +54,7 @@ import {
 } from "../core/protocol";
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore } from "../features/chat";
+import type { SetThinkingRequest, ThinkingResponse } from "../features/chat/reasoning-effort";
 import type {
   ConcurrencyCooldownResult,
   ConcurrencyDeleteResult,
@@ -130,6 +131,14 @@ export type McpResult =
 /** Outcome of `PUT /conversations/:id/reasoning-effort`. */
 export type ReasoningEffortResult =
   | { readonly ok: true; readonly reasoningEffort: ReasoningEffort }
+  | { readonly ok: false; readonly error: string };
+
+/**
+ * Outcome of `PUT /conversations/:id/thinking` (PROPOSED — see
+ * `backend-handoff.md`; the endpoint is not yet shipped by the backend).
+ */
+export type ThinkingResult =
+  | { readonly ok: true; readonly thinking: boolean }
   | { readonly ok: false; readonly error: string };
 
 /** Outcome of `POST /conversations/:id/compact` (manual compaction). */
@@ -272,6 +281,22 @@ export interface AppStore {
    * Takes effect from the NEXT turn; resolution stays server-owned.
    */
   setReasoningEffort(level: ReasoningEffort): Promise<ReasoningEffortResult | null>;
+  /**
+   * The workspace conversation's persisted thinking flag, or null when never
+   * set (the server then resolves turns with thinking ON — the default).
+   * `false` ⇒ thinking disabled entirely (the SEPARATE "off" axis — NOT a
+   * zero-effort level; the umans route maps it to `reasoning_effort: "none"`).
+   * PROPOSED backend contract — see `backend-handoff.md`.
+   */
+  readonly thinking: boolean | null;
+  /**
+   * Persist the workspace conversation's thinking flag
+   * (`PUT /conversations/:id/thinking`). Works for a draft too (its id survives
+   * promotion), so the first turn already runs with the chosen setting. Takes
+   * effect from the NEXT turn; resolution stays server-owned.
+   * PROPOSED backend contract — see `backend-handoff.md`.
+   */
+  setThinking(enabled: boolean): Promise<ThinkingResult | null>;
   /**
    * Manually trigger conversation compaction (`POST /conversations/:id/compact`).
    * Summarizes old messages + retains the most recent N. Returns null when no
@@ -729,6 +754,30 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     }
   }
 
+  // The workspace conversation's persisted thinking flag (SEPARATE from the
+  // effort level). Seeded from the backend on focus change; null = never set
+  // (thinking ON — the default). PROPOSED endpoint (see backend-handoff.md):
+  // a 404 (endpoint not yet shipped) leaves `thinking` null ⇒ ON (default), so
+  // the selector simply shows the effort level until the backend ships it.
+  let thinking = $state<boolean | null>(null);
+
+  /** Refetch the workspace conversation's thinking flag (works for a draft too). */
+  async function refreshThinking(): Promise<void> {
+    const id = workspaceConversationId();
+    // Clear immediately so a switch never shows the PREVIOUS conversation's
+    // setting while the fetch is in flight (null ⇒ ON, the default).
+    thinking = null;
+    try {
+      const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/thinking`);
+      if (!res.ok) return;
+      const data = (await res.json()) as ThinkingResponse;
+      // Guard a slow response losing a race with a conversation switch.
+      if (workspaceConversationId() === id) thinking = data.thinking ?? null;
+    } catch (err) {
+      reportError("Failed to load thinking setting", err);
+    }
+  }
+
   // The workspace conversation's auto-compact percent. Seeded from the
   // backend on focus change; null = not yet fetched. 0 = disabled.
   let compactPercent = $state<number | null>(null);
@@ -975,6 +1024,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     void refreshCwd();
     void refreshComputer();
     void refreshReasoningEffort();
+    void refreshThinking();
     void refreshCompactPercent();
   }
 
@@ -1208,6 +1258,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   void refreshComputer();
   void refreshModel();
   void refreshReasoningEffort();
+  void refreshThinking();
   void refreshCompactPercent();
   void refreshVisionSettings();
 
@@ -1243,6 +1294,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       void refreshComputer();
       void refreshModel();
       void refreshReasoningEffort();
+      void refreshThinking();
       void refreshCompactPercent();
     },
     get activeChat(): ChatStore {
@@ -1285,6 +1337,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     get reasoningEffort(): ReasoningEffort | null {
       return reasoningEffort;
+    },
+    get thinking(): boolean | null {
+      return thinking;
     },
     get compactPercent(): number | null {
       return compactPercent;
@@ -1340,6 +1395,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         void refreshCwd();
         void refreshComputer();
         void refreshReasoningEffort();
+        void refreshThinking();
         void refreshCompactPercent();
         // Now send on the promoted store
         chatStores.get(conversationId)?.send(text, images);
@@ -1386,6 +1442,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       void refreshComputer();
       void refreshModel();
       void refreshReasoningEffort();
+      void refreshThinking();
       void refreshCompactPercent();
     },
 
@@ -1401,6 +1458,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       void refreshComputer();
       void refreshModel();
       void refreshReasoningEffort();
+      void refreshThinking();
       void refreshCompactPercent();
     },
 
@@ -1583,6 +1641,37 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         return {
           ok: false,
           error: err instanceof Error ? err.message : "Set reasoning effort request failed",
+        };
+      }
+    },
+
+    async setThinking(enabled: boolean): Promise<ThinkingResult | null> {
+      const id = workspaceConversationId();
+      const body: SetThinkingRequest = { thinking: enabled };
+      try {
+        const res = await fetchImpl(
+          `${httpBase}/conversations/${encodeURIComponent(id)}/thinking`,
+          {
+            method: "PUT",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(body),
+          },
+        );
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Set thinking failed (HTTP ${res.status})`,
+          };
+        }
+        const data = (await res.json()) as ThinkingResponse;
+        const next = data.thinking ?? enabled;
+        if (workspaceConversationId() === id) thinking = next;
+        return { ok: true, thinking: next };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Set thinking request failed",
         };
       }
     },

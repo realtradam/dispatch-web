@@ -12,13 +12,23 @@ export type {
   EffortOption,
   ReasoningEffortSaveResult,
   SaveReasoningEffort,
+  SaveThinkingSelection,
+  SelectionOption,
+  SetThinkingRequest,
+  ThinkingResponse,
+  ThinkingSaveResult,
+  ThinkingSelection,
+  ThinkingSelectionSaveResult,
 } from "./reasoning-effort";
 export {
   DEFAULT_REASONING_EFFORT,
   effectiveEffort,
+  effectiveSelection,
   effortOptions,
   isReasoningEffort,
+  isThinkingSelection,
   REASONING_EFFORT_LEVELS,
+  selectionOptions,
 } from "./reasoning-effort";
 export type { ChatStore, ChatStoreDependencies } from "./store.svelte";
 export { createChatStore } from "./store.svelte";

@@ -1092,30 +1092,53 @@ describe("ModelSelector", () => {
 });
 
 describe("ReasoningEffortSelector", () => {
-  it("renders null (never set) as the default level, marked '(default)'", () => {
-    render(ReasoningEffortSelector, { props: { persisted: null, save: vi.fn() } });
+  it("renders null effort + null thinking (never set) as the default level, marked '(default)'", () => {
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: null, persistedThinking: null, save: vi.fn() },
+    });
 
     const select = screen.getByRole("combobox", { name: "Reasoning effort" });
     expect(select).toHaveValue("high");
     expect(within(select).getByRole("option", { name: "high (default)" })).toBeInTheDocument();
-    // All five ladder levels are offered.
-    expect(within(select).getAllByRole("option")).toHaveLength(5);
+    // "Off" first, then the five ladder levels.
+    const options = within(select).getAllByRole("option");
+    expect(options).toHaveLength(6);
+    expect(options[0]).toHaveValue("off");
+    expect(within(select).getByRole("option", { name: "Off" })).toBeInTheDocument();
   });
 
-  it("renders a persisted level as selected", () => {
-    render(ReasoningEffortSelector, { props: { persisted: "xhigh", save: vi.fn() } });
+  it("renders a persisted level as selected when thinking is on", () => {
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: "xhigh", persistedThinking: null, save: vi.fn() },
+    });
 
     expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("xhigh");
   });
 
+  it("renders 'off' as selected when thinking is disabled (effort level is preserved but hidden)", () => {
+    // thinking off is a SEPARATE axis: even with a persisted effort level, the
+    // selector shows "off" while thinking is disabled.
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: "xhigh", persistedThinking: false, save: vi.fn() },
+    });
+
+    expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("off");
+    // the level option is still present (restored on an off→on toggle)
+    expect(
+      within(screen.getByRole("combobox")).getByRole("option", { name: "xhigh" }),
+    ).toBeInTheDocument();
+  });
+
   it("selecting a level saves it via the injected port and confirms", async () => {
-    const save = vi.fn(async (level: "low" | "medium" | "high" | "xhigh" | "max") => ({
+    const save = vi.fn(async (selection: "off" | "low" | "medium" | "high" | "xhigh" | "max") => ({
       ok: true as const,
-      reasoningEffort: level,
+      selection,
     }));
     const user = userEvent.setup();
 
-    render(ReasoningEffortSelector, { props: { persisted: null, save } });
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: null, persistedThinking: null, save },
+    });
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "max");
 
@@ -1127,11 +1150,35 @@ describe("ReasoningEffortSelector", () => {
     expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("max");
   });
 
-  it("a failed save shows the error and reverts to the persisted value", async () => {
+  it("selecting 'off' saves the separate disable signal (not a level)", async () => {
+    const save = vi.fn(async (selection: "off" | "low" | "medium" | "high" | "xhigh" | "max") => ({
+      ok: true as const,
+      selection,
+    }));
+    const user = userEvent.setup();
+
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: "high", persistedThinking: null, save },
+    });
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "off");
+
+    expect(save).toHaveBeenCalledTimes(1);
+    // "off" is the separate thinking-disable signal — NOT a zero-effort level.
+    expect(save).toHaveBeenCalledWith("off");
+    await vi.waitFor(() => {
+      expect(screen.getByText(/applies from the next turn/i)).toBeInTheDocument();
+    });
+    expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toHaveValue("off");
+  });
+
+  it("a failed save shows the error and reverts to the persisted selection", async () => {
     const save = vi.fn(async () => ({ ok: false as const, error: "nope" }));
     const user = userEvent.setup();
 
-    render(ReasoningEffortSelector, { props: { persisted: "low", save } });
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: "low", persistedThinking: null, save },
+    });
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "max");
 
@@ -1142,22 +1189,24 @@ describe("ReasoningEffortSelector", () => {
   });
 
   it("disables the select while a save is in flight (no double-fire)", async () => {
-    let resolveSave: ((r: { ok: true; reasoningEffort: "max" }) => void) | undefined;
+    let resolveSave: ((r: { ok: true; selection: "max" }) => void) | undefined;
     const save = vi.fn(
       () =>
-        new Promise<{ ok: true; reasoningEffort: "max" }>((resolve) => {
+        new Promise<{ ok: true; selection: "max" }>((resolve) => {
           resolveSave = resolve;
         }),
     );
     const user = userEvent.setup();
 
-    render(ReasoningEffortSelector, { props: { persisted: null, save } });
+    render(ReasoningEffortSelector, {
+      props: { persistedEffort: null, persistedThinking: null, save },
+    });
 
     await user.selectOptions(screen.getByRole("combobox", { name: "Reasoning effort" }), "max");
 
     expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeDisabled();
 
-    resolveSave?.({ ok: true, reasoningEffort: "max" });
+    resolveSave?.({ ok: true, selection: "max" });
     await vi.waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeEnabled();
     });

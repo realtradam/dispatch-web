@@ -891,6 +891,100 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("seeds thinking from GET /conversations/:id/thinking (null = never set ⇒ ON)", async () => {
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/thinking")) {
+        return new Response(JSON.stringify({ conversationId: "x", thinking: false }), {
+          status: 200,
+        });
+      }
+      return base(input, init);
+    };
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    await vi.waitFor(() => {
+      expect(store.thinking).toBe(false);
+    });
+
+    store.dispose();
+  });
+
+  it("treats a missing thinking endpoint (404) as 'never set' (null ⇒ ON)", async () => {
+    // The thinking endpoint is PROPOSED (backend-handoff.md); until the backend
+    // ships it, GET 404s and `thinking` stays null ⇒ the selector shows the
+    // effort level (thinking ON, the default) — graceful, never a crash.
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/thinking")) {
+        return new Response("not found", { status: 404 });
+      }
+      return base(input, init);
+    };
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    // give the (404ing) fetch a tick to settle
+    await vi.waitFor(() => {
+      expect(store.reasoningEffort).not.toBe(undefined);
+    });
+    expect(store.thinking).toBeNull();
+
+    store.dispose();
+  });
+
+  it("setThinking PUTs the flag and updates local state from the echo", async () => {
+    const calls: { url: string; method: string; body: string | undefined }[] = [];
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      calls.push({ url, method: init?.method ?? "GET", body: init?.body as string | undefined });
+      if (url.endsWith("/thinking") && init?.method === "PUT") {
+        const sent = JSON.parse(init.body as string) as { thinking: boolean };
+        return new Response(JSON.stringify({ conversationId: "x", thinking: sent.thinking }), {
+          status: 200,
+        });
+      }
+      if (url.endsWith("/thinking")) {
+        return new Response(JSON.stringify({ conversationId: "x", thinking: null }), {
+          status: 200,
+        });
+      }
+      return base(input, init);
+    };
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    const result = await store.setThinking(false);
+    expect(result).toEqual({ ok: true, thinking: false });
+    expect(store.thinking).toBe(false);
+
+    const put = calls.find((c) => c.method === "PUT" && c.url.endsWith("/thinking"));
+    expect(put).toBeDefined();
+    expect(put?.url).toContain(`/conversations/${store.currentConversationId}/`);
+    expect(JSON.parse(put?.body ?? "{}")).toEqual({ thinking: false });
+
+    store.dispose();
+  });
+
   it("does NOT re-scope a scope:'global' surface on conversation switch (no churn)", () => {
     const ws = fakeSocket();
     const store = createAppStore({
