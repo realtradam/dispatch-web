@@ -83,10 +83,9 @@
 </script>
 
 <div class="flex flex-col gap-2">
-	<!-- Single-column vertical tab list. Capped at 80% of the viewport height
-	     so a long tab set scrolls inside this region instead of growing the
-	     whole sidebar. -->
-	<div class="flex max-h-[80vh] flex-col gap-1 overflow-y-auto pr-1">
+	<!-- Single-column vertical tab list. Fixed at 60% of the viewport height so a
+	     long tab set scrolls inside this region instead of growing the whole sidebar. -->
+	<div class="flex h-[60vh] flex-col gap-1 overflow-y-auto pr-1">
 		{#each tabs as tab (tab.conversationId)}
 			<div
 				class="flex items-center gap-1.5 rounded px-2 py-1.5 text-sm hover:bg-base-200"
