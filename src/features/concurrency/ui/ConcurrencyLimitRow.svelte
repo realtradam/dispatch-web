@@ -1,63 +1,100 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import { parseLimitInput, type ConcurrencyLimitView } from "../logic/view-model";
-  import type { DeleteConcurrencyLimit, SaveConcurrencyLimit } from "../logic/types";
+  import {
+    parseCooldownInput,
+    parseLimitInput,
+    type ConcurrencyLimitView,
+  } from "../logic/view-model";
+  import type {
+    DeleteConcurrencyLimit,
+    SaveConcurrencyCooldown,
+    SaveConcurrencyLimit,
+  } from "../logic/types";
 
   let {
     limit,
+    cooldownMs,
     save,
+    saveCooldown,
     remove,
   }: {
     /** The configured limit row (providerId + current limit). */
     limit: ConcurrencyLimitView;
+    /** The current per-slot release cooldown (ms) from the live status poll. */
+    cooldownMs: number;
     save: SaveConcurrencyLimit;
+    saveCooldown: SaveConcurrencyCooldown;
     remove: DeleteConcurrencyLimit;
   } = $props();
 
-  // Inline-edit state: the raw text bound to the limit input. Seeded from the
-  // row's canonical limit, but only while the field is untouched — so a save
-  // echo / list refresh re-syncs it without clobbering an in-flight edit. Mirrors
-  // the ChatLimitField seed pattern (avoids reading the prop in the $state init).
-  let draft = $state("");
-  let lastSeed = $state("");
+  // Inline-edit state for the limit + cooldown inputs. Each is seeded from its
+  // canonical value, but only while untouched — so a save echo / status-poll
+  // refresh re-syncs without clobbering an in-flight edit. Mirrors the
+  // ChatLimitField seed pattern (avoids reading the prop in the $state init).
+  let limitDraft = $state("");
+  let lastLimitSeed = $state("");
+  let cooldownDraft = $state("");
+  let lastCooldownSeed = $state("");
   let saving = $state(false);
   let removing = $state(false);
   let error = $state<string | null>(null);
-  /** Brief "Saved" confirmation after a successful save (mirrors ChatLimitField).
-   *  Cleared when the field is edited again. */
+  /** Brief "Saved" confirmation after a successful save; cleared on edit. */
   let justSaved = $state(false);
 
   $effect(() => {
-    const incoming = String(limit.limit);
+    const incomingLimit = String(limit.limit);
+    const incomingCooldown = String(cooldownMs);
     untrack(() => {
-      if (draft === lastSeed) draft = incoming;
-      lastSeed = incoming;
+      if (limitDraft === lastLimitSeed) limitDraft = incomingLimit;
+      lastLimitSeed = incomingLimit;
+      if (cooldownDraft === lastCooldownSeed) cooldownDraft = incomingCooldown;
+      lastCooldownSeed = incomingCooldown;
     });
   });
 
-  const parsed = $derived(parseLimitInput(draft));
-  const dirty = $derived(parsed !== null && parsed !== limit.limit);
+  const parsedLimit = $derived(parseLimitInput(limitDraft));
+  const parsedCooldown = $derived(parseCooldownInput(cooldownDraft));
+  const dirtyLimit = $derived(parsedLimit !== null && parsedLimit !== limit.limit);
+  const dirtyCooldown = $derived(parsedCooldown !== null && parsedCooldown !== cooldownMs);
+  const dirty = $derived(dirtyLimit || dirtyCooldown);
 
-  // Clear the "Saved" hint + any error as soon as the user edits the field.
+  // Clear the "Saved" hint + any error as soon as the user edits either field.
   function onInput(): void {
     justSaved = false;
     error = null;
   }
 
-  async function handleSave(): Promise<void> {
-    if (parsed === null || parsed === limit.limit) return;
+  // "Set" saves whichever field is dirty: the limit first (PUT
+  // /concurrency/limits/:id), then the cooldown (PUT /concurrency/cooldown/:id).
+  // Stops + surfaces an inline error on the first failure.
+  async function handleSet(): Promise<void> {
+    if (!dirty || saving || removing) return;
     saving = true;
     error = null;
-    const result = await save(limit.providerId, parsed);
-    saving = false;
-    if (result.ok) {
-      // Reflect the echoed limit back into the field immediately (the prop will
-      // also re-assert it via the seed effect above once the parent reloads).
-      draft = String(result.limit);
-      lastSeed = draft;
+    try {
+      if (dirtyLimit && parsedLimit !== null) {
+        const r = await save(limit.providerId, parsedLimit);
+        if (!r.ok) {
+          error = r.error;
+          return;
+        }
+        // Reflect the echoed limit back immediately (the prop re-asserts it via
+        // the seed effect once the parent reloads).
+        limitDraft = String(r.limit);
+        lastLimitSeed = limitDraft;
+      }
+      if (dirtyCooldown && parsedCooldown !== null) {
+        const r = await saveCooldown(limit.providerId, parsedCooldown);
+        if (!r.ok) {
+          error = r.error;
+          return;
+        }
+        cooldownDraft = String(r.cooldownMs);
+        lastCooldownSeed = cooldownDraft;
+      }
       justSaved = true;
-    } else {
-      error = result.error;
+    } finally {
+      saving = false;
     }
   }
 
@@ -74,27 +111,40 @@
 </script>
 
 <div class="flex flex-col gap-1 rounded-box bg-base-200 p-2 text-sm">
-  <div class="flex items-center gap-2">
-    <span class="flex-1 truncate font-medium font-mono" title={limit.providerId}>{limit.providerId}</span>
+  <div class="flex flex-wrap items-center gap-2">
+    <span class="min-w-0 flex-1 truncate font-medium font-mono" title={limit.providerId}
+      >{limit.providerId}</span
+    >
     <input
       type="text"
       inputmode="numeric"
       class="input input-bordered input-xs w-20 font-mono"
       aria-label={`Concurrency limit for ${limit.providerId}`}
-      bind:value={draft}
+      bind:value={limitDraft}
       oninput={onInput}
       disabled={saving || removing}
     />
+    <input
+      type="text"
+      inputmode="numeric"
+      class="input input-bordered input-xs w-24 font-mono"
+      aria-label={`Release cooldown (ms) for ${limit.providerId}`}
+      bind:value={cooldownDraft}
+      oninput={onInput}
+      disabled={saving || removing}
+    />
+    <span class="text-[10px] opacity-50">ms</span>
     <button
       type="button"
       class="btn btn-primary btn-xs"
+      aria-label={`Set concurrency for ${limit.providerId}`}
       disabled={!dirty || saving || removing}
-      onclick={handleSave}
+      onclick={handleSet}
     >
       {#if saving}
         <span class="loading loading-spinner loading-xs"></span>
       {:else}
-        Save
+        Set
       {/if}
     </button>
     <button

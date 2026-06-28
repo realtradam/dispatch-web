@@ -52,7 +52,6 @@ export {
   viewConcurrencyStatuses,
 } from "./logic/view-model";
 export { default as AutoReduceBanner } from "./ui/AutoReduceBanner.svelte";
-export { default as ConcurrencyCooldownRow } from "./ui/ConcurrencyCooldownRow.svelte";
 export { default as ConcurrencyLimitRow } from "./ui/ConcurrencyLimitRow.svelte";
 export { default as ConcurrencyView } from "./ui/ConcurrencyView.svelte";
 
