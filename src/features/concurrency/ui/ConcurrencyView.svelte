@@ -363,7 +363,9 @@
          ✕ cancels the draft. -->
     {#if addOpen}
       <div class="flex flex-col gap-1 rounded-box bg-base-200 p-2 text-sm">
-        <div class="flex flex-wrap items-center gap-2">
+        <!-- All on one line — nowrap so the buttons never wrap (the provider
+             dropdown shrinks via flex-1 + min-w-0). -->
+        <div class="flex flex-nowrap items-center gap-2">
           <select
             class="select select-bordered select-xs min-w-0 flex-1 font-mono"
             aria-label="Provider"
