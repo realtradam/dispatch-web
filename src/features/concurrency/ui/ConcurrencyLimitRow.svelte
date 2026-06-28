@@ -129,15 +129,16 @@
 
 <div class="flex flex-col gap-1 rounded-box bg-base-200 p-2 text-sm">
   <!-- Line 1: provider + limit + cooldown + Set + ✕ (all on one line — nowrap so
-       the buttons never wrap; the provider shrinks via flex-1 + min-w-0). -->
-  <div class="flex flex-nowrap items-center gap-2">
+       the buttons never wrap; tight gap + narrow inputs keep the provider name
+       visible; the provider shrinks via flex-1 + min-w-0). -->
+  <div class="flex flex-nowrap items-center gap-1">
     <span class="min-w-0 flex-1 truncate font-medium font-mono" title={limit.providerId}
       >{limit.providerId}</span
     >
     <input
       type="text"
       inputmode="numeric"
-      class="input input-bordered input-xs w-14 min-w-0 font-mono"
+      class="input input-bordered input-xs w-12 min-w-0 font-mono"
       aria-label={`Concurrency limit for ${limit.providerId}`}
       bind:value={limitDraft}
       oninput={onInput}
@@ -146,7 +147,7 @@
     <input
       type="text"
       inputmode="numeric"
-      class="input input-bordered input-xs w-20 min-w-0 font-mono"
+      class="input input-bordered input-xs w-14 min-w-0 font-mono"
       aria-label={`Release cooldown (ms) for ${limit.providerId}`}
       bind:value={cooldownDraft}
       oninput={onInput}
