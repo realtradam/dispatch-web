@@ -25,6 +25,8 @@ import type {
  * - `PUT /workspaces/:id/title` → rename
  * - `PUT /workspaces/:id/default-cwd` → set/clear default cwd
  * - `PUT /workspaces/:id/default-computer` → set/clear default computer (SSH handoff #2)
+ * - `PUT /workspaces/:id/star` (create-on-miss) → star (concurrency priority)
+ * - `DELETE /workspaces/:id/star` (create-on-miss) → unstar
  * - `DELETE /workspaces/:id` (409 for "default") → delete
  */
 export type WorkspaceResult<T> =
@@ -38,6 +40,10 @@ export interface WorkspaceHttp {
   setTitle(id: string, title: string): Promise<WorkspaceResult<Workspace>>;
   setDefaultCwd(id: string, defaultCwd: string | null): Promise<WorkspaceResult<Workspace>>;
   setDefaultComputer(id: string, computerId: string | null): Promise<WorkspaceResult<Workspace>>;
+  /** Star a workspace (concurrency priority). Create-on-miss; no body. */
+  star(id: string): Promise<WorkspaceResult<Workspace>>;
+  /** Unstar a workspace. Create-on-miss; no body. */
+  unstar(id: string): Promise<WorkspaceResult<Workspace>>;
   delete(id: string): Promise<WorkspaceResult<{ closedCount: number }>>;
 }
 
@@ -138,6 +144,30 @@ export function createWorkspaceHttp(httpBase: string, fetchImpl: typeof fetch): 
           ok: false,
           error: err instanceof Error ? err.message : "Set default computer failed",
         };
+      }
+    },
+
+    async star(id): Promise<WorkspaceResult<Workspace>> {
+      try {
+        const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(id)}/star`, {
+          method: "PUT",
+        });
+        if (!res.ok) return { ok: false, error: await errText(res) };
+        return { ok: true, value: (await res.json()) as WorkspaceResponse };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : "Star failed" };
+      }
+    },
+
+    async unstar(id): Promise<WorkspaceResult<Workspace>> {
+      try {
+        const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(id)}/star`, {
+          method: "DELETE",
+        });
+        if (!res.ok) return { ok: false, error: await errText(res) };
+        return { ok: true, value: (await res.json()) as WorkspaceResponse };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : "Unstar failed" };
       }
     },
 
