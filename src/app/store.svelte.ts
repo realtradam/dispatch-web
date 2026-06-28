@@ -351,6 +351,16 @@ export interface AppStore {
    */
   conversationStatus(conversationId: string): ConversationStatus | undefined;
   /**
+   * Whether at least one conversation in the given workspace is currently
+   * active or queued (generating / waiting for a concurrency slot) — drives
+   * the loading-dots indicator on workspace cards. Backed by a once-derived
+   * `activeWorkspaces` set (the open-tab set × the backend lifecycle statuses)
+   * so this is an O(1) lookup, not a per-card scan of the full tab list.
+   * Reactive: the set is a `$derived`, so a Svelte template expression calling
+   * this re-runs when the tab set or status map changes.
+   */
+  workspaceHasActiveConversations(workspaceId: string): boolean;
+  /**
    * Persist + live-apply a new chat limit: writes `dispatch.chatLimit` to
    * localStorage and propagates to every live chat store (trim if lower,
    * deferred via the unload gate while a reader is scrolled up; no-op if
@@ -966,6 +976,22 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // fetched on connect). Keyed by conversationId.
   let conversationStatuses = $state<Map<string, ConversationStatus>>(new Map());
 
+  // The set of workspaces with ≥1 active/queued conversation, derived ONCE
+  // (not recomputed per card). Every active/queued conversation has an open
+  // tab stamped with its workspace, so the tabs are the conversation→workspace
+  // map; cross-reference with the lifecycle statuses. `$derived` recomputes
+  // lazily when the tab set or status map changes, so each
+  // `workspaceHasActiveConversations` call is an O(1) lookup instead of a scan
+  // of the full tab list per card.
+  const activeWorkspaces = $derived.by(() => {
+    const out = new Set<string>();
+    for (const tab of tabsStore.tabs) {
+      const status = conversationStatuses.get(tab.conversationId);
+      if (status === "active" || status === "queued") out.add(tab.workspaceId);
+    }
+    return out;
+  });
+
   /**
    * Fetch `GET /conversations?status=active,idle` on connect to restore the
    * tab bar across devices. Merges: opens tabs for conversations not already
@@ -1254,6 +1280,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     conversationStatus(conversationId: string): ConversationStatus | undefined {
       return conversationStatuses.get(conversationId);
+    },
+    workspaceHasActiveConversations(workspaceId: string): boolean {
+      // O(1) lookup into the once-derived `activeWorkspaces` set; false when the
+      // workspace has no active/queued conversation (or none at all).
+      return activeWorkspaces.has(workspaceId);
     },
     get currentConversationId(): string {
       return workspaceConversationId();

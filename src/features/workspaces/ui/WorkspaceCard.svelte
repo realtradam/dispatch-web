@@ -11,13 +11,26 @@
     store,
     onNavigate,
     computers,
+    hasActive,
   }: {
     ws: WorkspaceEntry;
     store: WorkspaceStore;
     onNavigate: (path: string) => void;
     /** Discovered computers (`GET /computers`), for the default-computer dropdown. */
     computers: readonly ComputerEntry[];
+    /**
+     * Optional port: returns whether the workspace has at least one active
+     * (generating / queued) conversation — drives a loading-dots indicator on
+     * the card. Wired by the composition root to the app store's
+     * `workspaceHasActiveConversations`. Absent → no indicator (e.g. tests).
+     */
+    hasActive?: (workspaceId: string) => boolean;
   } = $props();
+
+  // Whether at least one conversation in this workspace is currently active
+  // (generating). Reactive: the composition-root port reads the app store's
+  // reactive tab set + lifecycle statuses, so this re-derives on change.
+  const active = $derived(hasActive?.(ws.id) ?? false);
 
   // ── Title: double-click to rename inline ──────────────────────────────────
   let editingTitle = $state(false);
@@ -120,6 +133,13 @@
         class="flex-1 cursor-default truncate font-semibold"
         title="Double-click to rename"
         ondblclick={startEditTitle}>{ws.title}</span
+      >
+    {/if}
+    {#if active}
+      <span
+        class="loading loading-dots loading-xs shrink-0 text-primary"
+        aria-label="Workspace has active conversations"
+        title="A conversation in this workspace is generating"></span
       >
     {/if}
     <span class="font-mono text-xs opacity-50">/{ws.id}</span>

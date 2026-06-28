@@ -135,4 +135,63 @@ describe("WorkspaceCard", () => {
     expect(onNavigate).toHaveBeenCalledTimes(1);
     expect(onNavigate).toHaveBeenCalledWith("/my-ws");
   });
+
+  // ── Active indicator (loading dots) ──────────────────────────────────────
+
+  it("shows no loading-dots when no hasActive port is given", () => {
+    const store = fakeStore() as unknown as WorkspaceStore;
+    const { container } = render(WorkspaceCard, {
+      props: { ws: fakeEntry(), store, onNavigate: vi.fn(), computers: [] },
+    });
+    expect(container.querySelector(".loading-dots")).toBeNull();
+  });
+
+  it("shows no loading-dots when hasActive returns false", () => {
+    const store = fakeStore() as unknown as WorkspaceStore;
+    const { container } = render(WorkspaceCard, {
+      props: {
+        ws: fakeEntry(),
+        store,
+        onNavigate: vi.fn(),
+        computers: [],
+        hasActive: () => false,
+      },
+    });
+    expect(container.querySelector(".loading-dots")).toBeNull();
+  });
+
+  it("shows loading-dots when hasActive returns true", () => {
+    const store = fakeStore() as unknown as WorkspaceStore;
+    const { container } = render(WorkspaceCard, {
+      props: {
+        ws: fakeEntry(),
+        store,
+        onNavigate: vi.fn(),
+        computers: [],
+        hasActive: () => true,
+      },
+    });
+    const dots = container.querySelector(".loading-dots");
+    expect(dots).not.toBeNull();
+    // Accessible label ties the indicator to the workspace-active concept.
+    expect(dots?.getAttribute("aria-label")).toBe("Workspace has active conversations");
+  });
+
+  it("forwards the workspace id to hasActive", () => {
+    const store = fakeStore() as unknown as WorkspaceStore;
+    const seen: string[] = [];
+    render(WorkspaceCard, {
+      props: {
+        ws: fakeEntry({ id: "proj-x" }),
+        store,
+        onNavigate: vi.fn(),
+        computers: [],
+        hasActive: (id: string) => {
+          seen.push(id);
+          return false;
+        },
+      },
+    });
+    expect(seen).toEqual(["proj-x"]);
+  });
 });
