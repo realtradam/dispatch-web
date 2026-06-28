@@ -6,10 +6,10 @@
   const data = $derived(parseTodoPayload(payload));
 </script>
 
-<!-- Fixed at 60% of the viewport height so the region is consistent whether the
+<!-- Fixed at 30% of the viewport height so the region is consistent whether the
      list is empty or overflowing — it always reserves the space and scrolls
      internally (mirrors the tabs view). -->
-<ul class="flex h-[60vh] flex-col gap-1 overflow-y-auto pr-1">
+<ul class="flex h-[30vh] flex-col gap-1 overflow-y-auto pr-1">
   {#if data !== null && data.todos.length > 0}
     {#each data.todos as todo, i (i)}
       <li class="flex items-start gap-2 rounded-box bg-base-200 px-3 py-2 text-sm">
