@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { ImageInput, ReasoningEffort } from "@dispatch/transport-contract";
+	import type { ImageInput } from "@dispatch/transport-contract";
 	import type { InvokeMessage } from "@dispatch/ui-contract";
 	import { tick } from "svelte";
 	import Table from "../components/Table.svelte";
@@ -17,8 +17,9 @@
 		ReasoningEffortSelector,
 		type CompactNowResult,
 		type ComposerStatus,
-		type ReasoningEffortSaveResult,
 		type SaveCompactPercentResult,
+		type ThinkingSelection,
+		type ThinkingSelectionSaveResult,
 	} from "../features/chat";
 	import { manifest as conversationCacheManifest } from "../features/conversation-cache";
 	import { manifest as markdownManifest } from "../features/markdown";
@@ -317,14 +318,35 @@
 			: { ok: false, error: result.error };
 	}
 
-	// Adapt the store's reasoning-effort result to the chat feature's port.
-	async function saveReasoningEffort(
-		level: ReasoningEffort,
-	): Promise<ReasoningEffortSaveResult | null> {
-		const result = await store.setReasoningEffort(level);
+	// Adapt the store's reasoning-effort + thinking results to the chat
+	// feature's combined selector port. The selector sends ONE selection ("off"
+	// or a level); the adapter fans it out to the right per-axis PUT(s). "off" is
+	// a SEPARATE signal from the effort level: it persists `thinking: false`
+	// (the umans route maps that to `reasoning_effort: "none"`), leaving the
+	// effort level untouched so an off→on toggle restores it. A level ensures
+	// thinking is ON (the level is meaningless while thinking is off) then sets
+	// the effort level.
+	async function saveThinkingSelection(
+		selection: ThinkingSelection,
+	): Promise<ThinkingSelectionSaveResult | null> {
+		if (selection === "off") {
+			const result = await store.setThinking(false);
+			if (result === null) return null;
+			return result.ok
+				? { ok: true, selection: "off" }
+				: { ok: false, error: result.error };
+		}
+		// A level: enable thinking first if it is currently off, then set the level.
+		if (store.thinking === false) {
+			const on = await store.setThinking(true);
+			if (on !== null && !on.ok) {
+				return { ok: false, error: on.error };
+			}
+		}
+		const result = await store.setReasoningEffort(selection);
 		if (result === null) return null;
 		return result.ok
-			? { ok: true, reasoningEffort: result.reasoningEffort }
+			? { ok: true, selection: result.reasoningEffort }
 			: { ok: false, error: result.error };
 	}
 
@@ -728,7 +750,11 @@
 			     re-mount per conversation — incl. switching between drafts — and can't
 			     bleed across tabs. Editable for a draft too (cwd + effort apply from turn 1). -->
 			{#key store.currentConversationId}
-				<ReasoningEffortSelector persisted={store.reasoningEffort} save={saveReasoningEffort} />
+				<ReasoningEffortSelector
+					persistedEffort={store.reasoningEffort}
+					persistedThinking={store.thinking}
+					save={saveThinkingSelection}
+				/>
 				<CwdField cwd={store.cwd} canEdit={true} save={saveCwd} />
 				<ComputerField
 					computerId={store.computerId}

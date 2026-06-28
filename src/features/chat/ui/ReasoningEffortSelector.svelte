@@ -1,34 +1,45 @@
 <script lang="ts">
   import type { ReasoningEffort } from "@dispatch/transport-contract";
   import {
-    effectiveEffort,
-    effortOptions,
-    isReasoningEffort,
-    type SaveReasoningEffort,
+    effectiveSelection,
+    isThinkingSelection,
+    selectionOptions,
+    type SaveThinkingSelection,
+    type ThinkingSelection,
   } from "../reasoning-effort";
 
   let {
-    persisted,
+    persistedEffort,
+    persistedThinking,
     save,
   }: {
-    /** The conversation's persisted level, or null when never set (default applies). */
-    persisted: ReasoningEffort | null;
-    save: SaveReasoningEffort;
+    /** The conversation's persisted effort level, or null when never set (default applies). */
+    persistedEffort: ReasoningEffort | null;
+    /**
+     * The conversation's persisted thinking flag, or null when never set
+     * (thinking ON — the default). `false` ⇒ thinking disabled (the separate
+     * "off" axis); the effort level is preserved across an off→on toggle.
+     */
+    persistedThinking: boolean | null;
+    /** Persist a thinking selection (off or a level). */
+    save: SaveThinkingSelection;
   } = $props();
 
-  const options = effortOptions();
+  const options = selectionOptions();
 
-  // The user's in-flight choice; null = mirror the (async-loaded) persisted prop.
-  // Re-mounted per conversation, so there is no cross-tab bleed.
-  let chosen = $state<ReasoningEffort | null>(null);
+  // The user's in-flight choice; null = mirror the (async-loaded) persisted
+  // selection. Re-mounted per conversation, so there is no cross-tab bleed.
+  let chosen = $state<ThinkingSelection | null>(null);
   let saving = $state(false);
   let error = $state<string | null>(null);
   let justSaved = $state(false);
 
-  const selected = $derived(chosen ?? effectiveEffort(persisted));
+  const selected = $derived(
+    chosen ?? effectiveSelection(persistedEffort, persistedThinking),
+  );
 
   async function handleChange(value: string) {
-    if (!isReasoningEffort(value) || saving) return;
+    if (!isThinkingSelection(value) || saving) return;
     chosen = value;
     saving = true;
     error = null;
@@ -40,7 +51,7 @@
       justSaved = true;
     } else {
       error = result.error;
-      chosen = null; // revert to the persisted value
+      chosen = null; // revert to the persisted selection
     }
   }
 </script>
@@ -69,7 +80,7 @@
     <p class="text-xs text-success">Saved — applies from the next turn.</p>
   {:else}
     <p class="text-xs opacity-50">
-      How long the model thinks before answering. Changing it can re-prefill the prompt cache once.
+      How long the model thinks before answering. “Off” disables thinking entirely. Changing it can re-prefill the prompt cache once.
     </p>
   {/if}
 </div>
