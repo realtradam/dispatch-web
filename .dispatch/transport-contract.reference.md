@@ -8,6 +8,21 @@
 > **Orchestrator:** SNAPSHOT of `transport-contract@0.23.0` (MCP status + computers + provider concurrency). Regenerate whenever
 > it changes.
 >
+> **2026-06-27 update (concurrency-fixes — ADDITIVE, NO version bump):** the provider concurrency surface gains
+> (a) a configurable + persisted per-provider release COOLDOWN, and (b) adaptive headroom. `ConcurrencyStatusEntry`
+> gains FOUR new fields: `cooldownMs: number` (REQUIRED — per-slot release cooldown in ms, default 350; a recycled slot is
+> held this long before the next waiter is admitted), `autoReduced: boolean` (REQUIRED — true when the limit was auto-reduced
+> by 1 after a 429, one-way + persisted; the FE renders a visible banner), `autoReducedFrom?: number` (present only when
+> `autoReduced===true` — the original limit before reduction), and `notice?: string` (present only when `autoReduced===true` —
+> a human-readable banner message). The banner is DISMISSIBLE / persists while `autoReduced===true`; it clears when the user
+> restores the limit via `PUT /concurrency/limits/:providerId` (a manual PUT clears `autoReduced` server-side). NEW cooldown
+> endpoints: `GET /concurrency/cooldown/:providerId` → `ConcurrencyCooldownResponse` (`{ providerId, cooldownMs }`) — 404 when
+> the provider has no concurrency config at all (no limit, no cooldown), 503 when the extension isn't loaded;
+> `PUT /concurrency/cooldown/:providerId` ← `SetConcurrencyCooldownRequest` (`{ cooldownMs }` — must be a non-negative integer,
+> 0 = no cooldown / instant re-admission) → `ConcurrencyCooldownResponse` — 400 on an invalid body, 503 when not loaded.
+> Persists + applies immediately to subsequently recycled slots. Also (backend-only, no FE surface): a usage gate polls upstream
+> `concurrent_sessions` before admitting a queued agent. See `backend-handoff.md` §2j-update-3.
+>
 > **2026-06-26 delta (provider concurrency — `transport-contract@0.23.0` bump):** adds the
 > per-provider concurrency-limits API types: `ConcurrencyLimitsResponse` (`GET /concurrency/limits`),
 > `SetConcurrencyLimitRequest` + `ConcurrencyLimitResponse` (`GET`/`PUT /concurrency/limits/:providerId`),
@@ -1062,6 +1077,17 @@ export interface ConcurrencyLimitResponse {
  * - `queued`: how many agents are waiting for a slot.
  * - `paused`: whether the queue is paused due to a 429 backoff.
  * - `pausedUntil`: when the pause expires (epoch-ms), present only when paused.
+ * - `cooldownMs`: the per-slot release cooldown (ms). A recycled slot is held
+ *   this long before the next waiter is admitted — covers the upstream
+ *   provider's accounting lag. Configurable + persisted per provider.
+ * - `autoReduced`: whether the limit was auto-reduced by 1 after a 429
+ *   (adaptive headroom, one-way, persisted). The user restores the limit
+ *   manually via `PUT /concurrency/limits/:providerId`, which clears the flag.
+ *   When `true`, the frontend renders a visible notice/banner.
+ * - `autoReducedFrom`: the original limit before auto-reduction (present only
+ *   when `autoReduced` is true).
+ * - `notice`: a human-readable notice string for the frontend to render as a
+ *   banner when the limit was auto-reduced (present only when `autoReduced`).
  */
 export interface ConcurrencyStatusEntry {
 	readonly providerId: string;
@@ -1070,6 +1096,10 @@ export interface ConcurrencyStatusEntry {
 	readonly queued: number;
 	readonly paused: boolean;
 	readonly pausedUntil?: number;
+	readonly cooldownMs: number;
+	readonly autoReduced: boolean;
+	readonly autoReducedFrom?: number;
+	readonly notice?: string;
 }
 /**
  * Response of `GET /concurrency/status` — live status for every provider with a
@@ -1077,6 +1107,29 @@ export interface ConcurrencyStatusEntry {
  */
 export interface ConcurrencyStatusResponse {
 	readonly providers: readonly ConcurrencyStatusEntry[];
+}
+
+// ─── Provider concurrency cooldown ────────────────────────────────────────────
+
+/**
+ * Response of `GET /concurrency/cooldown/:providerId` — the per-slot release
+ * cooldown (ms) for a provider. A recycled slot is held this long before the
+ * next waiter is admitted, covering the upstream provider's accounting lag.
+ * When no cooldown was explicitly set, the server default (350ms) is returned.
+ */
+export interface ConcurrencyCooldownResponse {
+	readonly providerId: string;
+	readonly cooldownMs: number;
+}
+
+/**
+ * Body of `PUT /concurrency/cooldown/:providerId` — set the release cooldown
+ * (ms) for a provider. `cooldownMs` must be a non-negative integer (0 = no
+ * cooldown, instant re-admission). The value is persisted and applied to
+ * subsequently recycled slots.
+ */
+export interface SetConcurrencyCooldownRequest {
+	readonly cooldownMs: number;
 }
 ```
 
