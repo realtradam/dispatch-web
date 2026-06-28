@@ -351,8 +351,14 @@ describe("computeContextUsage", () => {
     expect(u.percent).toBeCloseTo(3.4102, 4);
   });
 
-  it("treats unknown contextSize as current 0", () => {
+  it("treats unknown contextSize as current null (never 0)", () => {
     const u = computeContextUsage(undefined, 1_000_000);
+    expect(u.current).toBeNull();
+    expect(u.percent).toBeNull();
+  });
+
+  it("an explicit 0 context size is a real reported value (current 0)", () => {
+    const u = computeContextUsage(0, 1_000_000);
     expect(u.current).toBe(0);
     expect(u.percent).toBe(0);
   });

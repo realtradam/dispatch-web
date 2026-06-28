@@ -68,6 +68,51 @@ function liveTurnToMetrics(lt: LiveTurn): TurnMetrics {
   return base;
 }
 
+/**
+ * A step's contribution to the live context size: `inputTokens + outputTokens`,
+ * or `undefined` when the step has no usage yet OR its counters are not safe to
+ * sum (non-finite / negative — defensive: a corrupt provider report must never
+ * reach the status bar as NaN/Infinity). Cache tokens are deliberately NOT
+ * included: `cacheReadTokens` / `cacheWriteTokens` are a SUBSET of
+ * `inputTokens`, so adding them would double-count.
+ */
+function stepContextSize(usage: Usage | undefined): number | undefined {
+  if (usage === undefined) return undefined;
+  const { inputTokens, outputTokens } = usage;
+  if (!Number.isFinite(inputTokens) || !Number.isFinite(outputTokens)) return undefined;
+  if (inputTokens < 0 || outputTokens < 0) return undefined;
+  return inputTokens + outputTokens;
+}
+
+/**
+ * The context size an IN-FLIGHT (not-done) turn occupies right now — for
+ * progressive display DURING a turn (before it seals), so the indicator updates
+ * after each step instead of waiting for `done`.
+ *
+ * CONTRACT: only call this on a turn whose `done` event has NOT arrived (the
+ * caller, `selectCurrentContextSize`, reaches it solely for entries with
+ * `total === null`, i.e. `lt.done === false`). Finalized turns use their
+ * authoritative `contextSize` instead; `doneContextSize` is read on the
+ * `total` path, never here.
+ *
+ * Returns the most recent step WITH USABLE USAGE's `inputTokens + outputTokens`
+ * (scanning newest → oldest by first-seen step order): each step's input
+ * already includes all prior context (the prompt is re-prefilled every step), so
+ * the last step's input+output is the true occupancy — the same definition
+ * `TurnDoneEvent.contextSize` stamps at turn end. A just-reported step's usage
+ * wins immediately, even mid-stream. Steps with no usage or unsafe usage are
+ * skipped, falling back to the next older usable step. `undefined` when no step
+ * has reported usable usage yet.
+ */
+function liveTurnContextSize(lt: LiveTurn): number | undefined {
+  for (let i = lt.stepOrder.length - 1; i >= 0; i--) {
+    const step = lt.stepMap.get(lt.stepOrder[i] ?? "");
+    const ctx = stepContextSize(step?.usage);
+    if (ctx !== undefined) return ctx;
+  }
+  return undefined;
+}
+
 function ensureLiveTurn(state: MetricsState, turnId: string): [MetricsState, LiveTurn] {
   const existing = state.live.get(turnId);
   if (existing !== undefined) return [state, existing];
@@ -180,6 +225,12 @@ export function foldMetricsEvent(state: MetricsState, event: AgentEvent): Metric
 /**
  * Store durable (sealed) metrics from the backend. These win over live data
  * for any shared `turnId`.
+ *
+ * Once durable (authoritative) data covers a turn, its live (in-memory) copy
+ * is REDUNDANT and is pruned from `state.live` / `liveOrder` so the live map
+ * doesn't grow unbounded over a long conversation. There is no display gap:
+ * the durable entry replaces the live one atomically in the same fold, and
+ * `selectOrderedTurnMetrics` / `selectCurrentContextSize` read durable for it.
  */
 export function applyDurableMetrics(
   state: MetricsState,
@@ -187,14 +238,27 @@ export function applyDurableMetrics(
 ): MetricsState {
   const newDurable = new Map(state.durable);
   const newDurableOrder = [...state.durableOrder];
+  const prunedIds = new Set<string>();
   for (const turn of turns) {
     if (!newDurable.has(turn.turnId)) {
       newDurableOrder.push(turn.turnId);
     }
     newDurable.set(turn.turnId, turn);
+    if (state.live.has(turn.turnId)) prunedIds.add(turn.turnId);
   }
+
+  if (prunedIds.size === 0) {
+    return { ...state, durable: newDurable, durableOrder: newDurableOrder };
+  }
+
+  const newLive = new Map(state.live);
+  for (const id of prunedIds) newLive.delete(id);
+  const newLiveOrder = state.liveOrder.filter((id) => !prunedIds.has(id));
+
   return {
     ...state,
+    live: newLive,
+    liveOrder: newLiveOrder,
     durable: newDurable,
     durableOrder: newDurableOrder,
   };
@@ -247,17 +311,35 @@ export function selectOrderedTurnMetrics(state: MetricsState): readonly TurnMetr
  * Select the conversation's CURRENT context size — the tokens it occupies right
  * now. Per the wire contract a client reads the LATEST turn's `contextSize`; we
  * scan the merged ordered turns NEWEST → OLDEST and return the first DEFINED
- * `contextSize` (a finalized turn whose provider reported per-step usage).
+ * value.
  *
- * Returns `undefined` ("unknown") when no finalized turn carries a context size —
- * the caller renders a placeholder, NEVER `0`. Durable (sealed) data wins over
+ * For a FINALIZED turn (`done` event or durable data) we use its authoritative
+ * `contextSize`. For an IN-FLIGHT (not-done) turn we compute it PROGRESSIVELY
+ * from the most recent step WITH USAGE — its `inputTokens + outputTokens` is the
+ * current occupancy (mirroring `TurnDoneEvent.contextSize`'s definition) — so
+ * the indicator updates after each step completes instead of waiting for the
+ * turn to seal. An in-flight turn with no step usage yet is skipped, falling
+ * back to the next older finalized turn.
+ *
+ * Returns `undefined` ("unknown") when no turn carries a context size — the
+ * caller renders a placeholder, NEVER `0`. Durable (sealed) data wins over
  * live for a shared `turnId` (it is the persisted, authoritative value).
  */
 export function selectCurrentContextSize(state: MetricsState): number | undefined {
   const ordered = selectOrderedTurnMetrics(state);
   for (let i = ordered.length - 1; i >= 0; i--) {
-    const total = ordered[i]?.total;
-    if (total?.contextSize !== undefined) return total.contextSize;
+    const entry = ordered[i];
+    if (entry === undefined) continue;
+    if (entry.total !== null) {
+      if (entry.total.contextSize !== undefined) return entry.total.contextSize;
+      continue;
+    }
+    // In-flight turn: progressive context size from the latest step with usage.
+    const lt = state.live.get(entry.turnId);
+    if (lt !== undefined) {
+      const live = liveTurnContextSize(lt);
+      if (live !== undefined) return live;
+    }
   }
   return undefined;
 }
