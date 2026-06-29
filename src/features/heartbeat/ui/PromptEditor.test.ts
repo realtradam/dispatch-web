@@ -29,6 +29,7 @@ function fakeSaveConfig(): {
     // Echo a config that reflects the persisted patch (so onSaved sync is realistic).
     const config = {
       enabled: false,
+      inactiveOnly: true,
       systemPrompt: patch.systemPrompt ?? "",
       taskPrompt: patch.taskPrompt ?? "",
       intervalMinutes: 30,
