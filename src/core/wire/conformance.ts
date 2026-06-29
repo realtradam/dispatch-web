@@ -116,6 +116,8 @@ export function assertWsClientMessageExhaustive(msg: WsClientMessage): string {
       return "chat.unsubscribe";
     case "chat.queue":
       return "chat.queue";
+    case "chat.queue.cancel":
+      return "chat.queue.cancel";
     default:
       return msg satisfies never;
   }
