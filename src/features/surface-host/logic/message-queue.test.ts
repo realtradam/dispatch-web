@@ -1,6 +1,10 @@
 import type { QueuedMessage } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
-import { parseMessageQueuePayload } from "./message-queue";
+import {
+  parseMessageQueuePayload,
+  reconcileCancelledIds,
+  selectVisibleMessages,
+} from "./message-queue";
 
 const msg = (id: string, text: string, queuedAt = 1_700_000_000_000): QueuedMessage => ({
   id,
@@ -44,5 +48,58 @@ describe("parseMessageQueuePayload", () => {
     ["entry with non-finite queuedAt", { messages: [msg("m1", "x", Number.NaN)] }],
   ])("returns null for invalid payload: %s", (_label, payload) => {
     expect(parseMessageQueuePayload(payload)).toBeNull();
+  });
+});
+
+describe("selectVisibleMessages", () => {
+  it("returns the snapshot unchanged when nothing is cancelled", () => {
+    const messages = [msg("m1", "a"), msg("m2", "b")];
+    expect(selectVisibleMessages(messages, new Set())).toBe(messages);
+  });
+
+  it("hides the optimistically-cancelled row", () => {
+    const messages = [msg("m1", "a"), msg("m2", "b"), msg("m3", "c")];
+    expect(selectVisibleMessages(messages, new Set(["m2"])).map((m) => m.id)).toEqual(["m1", "m3"]);
+  });
+
+  it("hides multiple cancelled rows", () => {
+    const messages = [msg("m1", "a"), msg("m2", "b"), msg("m3", "c")];
+    expect(selectVisibleMessages(messages, new Set(["m1", "m3"])).map((m) => m.id)).toEqual(["m2"]);
+  });
+
+  it("tolerates a cancelled id not present in the snapshot (no-op)", () => {
+    const messages = [msg("m1", "a")];
+    expect(selectVisibleMessages(messages, new Set(["ghost"])).map((m) => m.id)).toEqual(["m1"]);
+  });
+});
+
+describe("reconcileCancelledIds", () => {
+  it("returns an empty set when nothing was cancelled", () => {
+    const result = reconcileCancelledIds([msg("m1", "a")], new Set());
+    expect(result.size).toBe(0);
+  });
+
+  it("drops ids the surface confirmed gone (no longer queued)", () => {
+    // m1 still queued (cancel pending), m2 confirmed gone (left the snapshot).
+    const messages = [msg("m1", "a")];
+    const result = reconcileCancelledIds(messages, new Set(["m1", "m2"]));
+    expect([...result]).toEqual(["m1"]);
+  });
+
+  it("returns the SAME set identity when nothing changed (no spurious cycle)", () => {
+    const messages = [msg("m1", "a"), msg("m2", "b")];
+    const cancelled = new Set(["m1", "m2"]);
+    expect(reconcileCancelledIds(messages, cancelled)).toBe(cancelled);
+  });
+
+  it("returns an empty set when all cancels were confirmed", () => {
+    const messages = [msg("m1", "a")];
+    expect(reconcileCancelledIds(messages, new Set(["m2", "m3"])).size).toBe(0);
+  });
+
+  it("keeps a still-queued cancelled id (cancel still pending)", () => {
+    const messages = [msg("m1", "a"), msg("m2", "b")];
+    const result = reconcileCancelledIds(messages, new Set(["m2"]));
+    expect([...result]).toEqual(["m2"]);
   });
 });

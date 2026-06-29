@@ -1,4 +1,5 @@
 import type {
+  ChatQueueCancelMessage,
   ChatQueueMessage,
   ChatSendMessage,
   ConversationHistoryResponse,
@@ -6,12 +7,14 @@ import type {
 } from "@dispatch/transport-contract";
 
 /**
- * Injected transport port — sends chat messages to the server. Accepts both
- * `chat.send` (start a turn) and `chat.queue` (enqueue a steering message;
- * auto-starts a turn if idle).
+ * Injected transport port — sends chat messages to the server. Accepts
+ * `chat.send` (start a turn), `chat.queue` (enqueue a steering message;
+ * auto-starts a turn if idle), and `chat.queue.cancel` (remove a single queued
+ * message by id so it never runs — fire-and-forget, idempotent; the
+ * message-queue surface confirms the removal).
  */
 export interface ChatTransport {
-  send(msg: ChatSendMessage | ChatQueueMessage): void;
+  send(msg: ChatSendMessage | ChatQueueMessage | ChatQueueCancelMessage): void;
 }
 
 /**

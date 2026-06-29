@@ -318,6 +318,78 @@ describe("createChatStore", () => {
     });
   });
 
+  describe("cancelQueuedMessage (chat.queue.cancel)", () => {
+    it("posts a chat.queue.cancel with conversationId + messageId", () => {
+      const transport = createFakeTransport();
+      const historySync = createFakeHistorySync();
+      const metricsSync = createFakeMetricsSync();
+      const cache = createFakeCache();
+      const store = createChatStore({
+        conversationId: CONV_ID,
+        transport: transport.impl,
+        historySync: historySync.impl,
+        metricsSync: metricsSync.impl,
+        cache: cache.impl,
+      });
+
+      store.cancelQueuedMessage("msg-42");
+
+      expect(transport.sent).toHaveLength(0); // chat.send stays empty
+      expect(transport.sentQueue).toHaveLength(0); // chat.queue stays empty
+      expect(transport.sentCancels).toHaveLength(1);
+      expect(transport.sentCancels[0]?.type).toBe("chat.queue.cancel");
+      expect(transport.sentCancels[0]?.conversationId).toBe(CONV_ID);
+      expect(transport.sentCancels[0]?.messageId).toBe("msg-42");
+
+      store.dispose();
+    });
+
+    it("does NOT touch the transcript (a cancelled message never runs)", () => {
+      const transport = createFakeTransport();
+      const historySync = createFakeHistorySync();
+      const metricsSync = createFakeMetricsSync();
+      const cache = createFakeCache();
+      const store = createChatStore({
+        conversationId: CONV_ID,
+        transport: transport.impl,
+        historySync: historySync.impl,
+        metricsSync: metricsSync.impl,
+        cache: cache.impl,
+      });
+
+      store.cancelQueuedMessage("msg-42");
+
+      expect(store.chunks).toHaveLength(0); // no transcript echo / change
+      expect(store.error).toBeNull();
+
+      store.dispose();
+    });
+
+    it("sends for any messageId (cancel is idempotent server-side, no FE guard)", () => {
+      const transport = createFakeTransport();
+      const historySync = createFakeHistorySync();
+      const metricsSync = createFakeMetricsSync();
+      const cache = createFakeCache();
+      const store = createChatStore({
+        conversationId: CONV_ID,
+        transport: transport.impl,
+        historySync: historySync.impl,
+        metricsSync: metricsSync.impl,
+        cache: cache.impl,
+      });
+
+      // The server no-ops an already-drained / unknown id; the FE fires-and-
+      // forgetgets, so even a repeat cancel is forwarded.
+      store.cancelQueuedMessage("msg-42");
+      store.cancelQueuedMessage("msg-42");
+
+      expect(transport.sentCancels).toHaveLength(2);
+      expect(transport.sentCancels[1]?.messageId).toBe("msg-42");
+
+      store.dispose();
+    });
+  });
+
   it("chat.error sets error", () => {
     const transport = createFakeTransport();
     const historySync = createFakeHistorySync();

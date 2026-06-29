@@ -212,6 +212,7 @@ describe("classifies every WsClientMessage type", () => {
       { type: "chat.subscribe" as const, conversationId: "c1" },
       { type: "chat.unsubscribe" as const, conversationId: "c1" },
       { type: "chat.queue" as const, conversationId: "c1", text: "steer" },
+      { type: "chat.queue.cancel" as const, conversationId: "c1", messageId: "m1" },
     ];
     const labels = msgs.map(assertWsClientMessageExhaustive);
     expect(labels).toEqual([
@@ -222,6 +223,7 @@ describe("classifies every WsClientMessage type", () => {
       "chat.subscribe",
       "chat.unsubscribe",
       "chat.queue",
+      "chat.queue.cancel",
     ]);
   });
 });

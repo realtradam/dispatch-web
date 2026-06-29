@@ -11,7 +11,22 @@
   import TodoList from "./TodoList.svelte";
   import Toggle from "./Toggle.svelte";
 
-  let { spec, onInvoke }: { spec: SurfaceSpec; onInvoke: (msg: InvokeMessage) => void } = $props();
+  let {
+    spec,
+    onInvoke,
+    onCancelQueuedMessage,
+  }: {
+    spec: SurfaceSpec;
+    onInvoke: (msg: InvokeMessage) => void;
+    /**
+     * Cancel a queued message by id — threaded ONLY to the `message-queue`
+     * renderer. Optional + scoped: generic surfaces (which pass nothing) keep
+     * rendering a read-only queue list. Kept as a typed callback (never a
+     * stringly-typed bus); the renderer dispatch is on `rendererId` (a renderer
+     * KIND), never the surface id.
+     */
+    onCancelQueuedMessage?: (messageId: string) => void;
+  } = $props();
 
   const plan = $derived(planSurface(spec));
   // Consecutive stats render together as one aligned table; everything else is
@@ -40,7 +55,7 @@
       {#if group.field.rendererId === "table"}
         <SurfaceTable payload={group.field.payload} />
       {:else if group.field.rendererId === "message-queue"}
-        <MessageQueueList payload={group.field.payload} />
+        <MessageQueueList payload={group.field.payload} onCancel={onCancelQueuedMessage} />
       {:else if group.field.rendererId === "todo"}
         <TodoList payload={group.field.payload} />
       {/if}

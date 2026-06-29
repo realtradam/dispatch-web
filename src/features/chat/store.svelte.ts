@@ -1,6 +1,7 @@
 import type {
   ChatDeltaMessage,
   ChatErrorMessage,
+  ChatQueueCancelMessage,
   ChatQueueMessage,
   ChatSendMessage,
 } from "@dispatch/transport-contract";
@@ -131,6 +132,17 @@ export interface ChatStore {
    * transcript. `text` must be non-empty (the server 400/errors otherwise).
    */
   queueMessage(text: string): void;
+  /**
+   * Cancel (remove) a single queued steering message by id so it never runs
+   * (`chat.queue.cancel` WS op). Fire-and-forget + idempotent: success is
+   * confirmed by the `message-queue` SURFACE updating (the cancelled message
+   * leaves the snapshot); a cancel of an already-drained / unknown message is a
+   * silent server-side no-op. The caller optimistically hides the row; the
+   * surface update reconciles. `messageId` is the stable `QueuedMessage.id`
+   * the queue surface snapshot carries. No transcript change — a cancelled
+   * message is never delivered as steering.
+   */
+  cancelQueuedMessage(messageId: string): void;
   setModel(model: string): void;
   /**
    * Update the chat limit LIVE: re-normalizes, then adjusts the loaded window.
@@ -344,6 +356,21 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
         conversationId: deps.conversationId,
         text: trimmed,
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
+      };
+      deps.transport.send(msg);
+    },
+
+    cancelQueuedMessage(messageId: string): void {
+      // Fire-and-forget + idempotent (per the contract). The caller optimistically
+      // hides the row; the message-queue surface update reconciles. A cancel of
+      // an already-drained / unknown message is a silent server no-op, so there
+      // is no local-state change to make and nothing to roll back on a stray
+      // `chat.error` (which only fires for a malformed send — a client that
+      // sends the id it just rendered never hits it).
+      const msg: ChatQueueCancelMessage = {
+        type: "chat.queue.cancel",
+        conversationId: deps.conversationId,
+        messageId,
       };
       deps.transport.send(msg);
     },

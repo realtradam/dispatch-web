@@ -5,8 +5,19 @@
 > permission prompt). Your CODE still imports `@dispatch/transport-contract` normally — this file is for
 > READING only.
 >
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.23.0` (MCP status + computers + provider concurrency). Regenerate whenever
+> **Orchestrator:** SNAPSHOT of `transport-contract@0.24.0` (MCP status + computers + provider concurrency + cancel queued message). Regenerate whenever
 > it changes.
+>
+> **2026-06-29 update (cancel-queued-message — ADDITIVE, 0.23.0 → 0.24.0):** a per-message
+> **cancel** for the steering message queue ships. While a turn is GENERATING and a user
+> message is queued (awaiting steering delivery), the client can cancel a single queued
+> message by id so it never runs. New `WsClientMessage` member `ChatQueueCancelMessage`
+> (`{ type: "chat.queue.cancel"; conversationId; messageId }` — fire-and-forget, idempotent;
+> success confirmed by the `message-queue` surface updating, failure as `chat.error`). New
+> HTTP path `DELETE /conversations/:id/queue/:messageId` → `QueueCancelResponse`
+> (`{ conversationId; cancelled: boolean; queue }`). The cancel is scoped per conversation;
+> cancelling a drained/already-cancelled/unknown message is a silent no-op. `@dispatch/wire`
+> is unchanged (`QueuedMessage.id` is the cancel target).
 >
 > **2026-06-27 update (concurrency-fixes — ADDITIVE, NO version bump):** the provider concurrency surface gains
 > (a) a configurable + persisted per-provider release COOLDOWN, and (b) adaptive headroom. `ConcurrencyStatusEntry`
@@ -560,6 +571,27 @@ export interface QueueResponse {
 	readonly queue: readonly QueuedMessage[];
 }
 
+/**
+ * Response body for
+ * `DELETE /conversations/:id/queue/:messageId` — cancel (remove) a single
+ * queued steering message by id so it never runs.
+ *
+ * `cancelled` is `true` when a message with the given id was found in the
+ * conversation's queue and removed (it will never be delivered as steering nor
+ * carried into a new turn). `cancelled` is `false` when the message was not in
+ * the queue (already drained/delivered, never existed, unknown conversation)
+ * OR when the message-queue extension isn't loaded (degraded — feature off).
+ * `queue` is the post-cancel snapshot (empty when no queue extension is
+ * loaded). Idempotent — cancelling a message that is no longer queued returns
+ * `cancelled: false` with HTTP 200 (not an error), so a client may optimistically
+ * fire-and-forget a cancel and reconcile from the surface.
+ */
+export interface QueueCancelResponse {
+	readonly conversationId: string;
+	readonly cancelled: boolean;
+	readonly queue: readonly QueuedMessage[];
+}
+
 // ─── Per-conversation LSP status ──────────────────────────────────────────────
 
 /** The connection state of a single language server for a workspace. */
@@ -780,6 +812,24 @@ export interface ChatQueueMessage {
 }
 
 /**
+ * Client → server: cancel (remove) a SINGLE queued steering message by id so
+ * it never runs. The WebSocket counterpart of the HTTP
+ * `DELETE /conversations/:id/queue/:messageId` (`QueueCancelResponse`).
+ * Fire-and-forget: success is confirmed by the message-queue SURFACE updating
+ * (the cancelled message leaves the snapshot); a failure (missing/empty
+ * `conversationId` or `messageId`) arrives as a `chat.error`. Idempotent —
+ * cancelling a message that is no longer queued (already drained/delivered) is
+ * a silent no-op (no surface update, no error). `messageId` is the stable
+ * client-visible `QueuedMessage.id` (obtained from the queue surface snapshot
+ * or the enqueue response).
+ */
+export interface ChatQueueCancelMessage {
+	readonly type: "chat.queue.cancel";
+	readonly conversationId: string;
+	readonly messageId: string;
+}
+
+/**
  * Every client → server WS message: surface ops (`@dispatch/ui-contract`) + chat
  * ops. A server discriminates on `type`.
  */
@@ -788,7 +838,8 @@ export type WsClientMessage =
 	| ChatSendMessage
 	| ChatSubscribeMessage
 	| ChatUnsubscribeMessage
-	| ChatQueueMessage;
+	| ChatQueueMessage
+	| ChatQueueCancelMessage;
 
 /**
  * Every server → client WS message: surface ops (`@dispatch/ui-contract`) + chat
