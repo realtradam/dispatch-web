@@ -220,6 +220,7 @@ export function approximateNextRunEpoch(
  */
 export interface HeartbeatFormState {
   enabled: boolean;
+  inactiveOnly: boolean;
   systemPrompt: string;
   taskPrompt: string;
   intervalHours: number;
@@ -254,6 +255,7 @@ export function formFromConfig(config: HeartbeatConfig): HeartbeatFormState {
   const { hours, minutes } = splitInterval(config.intervalMinutes);
   return {
     enabled: config.enabled === true,
+    inactiveOnly: config.inactiveOnly !== false,
     systemPrompt: config.systemPrompt ?? "",
     taskPrompt: config.taskPrompt ?? "",
     intervalHours: hours,
@@ -268,6 +270,7 @@ export function emptyForm(): HeartbeatFormState {
   const { hours, minutes } = splitInterval(DEFAULT_INTERVAL_MINUTES);
   return {
     enabled: false,
+    inactiveOnly: true,
     systemPrompt: "",
     taskPrompt: "",
     intervalHours: hours,
@@ -295,6 +298,7 @@ export function normalizeInterval(value: unknown): number {
 export function patchFromForm(form: HeartbeatFormState): HeartbeatConfigPatch {
   return {
     enabled: form.enabled,
+    inactiveOnly: form.inactiveOnly,
     systemPrompt: form.systemPrompt,
     taskPrompt: form.taskPrompt,
     intervalMinutes: joinInterval(form.intervalHours, form.intervalMinutes),
@@ -308,6 +312,7 @@ export function formDiffers(form: HeartbeatFormState, config: HeartbeatConfig): 
   const { hours, minutes } = splitInterval(config.intervalMinutes);
   return (
     form.enabled !== config.enabled ||
+    form.inactiveOnly !== config.inactiveOnly ||
     form.systemPrompt !== (config.systemPrompt ?? "") ||
     form.taskPrompt !== (config.taskPrompt ?? "") ||
     form.intervalHours !== hours ||
@@ -390,6 +395,10 @@ export function normalizeHeartbeatConfig(data: unknown): HeartbeatConfig {
   const effort = d.reasoningEffort;
   return {
     enabled: d.enabled === true,
+    // Default ON (true): a missing/falsey-but-not-false field (a legacy config
+    // persisted before the field shipped) reads back as inactiveOnly: true —
+    // the feature is on by default for everyone. Only an explicit `false` opts out.
+    inactiveOnly: d.inactiveOnly !== false,
     systemPrompt: typeof d.systemPrompt === "string" ? d.systemPrompt : "",
     taskPrompt: typeof d.taskPrompt === "string" ? d.taskPrompt : "",
     intervalMinutes: normalizeInterval(d.intervalMinutes),

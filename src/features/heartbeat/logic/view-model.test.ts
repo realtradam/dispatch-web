@@ -39,6 +39,7 @@ const run = (over: Partial<HeartbeatRun> = {}): HeartbeatRun => ({
 
 const config = (over: Partial<HeartbeatConfig> = {}): HeartbeatConfig => ({
   enabled: false,
+  inactiveOnly: true,
   systemPrompt: "be helpful",
   taskPrompt: "check status",
   intervalMinutes: 15,
@@ -254,6 +255,40 @@ describe("config form", () => {
     const f = formFromConfig(c);
     expect(formDiffers(f, c)).toBe(false); // null resolves to "high" == form
   });
+
+  it("emptyForm defaults inactiveOnly to true (on by default)", () => {
+    expect(emptyForm().inactiveOnly).toBe(true);
+  });
+
+  it("formFromConfig carries inactiveOnly through verbatim", () => {
+    expect(formFromConfig(config({ inactiveOnly: true })).inactiveOnly).toBe(true);
+    expect(formFromConfig(config({ inactiveOnly: false })).inactiveOnly).toBe(false);
+  });
+
+  it("formFromConfig coerces a missing/malformed inactiveOnly to the default (true)", () => {
+    // A legacy config (undefined) or a non-boolean is read as ON (true) — matches
+    // normalizeHeartbeatConfig's default and the backend's "on by default".
+    const f = formFromConfig(config({ inactiveOnly: undefined as unknown as boolean }));
+    expect(f.inactiveOnly).toBe(true);
+  });
+
+  it("patchFromForm carries inactiveOnly", () => {
+    expect(patchFromForm(formFromConfig(config({ inactiveOnly: false }))).inactiveOnly).toBe(false);
+    expect(patchFromForm(formFromConfig(config({ inactiveOnly: true }))).inactiveOnly).toBe(true);
+  });
+
+  it("formDiffers is true after toggling inactiveOnly", () => {
+    const c = config({ inactiveOnly: true });
+    const f = formFromConfig(c);
+    f.inactiveOnly = false;
+    expect(formDiffers(f, c)).toBe(true);
+  });
+
+  it("formDiffers is false for a form seeded from the config (inactiveOnly unchanged)", () => {
+    const c = config({ inactiveOnly: false });
+    const f = formFromConfig(c);
+    expect(formDiffers(f, c)).toBe(false);
+  });
 });
 
 describe("system-prompt inheritance (override ⇄ global default)", () => {
@@ -321,6 +356,7 @@ describe("normalizeHeartbeatConfig", () => {
   it("passes through a well-formed config", () => {
     const c = normalizeHeartbeatConfig({
       enabled: true,
+      inactiveOnly: false,
       systemPrompt: "sys",
       taskPrompt: "task",
       intervalMinutes: 20,
@@ -329,6 +365,7 @@ describe("normalizeHeartbeatConfig", () => {
     });
     expect(c).toEqual({
       enabled: true,
+      inactiveOnly: false,
       systemPrompt: "sys",
       taskPrompt: "task",
       intervalMinutes: 20,
@@ -339,10 +376,12 @@ describe("normalizeHeartbeatConfig", () => {
   it("coerces a malformed body safely (never throws, never undefined)", () => {
     const c = normalizeHeartbeatConfig({
       enabled: "yes",
+      inactiveOnly: "yes",
       intervalMinutes: -3,
       reasoningEffort: "bogus",
     });
     expect(c.enabled).toBe(false);
+    expect(c.inactiveOnly).toBe(true); // non-boolean → default ON
     expect(c.intervalMinutes).toBe(1);
     expect(c.reasoningEffort).toBeNull();
     expect(c.systemPrompt).toBe("");
@@ -355,11 +394,29 @@ describe("normalizeHeartbeatConfig", () => {
   it("handles null / non-object input", () => {
     const c = normalizeHeartbeatConfig(null);
     expect(c.enabled).toBe(false);
+    expect(c.inactiveOnly).toBe(true); // default ON for an absent config
     expect(c.intervalMinutes).toBe(DEFAULT_INTERVAL_MINUTES);
     expect(c.model).toBe("");
   });
   it("clamps a huge interval", () => {
     expect(normalizeHeartbeatConfig({ intervalMinutes: 99999 }).intervalMinutes).toBe(1440);
+  });
+  it("inactiveOnly defaults to true when absent (legacy config → on by default)", () => {
+    // A config persisted by an older backend (no inactiveOnly field) reads back
+    // as true — the feature is ON by default for everyone.
+    expect(normalizeHeartbeatConfig({}).inactiveOnly).toBe(true);
+    expect(normalizeHeartbeatConfig({ inactiveOnly: undefined }).inactiveOnly).toBe(true);
+  });
+  it("inactiveOnly passes through an explicit false (opt-out)", () => {
+    expect(normalizeHeartbeatConfig({ inactiveOnly: false }).inactiveOnly).toBe(false);
+    expect(normalizeHeartbeatConfig({ inactiveOnly: true }).inactiveOnly).toBe(true);
+  });
+  it("inactiveOnly treats only an explicit boolean false as false (not 0, not null)", () => {
+    // The wire contract requires a JSON boolean; a non-boolean (0, null, "no")
+    // is treated as the default (true) rather than silently misbehaving.
+    expect(normalizeHeartbeatConfig({ inactiveOnly: 0 }).inactiveOnly).toBe(true);
+    expect(normalizeHeartbeatConfig({ inactiveOnly: null }).inactiveOnly).toBe(true);
+    expect(normalizeHeartbeatConfig({ inactiveOnly: "false" }).inactiveOnly).toBe(true);
   });
 });
 
