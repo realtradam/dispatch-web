@@ -5,17 +5,23 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
-_Last updated: 2026-06-28 (§2l — **thinking on/off** as a SEPARATE per-conversation axis from the
-reasoning-effort level. An `Off` option is now the FIRST choice in the Reasoning Effort dropdown;
-selecting it disables thinking entirely (the umans route maps it to `reasoning_effort: "none"`), NOT
-"effort to its lowest". The two axes are kept separate on the wire: a new `thinking: boolean|null`
-persisted per-conversation (null⇒ON default) + PROPOSED `GET`/`PUT /conversations/:id/thinking`
-(CR-14); the effort ladder + heartbeat dropdown are UNCHANGED. FE built against the proposed contract
-(FE-local `ThinkingResponse`/`SetThinkingRequest` in `reasoning-effort.ts`, swapped for the imported
-ones once the backend ships); a 404 (endpoint not yet shipped) leaves `thinking` null⇒ON, so the selector
-gracefully shows the effort level until then. typecheck 0/0, 1128 tests green (run TWICE), biome clean,
-build OK. Worktree env note: an untracked `dispatch-backend → backend` symlink in the worktree parent so
-the canonical `file:../dispatch-backend/...` paths resolve — NOT committed.)_
+_Last updated: 2026-06-29 (FE slice: **cancel-queued-message — CONSUMED ✅**. Backend `feature/cancel-queued-message`
+shipped a per-message cancel for the steering queue: while a turn is GENERATING and a user message is queued,
+the client can cancel a single queued message by id so it never runs. `transport-contract` `0.23.0 → 0.24.0`
+(ADDITIVE): new `WsClientMessage` member `ChatQueueCancelMessage` (`{ type: "chat.queue.cancel"; conversationId;
+messageId }` — fire-and-forget, idempotent; success confirmed by the `message-queue` SURFACE updating, failure as
+`chat.error`) + HTTP `DELETE /conversations/:id/queue/:messageId` → `QueueCancelResponse`. `@dispatch/wire` unchanged
+(`QueuedMessage.id` is the cancel target). FE: re-pinned the `file:` dep (now `file:../backend/packages/...` — see
+repo-fix below), re-mirrored `.dispatch/transport-contract.reference.md` (0.24.0); added `chat.queue.cancel` to the
+exhaustive WS guard (`core/wire/conformance.ts`) + `ChatTransport` port; `cancelQueuedMessage(messageId)` on the chat
+store + app store (delegates to the focused conversation's store); a × cancel affordance per queued row in
+`MessageQueueList.svelte` (threaded via `SurfaceView`'s `onCancelQueuedMessage`, dispatched on `rendererId` — never
+the surface id) with optimistic removal reconciled from the surface (pure `selectVisibleMessages` /
+`reconcileCancelledIds` in `logic/message-queue.ts`). No new event handling — the existing `message-queue` surface
+subscription reflects the post-cancel snapshot. typecheck 0/0, 1140 tests green (run TWICE), biome clean, build OK.
+Repo-fix: `package.json` + `bun.lock` were still pinning `file:../dispatch-backend/...` (stale from the
+`dispatch-backend → backend` rename) — corrected to `file:../backend/packages/...`; `bun install` now resolves
+natively with NO worktree symlink hack (the old `dispatch-backend → backend` symlink workaround is obsolete).)_
 _Last updated: 2026-06-27 (FE-only slice: **workspace-active indicator** — loading-dots on
 workspace cards when a workspace has ≥1 active/queued conversation. New `AppStore.workspaceHasActiveConversations(workspaceId)` derives from the existing open-tab set (every active/queued
 conversation has an open tab stamped with its `workspaceId`) × the backend lifecycle statuses; a
@@ -37,7 +43,7 @@ _Last updated: 2026-06-27 (workspace starring — backend `feature/workspace-sta
 return the updated `Workspace`). FE consumed: `adapter/http` `star`/`unstar`, pure `sortWorkspaces`/`applyStarred`,
 `store.setStarred` (optimistic + revert, `$derived`-sorted list), `WorkspaceCard` star toggle (filled gold ★ / outline ☆).
 Re-mirrored `.dispatch/wire.reference.md`. typecheck 0/0, 1045 tests green (+27), biome clean, build OK. No open backend asks.)_
-**FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-14** (thinking on/off — §2l; FE built against the proposed contract, awaiting the `GET`/`PUT /conversations/:id/thinking` endpoint + `ThinkingResponse`/`SetThinkingRequest` types), **CR-9**
+**FE is current on `ui-contract@0.2.0` / `transport-contract@0.23.0` / `wire@0.12.0`.** Open asks: **CR-9**
 _Last updated: 2026-06-26 (backend: concurrency limits now PERSISTED across reboots — no API contract change, no FE
 re-pin/re-mirror needed; §2j updated. FE: brief "Saved." confirmation on the limit row after a successful save. 926 tests
 green.) Prior: CR-13 (`"queued"` ConversationStatus) RESOLVED; dev merged (e81df4c)._
@@ -1202,88 +1208,6 @@ click "Restore to N" → confirm the banner drops on the next poll.
 `../dispatch-backend/...` (kept canonical — no worktree hack committed). An UNTRACKED symlink
 `dispatch-backend → backend` was created in the worktree parent, then `bun install` re-synced
 `node_modules/@dispatch/*` to pick up the additive `transport-contract@0.23.0` types.
-
----
-
-## 2l. Thinking on/off (separate from the reasoning-effort level) → **FE BUILT; 1 BACKEND ASK (CR-14)**
-
-A per-conversation **"thinking off"** affordance in the Reasoning Effort dropdown: an `Off` option as the
-FIRST choice (before `Low`). Selecting it disables extended thinking ENTIRELY for the conversation's turns
-— NOT "set the effort to its lowest level". The two axes are kept SEPARATE on the wire (per the umans API
-model): `reasoningEffort` is the thinking-DEPTH ladder (`low`→`max`); `thinking` is the on/off switch.
-Turning thinking off PRESERVES the persisted effort level, so an off→on toggle restores the previously-chosen
-depth. The per-conversation selector CONFLATES the two axes into one `<select>` (UX), but the WIRE does not.
-
-### Why a separate signal (not a new ladder level)
-
-The umans route (`provider-umans/src/reasoning.ts`) accepts `reasoning_effort: "none"|"low"|"medium"|"high"`
-— `"none"` disables thinking. The current `mapReasoningEffort` can only emit `"low"|"medium"|"high"` (it
-caps `xhigh`/`max`→`"high"`, and emits NO field when `reasoningEffort` is `undefined`, which the umans
-route treats as "default on"). So there is today NO path through the backend to `reasoning_effort: "none"`,
-i.e. no way to turn thinking off. Extending `ReasoningEffort` with `"none"` would work for umans but
-CONFLATES the two axes the user explicitly wants kept separate, and would also bleed into the heartbeat
-config dropdown (which reuses `effortOptions()`/`isReasoningEffort()`). A separate `thinking` boolean keeps
-the axes independent and leaves the existing ladder + heartbeat control untouched.
-
-### What the FE built (against the PROPOSED contract below)
-
-- Pure logic (`src/features/chat/reasoning-effort.ts`): a `ThinkingSelection = "off" | ReasoningEffort`
-  type, `selectionOptions()` (`Off` first, then the ladder w/ default marked), `isThinkingSelection()`,
-  `effectiveSelection(persistedEffort, persistedThinking)`, + FE-local proposed wire types
-  `ThinkingResponse` / `SetThinkingRequest` + a `SaveThinkingSelection` port. The existing
-  `effortOptions()` / `isReasoningEffort()` / `effectiveEffort()` are UNCHANGED (the heartbeat feature
-  reuses them — its own dropdown is unaffected).
-- Selector (`ReasoningEffortSelector.svelte`): renders `Off` first; new props `persistedEffort` +
-  `persistedThinking` + `save`; the displayed selection derives from BOTH axes (`thinking===false` ⇒ `off`,
-  else the effective effort level). Selecting `Off` calls `save("off")`; selecting a level calls
-  `save(level)`.
-- Store (`store.svelte.ts`): `thinking` state (`boolean | null`, `null`=never set⇒ON), `refreshThinking()`
-  (GET, called alongside `refreshReasoningEffort()` on every focus/draft/switch), `setThinking()`
-  (PUT). `App.svelte`'s `saveThinkingSelection` adapter fans one selection out to the right PUT(s):
-  `"off"` → `PUT /thinking {thinking:false}` (leaves effort untouched); a level → ensure thinking ON
-  (`PUT /thinking {thinking:true}` if currently off) then `PUT /reasoning-effort {level}`.
-- **Graceful pending-backend behavior:** `refreshThinking()` returns on `!res.ok` (a 404 — endpoint not
-  yet shipped — leaves `thinking` `null` ⇒ ON/default), so the selector simply shows the effort level
-  until the backend ships CR-14. No crash, no broken UI.
-- Tests: pure-logic (`selectionOptions`/`isThinkingSelection`/`effectiveSelection` — incl. `thinking===false`
-  ⇒ `off` while a level is still persisted), component (`Off` first, selecting `Off` sends `"off"` not a
-  level, off shows `off` even with a persisted level, failed-save revert, in-flight disable), store
-  (seeds from GET, treats a 404 as null⇒ON, PUT round-trips + echoes). typecheck 0/0, **1128 tests green**
-  (run TWICE — touches the shared fetch fake), biome clean, build OK.
-
-### CR-14 — PROPOSED backend contract (the ask)
-
-A NEW, ADDITIVE per-conversation "thinking" boolean, fully separate from `reasoningEffort`. Mirrors the
-existing `reasoning-effort` shape so it slots in with minimal surface:
-
-- **Wire / transport-contract (additive, NO version bump needed):**
-  ```ts
-  // Response of GET /conversations/:id/thinking
-  export interface ThinkingResponse {
-    readonly conversationId: string;
-    readonly thinking: boolean | null;   // null = never set ⇒ thinking ON (the default)
-  }
-  // Body of PUT /conversations/:id/thinking
-  export interface SetThinkingRequest { readonly thinking: boolean }
-  ```
-  Optionally also a per-turn `ChatRequest.thinking?: boolean` override (mirrors `reasoningEffort`).
-- **Endpoints (new, mirror `reasoning-effort`):**
-  - `GET /conversations/:id/thinking` → `ThinkingResponse`
-  - `PUT /conversations/:id/thinking` (body `SetThinkingRequest`) → `ThinkingResponse`
-- **Resolution (server-owned — do NOT re-implement in the FE):** per-turn `thinking` → persisted
-  conversation `thinking` → default **ON** (`true`). When resolved **OFF**, the orchestrator signals the
-  provider to DISABLE extended thinking; `provider-umans` maps that to `reasoning_effort: "none"` (its
-  `mapReasoningEffort` would gain a `thinking===false ⇒ "none"` short-circuit, ignoring the effort level
-  while off). Providers without a thinking knob ignore it (safe, as today).
-- **No change to `ReasoningEffort` / `reasoning-effort` endpoint** — the ladder and its validation are
-  untouched (so the heartbeat config + existing callers are unaffected).
-
-**FE re-pin/re-mirror on shipment:** once the backend ships CR-14, move `ThinkingResponse` /
-`SetThinkingRequest` into `@dispatch/transport-contract`, re-pin the `file:` dep, re-mirror
-`.dispatch/transport-contract.reference.md`, and swap the FE-local types for the imported ones (the store
-+ `reasoning-effort.ts` already reference them by name — a one-line import-source change). The graceful-404
-fallback can then be tightened. **A live integration probe is pending** the endpoint existing
-(`scripts/live-probe.ts` would gain a `/thinking` round-trip).
 
 ---
 

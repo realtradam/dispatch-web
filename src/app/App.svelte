@@ -297,6 +297,10 @@
 		store.queueMessage(text);
 	}
 
+	function handleCancelQueuedMessage(messageId: string) {
+		store.cancelQueuedMessage(messageId);
+	}
+
 	function handleStop() {
 		store.stopGeneration();
 	}
@@ -647,7 +651,11 @@
 			     the generic SurfaceView (dispatches on rendererId, never surface id);
 			     only shown when the queue is non-empty — an idle queue is hidden. -->
 			<div class="px-4 pt-2">
-				<SurfaceView spec={messageQueueSpec} onInvoke={handleInvoke} />
+				<SurfaceView
+					spec={messageQueueSpec}
+					onInvoke={handleInvoke}
+					onCancelQueuedMessage={handleCancelQueuedMessage}
+				/>
 			</div>
 		{/if}
 

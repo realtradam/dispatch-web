@@ -215,6 +215,15 @@ export interface AppStore {
    * wants to add input — the server owns the idle-vs-generating decision.
    */
   queueMessage(text: string): void;
+  /**
+   * Cancel (remove) a single queued steering message by id so it never runs
+   * (`chat.queue.cancel` WS op). Fire-and-forget + idempotent: the
+   * message-queue surface update reconciles the queue UI (the cancelled message
+   * leaves the snapshot). Targets the focused conversation's queue. The caller
+   * optimistically hides the row; a cancel of an already-drained / unknown
+   * message is a silent server no-op (nothing to roll back).
+   */
+  cancelQueuedMessage(messageId: string): void;
   selectModel(model: string): void;
   newDraft(): void;
   /** Switch the active workspace (on route change) + reset to a fresh draft in it. */
@@ -1411,6 +1420,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // (turn sealed between the status read and the send) is safe — the
       // server starts a fresh turn with the message as its opening prompt.
       activeChat.queueMessage(text);
+    },
+
+    cancelQueuedMessage(messageId: string): void {
+      // Fire-and-forget + idempotent. The message-queue surface (conversation-
+      // scoped) reconciles the queue UI — the cancelled row leaves the snapshot.
+      // A cancel of an already-drained / unknown message is a silent no-op, so
+      // there is no local state to roll back. Delegates to the focused
+      // conversation's chat store, which owns the conversationId + transport.
+      activeChat.cancelQueuedMessage(messageId);
     },
 
     selectModel(model: string): void {
