@@ -5,6 +5,23 @@
 > **From:** dispatch-web orchestrator · **To:** `../backend` orchestrator · **Courier:** the user.
 > `lsp` does NOT span the repos (AGENTS.md § Backend seam) — every cross-repo ask flows through here.
 
+_Last updated: 2026-06-29 (FE slice: **cancel-queued-message — CONSUMED ✅**. Backend `feature/cancel-queued-message`
+shipped a per-message cancel for the steering queue: while a turn is GENERATING and a user message is queued,
+the client can cancel a single queued message by id so it never runs. `transport-contract` `0.23.0 → 0.24.0`
+(ADDITIVE): new `WsClientMessage` member `ChatQueueCancelMessage` (`{ type: "chat.queue.cancel"; conversationId;
+messageId }` — fire-and-forget, idempotent; success confirmed by the `message-queue` SURFACE updating, failure as
+`chat.error`) + HTTP `DELETE /conversations/:id/queue/:messageId` → `QueueCancelResponse`. `@dispatch/wire` unchanged
+(`QueuedMessage.id` is the cancel target). FE: re-pinned the `file:` dep (now `file:../backend/packages/...` — see
+repo-fix below), re-mirrored `.dispatch/transport-contract.reference.md` (0.24.0); added `chat.queue.cancel` to the
+exhaustive WS guard (`core/wire/conformance.ts`) + `ChatTransport` port; `cancelQueuedMessage(messageId)` on the chat
+store + app store (delegates to the focused conversation's store); a × cancel affordance per queued row in
+`MessageQueueList.svelte` (threaded via `SurfaceView`'s `onCancelQueuedMessage`, dispatched on `rendererId` — never
+the surface id) with optimistic removal reconciled from the surface (pure `selectVisibleMessages` /
+`reconcileCancelledIds` in `logic/message-queue.ts`). No new event handling — the existing `message-queue` surface
+subscription reflects the post-cancel snapshot. typecheck 0/0, 1140 tests green (run TWICE), biome clean, build OK.
+Repo-fix: `package.json` + `bun.lock` were still pinning `file:../dispatch-backend/...` (stale from the
+`dispatch-backend → backend` rename) — corrected to `file:../backend/packages/...`; `bun install` now resolves
+natively with NO worktree symlink hack (the old `dispatch-backend → backend` symlink workaround is obsolete).)_
 _Last updated: 2026-06-27 (FE-only slice: **workspace-active indicator** — loading-dots on
 workspace cards when a workspace has ≥1 active/queued conversation. New `AppStore.workspaceHasActiveConversations(workspaceId)` derives from the existing open-tab set (every active/queued
 conversation has an open tab stamped with its `workspaceId`) × the backend lifecycle statuses; a
