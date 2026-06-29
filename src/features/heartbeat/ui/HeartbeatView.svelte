@@ -140,6 +140,31 @@
 		}
 	}
 
+	// The inactive-only checkbox is a save-on-change control (like the enable
+	// toggle): a partial PUT { inactiveOnly } — no need to round-trip the rest
+	// of the form. The heartbeat then skips a fire whenever the workspace has
+	// active agents (a conversation whose status is "active" or "queued").
+	async function handleToggleInactiveOnly(): Promise<void> {
+		if (saving) return;
+		const next = !form.inactiveOnly;
+		form = { ...form, inactiveOnly: next };
+		saving = true;
+		saveError = null;
+		justSaved = false;
+		const result = await saveConfig({ inactiveOnly: next });
+		saving = false;
+		if (result === null) return;
+		if (result.ok) {
+			form = formFromConfig(result.config);
+			loadedConfig = formFromConfig(result.config);
+			justSaved = true;
+		} else {
+			saveError = result.error;
+			// Revert the checkbox to the last-known state.
+			form = { ...form, inactiveOnly: loadedConfig.inactiveOnly };
+		}
+	}
+
 	// ── Runs list (polls while mounted) ───────────────────────────────────────
 	let runs = $state<readonly HeartbeatRunView[]>([]);
 	/** The raw backend runs (carry `triggeredAt`), kept for the next-run
@@ -323,6 +348,27 @@
 	{#if configError}
 		<p class="text-xs text-error">{configError}</p>
 	{:else}
+		<!-- Inactive-only (skip fires while the workspace has active agents) -->
+		<section class="flex flex-col gap-1">
+			<label class="flex items-start gap-2 text-sm">
+				<input
+					type="checkbox"
+					class="checkbox checkbox-sm checkbox-primary mt-0.5"
+					checked={form.inactiveOnly}
+					disabled={saving || configLoading}
+					onchange={handleToggleInactiveOnly}
+					aria-label="Only run the heartbeat when the workspace is idle"
+				/>
+				<span class="flex flex-col gap-0.5">
+					<span>Only run when idle</span>
+					<span class="text-xs opacity-50">
+						Skip heartbeat fires while agents are active in this workspace. When off, the
+						heartbeat runs on every interval regardless of activity.
+					</span>
+				</span>
+			</label>
+		</section>
+
 		<!-- Prompts (open the full-page editor) -->
 		<section class="flex flex-col gap-1">
 			<span class="text-xs font-semibold uppercase opacity-60">Prompts</span>

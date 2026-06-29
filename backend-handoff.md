@@ -1211,6 +1211,62 @@ click "Restore to N" → confirm the banner drops on the next poll.
 
 ---
 
+## 2l. Heartbeat `inactiveOnly` (skip fires while the workspace is busy) → **CONSUMED ✅ (backend shipped; FE built + verified)**
+
+The backend shipped a new per-workspace heartbeat setting, **`inactiveOnly`** (default `true`): when on, the heartbeat
+SKIPS a scheduled fire whenever the configured workspace has any active agents (a conversation whose persisted status is
+`"active"` or `"queued"`) — it stays quiet while the user is actively working and only fires when the workspace is idle.
+When off (`false`), the heartbeat fires unconditionally on every interval (the pre-existing behavior). The heartbeat-spawned
+conversation lives in the dedicated `heartbeat` workspace, so an in-flight run never self-blocks. Full contract in the
+backend's `notes/heartbeat-setting-handoff.md` (couriered to the FE).
+
+- `GET /workspaces/:id/heartbeat` → `HeartbeatConfig` now includes `inactiveOnly: boolean`.
+- `PUT /workspaces/:id/heartbeat` (partial body) → `{ inactiveOnly?: boolean }` added to `UpdateHeartbeatRequest`. Absent
+  = unchanged; explicit `false` = opt-out. Validation: a non-boolean → HTTP 400.
+- The field is purely ADDITIVE with a default, so a frontend that never sends it gets the new (quiet-by-default) behavior.
+
+**Contract note (same as §2f):** the heartbeat shapes are NOT in `@dispatch/transport-contract` / `@dispatch/wire` (the FE
+owns them locally in `src/features/heartbeat/logic/types.ts` — consumer-defines-port). So this was a FE-LOCAL type +
+view-model + UI change; no pinned `file:` dep bump or `.dispatch/*.reference.md` mirror was needed (the transport-contract
+mirror has no heartbeat symbol — verified unchanged).
+
+**FE implementation (branch `feature/heartbeat-inactive-only`):**
+- `types.ts`: added `inactiveOnly: boolean` to `HeartbeatConfig` + `inactiveOnly?: boolean` to `HeartbeatConfigPatch`.
+- `logic/view-model.ts` (pure): `inactiveOnly` added to `HeartbeatFormState`; `formFromConfig`/`emptyForm`/`patchFromForm`/
+  `formDiffers` carry it; `normalizeHeartbeatConfig` coerces it with `d.inactiveOnly !== false` (default ON — mirrors the
+  backend's `config-store.ts` deserializer `typeof parsed.inactiveOnly === "boolean" ? parsed.inactiveOnly : true`; only an
+  explicit `false` opts out, so a legacy config persisted before the field reads back as `true`).
+- `ui/HeartbeatView.svelte`: a **checkbox** (default checked) labelled "Only run when idle" with helper text, rendered as
+  the first section under the enable header. It is a **save-on-change** control (mirrors the enable toggle): toggling sends
+  a PARTIAL `PUT { inactiveOnly: <bool> }` — no need to round-trip the rest of the form. A failed save reverts the checkbox
+  to the last-known state and surfaces the error inline (same pattern as `handleToggleEnabled`).
+- The network seam (`src/app/store.svelte.ts`) needed NO change — `setHeartbeatConfig` already `JSON.stringify`s the patch
+  verbatim and normalizes the response via `normalizeHeartbeatConfig` (now producing `inactiveOnly`).
+- New component test `ui/HeartbeatView.test.ts` (renders checked/unchecked, partial-patch PUT, failed-save revert); updated
+  `view-model.test.ts` (form/normalize/diff coverage) + `PromptEditor.test.ts` + `store.test.ts` echo fixtures for the new
+  required field.
+
+**Verification:** `bun run typecheck` (0 errors) · `bun run test` (1133 passing, stable across 2 runs) · `bun run check`
+(biome clean) · `bun run build` (succeeds). All green.
+
+**Live check (read-only):** the backend is reachable on `:24203` (HTTP 200), BUT the running process is the **MAIN
+checkout's backend** (verified: `/home/tradam/projects/dispatch/backend`'s `config-store.ts` has NO `inactiveOnly`) — the
+feature is committed in the `feature/heartbeat-inactive-only` **worktree** backend, not yet deployed to the user's running
+server. A live `GET /workspaces/default/heartbeat` returns the config WITHOUT `inactiveOnly`; the FE's defensive default
+(`!== false` → `true`) renders the checkbox **checked** and degrades gracefully (a toggle PUT is ignored by the main
+backend and the FE re-normalizes to the default — no crash). Once the feature backend runs, the field round-trips
+correctly. No backend was booted by the agent (per AGENTS.md). The heartbeat `scripts/live-probe.ts` does not exercise the
+heartbeat REST config endpoint (it drives the chat/WS pipeline), so the unit/store tests (which fake the full round-trip
+including the new field) are the authoritative coverage here.
+
+**Worktree environment note (same as §2d/§2j-update-3):** this worktree lays the repos out as
+`…/worktrees/heartbeat-inactive-only/{backend,frontend}`, but `package.json`'s canonical `file:` paths point at
+`../dispatch-backend/...` (kept canonical — no worktree hack committed). An UNTRACKED symlink
+`dispatch-backend → backend` was created in the worktree parent, then `bun install` re-synced `node_modules/@dispatch/*`
+so typecheck/test/build could run.
+
+---
+
 ## 3. Likely NEXT backend asks (heads-up, not yet requested)
 
 - **Model max context-window LIMIT** → **CONSUMED ✅** — `GET /models` now returns
