@@ -1223,6 +1223,7 @@ describe("createAppStore", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.config).toEqual({
       enabled: true,
+      inactiveOnly: true,
       systemPrompt: "sys",
       taskPrompt: "task",
       intervalMinutes: 15,

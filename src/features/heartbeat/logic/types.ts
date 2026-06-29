@@ -26,6 +26,15 @@ export type HeartbeatRunStatus = "running" | "completed" | "stopped";
 export interface HeartbeatConfig {
   /** Whether the autonomous loop is enabled (running on the interval). */
   readonly enabled: boolean;
+  /**
+   * When true (the default), the heartbeat SKIPS a fire whenever the configured
+   * workspace has any active agents (a conversation whose persisted status is
+   * `"active"` or `"queued"`) — it stays quiet while the user is actively
+   * working and only fires when the workspace is idle. When false, the heartbeat
+   * fires unconditionally on every interval. The heartbeat-spawned conversation
+   * lives in a dedicated workspace, so an in-flight run never self-blocks.
+   */
+  readonly inactiveOnly: boolean;
   readonly systemPrompt: string;
   readonly taskPrompt: string;
   /** Minutes between runs. */
@@ -46,6 +55,7 @@ export interface HeartbeatConfig {
  */
 export interface HeartbeatConfigPatch {
   readonly enabled?: boolean;
+  readonly inactiveOnly?: boolean;
   readonly systemPrompt?: string;
   readonly taskPrompt?: string;
   readonly intervalMinutes?: number;
