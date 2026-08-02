@@ -73,6 +73,11 @@ function fakeFetchImpl(): typeof fetch {
         status: 200,
       });
     }
+    if (url.endsWith("/settings/vision")) {
+      return new Response(JSON.stringify({ imageLimit: 10, compactionModel: null }), {
+        status: 200,
+      });
+    }
     return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
   };
 }
@@ -580,6 +585,24 @@ describe("App component interaction tests", () => {
     const result = await store.setCwd("arch-rewrite");
     expect(result).toMatchObject({ ok: true, cwd: "arch-rewrite" });
     expect(capturedBody).toEqual({ cwd: "arch-rewrite", workspaceId: "my-team" });
+
+    store.dispose();
+  });
+
+  it("the Vision view renders the vision settings UI (image limit + compaction model)", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorageWithViews(["vision"]),
+    });
+    ws.resolveOpen();
+
+    render(App, { props: { store, onNavigate: vi.fn() } });
+
+    // The vision settings load (`GET /settings/vision`) seeds the inputs.
+    expect(await screen.findByLabelText(/Image limit/)).toBeInTheDocument();
+    expect(await screen.findByLabelText(/Compaction model/)).toBeInTheDocument();
 
     store.dispose();
   });

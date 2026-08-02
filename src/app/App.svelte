@@ -125,6 +125,7 @@
 		{ id: "cache-warming", label: "Cache Warming" },
 		{ id: "tasks", label: "Tasks" },
 		{ id: "compaction", label: "Compaction" },
+		{ id: "vision", label: "Vision" },
 		{ id: "heartbeat", label: "Heartbeat" },
 		{ id: "concurrency", label: "Concurrency" },
 		{ id: "system-prompt", label: "System Prompt" },
@@ -814,8 +815,7 @@
 		{/key}
 	{:else if kind === "compaction"}
 		<!-- Message compaction is per-conversation (keyed so the percent + feedback
-		     can't bleed across tabs). Vision (image-compaction) settings are GLOBAL,
-		     so they stay mounted across conversation switches (no {#key}). -->
+		     can't bleed across tabs). -->
 		{#key store.currentConversationId}
 			<CompactionView
 				percent={store.compactPercent}
@@ -824,7 +824,9 @@
 				savePercent={saveCompactPercent}
 			/>
 		{/key}
-		<div class="divider my-1 text-xs text-base-content/40">Image compaction</div>
+	{:else if kind === "vision"}
+		<!-- Global vision settings (image-compaction limit + model). Not
+		     conversation-scoped (no {#key}), so they stay mounted across tab switches. -->
 		<VisionSettingsView
 			models={store.models}
 			modelInfo={store.modelInfo}
