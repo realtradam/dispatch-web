@@ -8,6 +8,7 @@ import {
   selectTab as reduceSelectTab,
   setModel as reduceSetModel,
   setTitle as reduceSetTitle,
+  setWorkspaceId as reduceSetWorkspaceId,
   activeTab as selectActiveTab,
 } from "./tabs";
 
@@ -28,6 +29,7 @@ export interface TabsStore {
   closeTab(conversationId: string): void;
   setModel(conversationId: string, model: string): void;
   setTitle(conversationId: string, title: string): void;
+  setWorkspaceId(conversationId: string, workspaceId: string): void;
 }
 
 export function createTabsStore(storage: TabsStorage): TabsStore {
@@ -68,6 +70,9 @@ export function createTabsStore(storage: TabsStorage): TabsStore {
     },
     setTitle(conversationId: string, title: string): void {
       apply(reduceSetTitle(state, conversationId, title));
+    },
+    setWorkspaceId(conversationId: string, workspaceId: string): void {
+      apply(reduceSetWorkspaceId(state, conversationId, workspaceId));
     },
   };
 }

@@ -1106,8 +1106,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
             workspaceId: conv.workspaceId,
           });
         } else {
-          // Already open — update the title from the backend if it differs.
+          // Already open — reconcile title + workspace from the authoritative
+          // backend list. A raced `conversation.open` (summon) may have stamped
+          // the tab with the wrong workspace ("default"); the backend's
+          // authoritative conversation record is the source of truth, so a
+          // differing tab workspace is corrected here.
           tabsStore.setTitle(conv.id, conv.title);
+          if (tabsStore.tabs.find((t) => t.conversationId === conv.id)?.workspaceId !== conv.workspaceId) {
+            tabsStore.setWorkspaceId(conv.id, conv.workspaceId);
+          }
         }
       }
 
@@ -1146,6 +1153,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // `queued` = the turn is in flight but waiting for a concurrency slot
       // (broadcast-only, never persisted — CR-13); the tab shows a ring.
       conversationStatuses = new Map(conversationStatuses).set(conversationId, status);
+      // Reconcile the already-open tab's workspace from this authoritative
+      // lifecycle event (the payload workspace is the conversation's actual
+      // persisted workspace). A raced `conversation.open` may have stamped the
+      // wrong workspace ("default") — correct it here.
+      if (
+        chatStores.has(conversationId) &&
+        (tabsStore.tabs.find((t) => t.conversationId === conversationId)?.workspaceId ??
+          workspaceId) !== workspaceId
+      ) {
+        tabsStore.setWorkspaceId(conversationId, workspaceId);
+      }
       // If this is a new active OR queued conversation we don't have a tab for,
       // open one — so a cross-device turn (incl. one waiting in the concurrency
       // queue) is visible. `idle` never opens a tab.

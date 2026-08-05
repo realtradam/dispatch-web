@@ -82,6 +82,17 @@ export function setTitle(state: TabsState, conversationId: string, title: string
   return { tabs, activeConversationId: state.activeConversationId };
 }
 
+export function setWorkspaceId(
+  state: TabsState,
+  conversationId: string,
+  workspaceId: string,
+): TabsState {
+  const tabs = state.tabs.map((t) =>
+    t.conversationId === conversationId ? { ...t, workspaceId } : t,
+  );
+  return { tabs, activeConversationId: state.activeConversationId };
+}
+
 export function activeTab(state: TabsState): Tab | null {
   if (state.activeConversationId === null) return null;
   return state.tabs.find((t) => t.conversationId === state.activeConversationId) ?? null;
