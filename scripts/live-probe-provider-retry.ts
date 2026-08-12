@@ -19,7 +19,7 @@
  *     the JSON-parse boundary the unit tests skip (they pass constructed events).
  *
  *     bun scripts/live-probe-provider-retry.ts
- *     PROBE_MODEL=opencode/glm-5.2 bun scripts/live-probe-provider-retry.ts
+ *     PROBE_MODEL=opencode-1/glm-5.2 bun scripts/live-probe-provider-retry.ts
  */
 import type { ChatDeltaMessage, ChatErrorMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -33,7 +33,7 @@ import {
 } from "../src/core/chunks/index.ts";
 
 const WS_URL = process.env.PROBE_WS ?? "ws://localhost:24205";
-const MODEL = process.env.PROBE_MODEL ?? "opencode/deepseek-v4-flash";
+const MODEL = process.env.PROBE_MODEL ?? "opencode-1/deepseek-v4-flash";
 const PROMPT = process.env.PROBE_PROMPT ?? "Reply with exactly: ok";
 
 type ChatMsg = ChatDeltaMessage | ChatErrorMessage;

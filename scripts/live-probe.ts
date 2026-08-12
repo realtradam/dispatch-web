@@ -4,7 +4,7 @@
  * `bun run test`. Run with the backend up:
  *
  *     bun scripts/live-probe.ts            # default model
- *     PROBE_MODEL=opencode/glm-5 bun scripts/live-probe.ts
+ *     PROBE_MODEL=opencode-1/glm-5 bun scripts/live-probe.ts
  *     PROBE_TOOL_PROMPT="..." bun scripts/live-probe.ts   # override the tool turn
  *
  * Drives the FE's REAL network-facing modules (the thin live integration test the
@@ -55,7 +55,7 @@ import { createConversationCache } from "../src/features/conversation-cache/inde
 
 const WS_URL = process.env.PROBE_WS ?? "ws://localhost:24205";
 const HTTP_BASE = process.env.PROBE_HTTP ?? "http://localhost:24203";
-const MODEL = process.env.PROBE_MODEL ?? "opencode/deepseek-v4-flash";
+const MODEL = process.env.PROBE_MODEL ?? "opencode-1/deepseek-v4-flash";
 const TEXT_PROMPT = process.env.PROBE_PROMPT ?? "Reply with exactly: hello from dispatch";
 const TOOL_PROMPT =
   process.env.PROBE_TOOL_PROMPT ??

@@ -652,6 +652,14 @@ describe("createAppStore", () => {
     const restored = store.tabs.find((t) => t.conversationId === "c-legacy");
     expect(restored?.model).toBe("opencode-1/deepseek-v4-flash");
     expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
+    // Issue 7: the migrated tab state is ACTUALLY written back to the storage
+    // adapter immediately (not merely kept in memory) — a re-load is now a no-op.
+    const persisted = JSON.parse(storage.getItem("dispatch.tabs") ?? "") as {
+      tabs: Array<{ conversationId: string; model: string }>;
+    };
+    const persistedModel = persisted.tabs.find((t) => t.conversationId === "c-legacy")?.model;
+    expect(persistedModel).toBe("opencode-1/deepseek-v4-flash");
+    expect(persisted.tabs.some((t) => t.model.startsWith("opencode/"))).toBe(false);
     store.dispose();
   });
 
