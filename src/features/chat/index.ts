@@ -6,7 +6,13 @@ export type {
 } from "../../core/chunks";
 export { groupRenderedChunks, resolveImageUrl, viewProviderRetry } from "../../core/chunks";
 export type { TurnMetricsEntry } from "../../core/metrics";
-export { isVisionModel } from "./model-select";
+export {
+  isNumberedOpenCode,
+  isVisionModel,
+  migrateLegacyModelName,
+  modelKeyLabel,
+  openCodeNumber,
+} from "./model-select";
 export type { ChatTransport, HistorySync, HistoryWindow, MetricsSync } from "./ports";
 export type {
   EffortOption,

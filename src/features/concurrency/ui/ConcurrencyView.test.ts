@@ -11,8 +11,8 @@ import type {
 } from "../logic/types";
 import ConcurrencyView from "./ConcurrencyView.svelte";
 
-// Available models → provider ids are "umans", "anthropic", "openai-compat".
-const MODELS = ["umans/umans-glm-5.2", "anthropic/claude-sonnet", "openai-compat/gpt-4o"] as const;
+// Available models → provider ids are "umans", "anthropic", "opencode-1".
+const MODELS = ["umans/umans-glm-5.2", "anthropic/claude-sonnet", "opencode-1/gpt-4o"] as const;
 
 // A status entry factory (defaults to a healthy limited provider). The new
 // concurrency-fixes fields (`cooldownMs`, `autoReduced`) are always present.

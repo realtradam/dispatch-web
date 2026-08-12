@@ -6,6 +6,7 @@
     DEFAULT_COOLDOWN_MS,
     parseCooldownInput,
     parseLimitInput,
+    providerLabel,
     providerOptions,
     summarizeLimits,
     viewConcurrencyLimits,
@@ -376,7 +377,7 @@
               <option value="" disabled>No providers available</option>
             {:else}
               {#each providerOpts as provider (provider)}
-                <option value={provider}>{provider}</option>
+                <option value={provider}>{providerLabel(provider)}</option>
               {/each}
             {/if}
           </select>

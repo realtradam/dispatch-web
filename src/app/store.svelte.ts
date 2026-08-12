@@ -53,7 +53,7 @@ import {
   unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
-import { createChatStore } from "../features/chat";
+import { createChatStore, migrateLegacyModelName } from "../features/chat";
 import type { SetThinkingRequest, ThinkingResponse } from "../features/chat/reasoning-effort";
 import type {
   ConcurrencyCooldownResult,
@@ -91,7 +91,7 @@ import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
 import { randomId } from "./uuid";
 
-const DEFAULT_MODEL = "opencode/deepseek-v4-flash";
+const DEFAULT_MODEL = "opencode-1/deepseek-v4-flash";
 
 /** Outcome of a manual `POST /chat/warm` (the "warm now" affordance). */
 export type WarmResult =
@@ -1112,7 +1112,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           // authoritative conversation record is the source of truth, so a
           // differing tab workspace is corrected here.
           tabsStore.setTitle(conv.id, conv.title);
-          if (tabsStore.tabs.find((t) => t.conversationId === conv.id)?.workspaceId !== conv.workspaceId) {
+          if (
+            tabsStore.tabs.find((t) => t.conversationId === conv.id)?.workspaceId !==
+            conv.workspaceId
+          ) {
             tabsStore.setWorkspaceId(conv.id, conv.workspaceId);
           }
         }
@@ -1231,12 +1234,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       if (data === undefined) return;
       models = data.models;
       modelInfo = data.modelInfo ?? {};
-      if (data.models.length > 0 && !data.models.includes(activeModel)) {
-        const first = data.models[0];
-        if (first !== undefined) {
-          activeModel = first;
-          draftStore.setModel(first);
-        }
+      // Do NOT silently switch the active model when the current selection is
+      // missing from the catalog (e.g. a saved numbered OpenCode credential was
+      // removed). The model selector surfaces it as unavailable; the user picks
+      // explicitly. activeModel is still normalized through the legacy-migration
+      // helper so an old `opencode/...` value is rewritten once.
+      if (migrateLegacyModelName(activeModel) !== activeModel) {
+        activeModel = migrateLegacyModelName(activeModel);
       }
     })
     .catch((err) => {
@@ -1262,7 +1266,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   const persistedState = storageAdapter.load();
   if (persistedState !== null && persistedState.tabs.length > 0) {
     for (const tab of persistedState.tabs) {
-      const store = createChatFor(tab.conversationId, tab.model, tab.workspaceId);
+      // One-time persisted-state migration: rewrite a legacy `opencode/<model>`
+      // tab model to the numbered `opencode-1/<model>` namespace, and persist the
+      // migrated value back so a re-load is a no-op (idempotent).
+      const model = migrateLegacyModelName(tab.model);
+      if (model !== tab.model) {
+        tabsStore.setModel(tab.conversationId, model);
+      }
+      const store = createChatFor(tab.conversationId, model, tab.workspaceId);
       chatStores.set(tab.conversationId, store);
       void store.load();
       // Watch each restored conversation's live turns: after a reload mid-turn the
@@ -1275,7 +1286,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         (t) => t.conversationId === persistedState.activeConversationId,
       );
       if (activeTab !== undefined) {
-        activeModel = activeTab.model;
+        activeModel = migrateLegacyModelName(activeTab.model);
       }
     }
   }

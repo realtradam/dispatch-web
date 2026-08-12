@@ -13,6 +13,7 @@ import {
   parseLimitInput,
   pauseLabel,
   providerFromModel,
+  providerLabel,
   providerOptions,
   statusLabel,
   summarizeLimits,
@@ -95,7 +96,7 @@ describe("cooldownLabel", () => {
 describe("providerFromModel", () => {
   it("takes the part before the first slash", () => {
     expect(providerFromModel("openai/gpt-4o")).toBe("openai");
-    expect(providerFromModel("openai-compat/gpt-4o-mini")).toBe("openai-compat");
+    expect(providerFromModel("opencode-1/gpt-4o-mini")).toBe("opencode-1");
   });
   it("returns the whole string when there is no slash", () => {
     expect(providerFromModel("umans")).toBe("umans");
@@ -124,6 +125,23 @@ describe("providerOptions", () => {
   });
   it("returns [] when there are no models and no limits", () => {
     expect(providerOptions([], [])).toEqual([]);
+  });
+});
+
+describe("providerLabel", () => {
+  it("labels a numbered OpenCode provider as OpenCode #N", () => {
+    expect(providerLabel("opencode-2")).toBe("OpenCode #2");
+    expect(providerLabel("opencode-10")).toBe("OpenCode #10");
+  });
+
+  it("leaves non-OpenCode provider ids unchanged", () => {
+    expect(providerLabel("umans")).toBe("umans");
+    expect(providerLabel("anthropic")).toBe("anthropic");
+  });
+
+  it("rejects noncanonical numbered ids (label passthrough)", () => {
+    expect(providerLabel("opencode")).toBe("opencode");
+    expect(providerLabel("opencode-0")).toBe("opencode-0");
   });
 });
 
@@ -450,12 +468,12 @@ describe("normalizeConcurrencyLimits", () => {
     const limits = normalizeConcurrencyLimits({
       limits: [
         { providerId: "umans", limit: 4 },
-        { providerId: "openai-compat", limit: 5 },
+        { providerId: "opencode-1", limit: 5 },
       ],
     });
     expect(limits).toEqual([
       { providerId: "umans", limit: 4 },
-      { providerId: "openai-compat", limit: 5 },
+      { providerId: "opencode-1", limit: 5 },
     ]);
   });
 
@@ -510,7 +528,7 @@ describe("normalizeConcurrencyStatus", () => {
       providers: [
         { providerId: "umans", limit: 4, inFlight: 2, queued: 1, paused: false },
         {
-          providerId: "openai-compat",
+          providerId: "opencode-1",
           limit: 5,
           inFlight: 5,
           queued: 3,
@@ -532,7 +550,7 @@ describe("normalizeConcurrencyStatus", () => {
     });
     expect(first !== undefined && !("pausedUntil" in first)).toBe(true);
     expect(second).toEqual({
-      providerId: "openai-compat",
+      providerId: "opencode-1",
       limit: 5,
       inFlight: 5,
       queued: 3,

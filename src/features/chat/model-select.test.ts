@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   isVisionModel,
   joinModelName,
+  migrateLegacyModelName,
+  modelKeyLabel,
   modelKeys,
   modelsForKey,
+  openCodeNumber,
   splitModelName,
 } from "./model-select";
 
@@ -47,8 +50,61 @@ describe("modelKeys", () => {
     ).toEqual(["openai", "anthropic", "google"]);
   });
 
+  it("sorts numbered OpenCode keys numerically (#2 before #10)", () => {
+    expect(
+      modelKeys(["opencode-10/models", "opencode-2/models", "opencode-1/models", "openai/gpt-4"]),
+    ).toEqual(["opencode-1", "opencode-2", "opencode-10", "openai"]);
+  });
+
   it("is empty for no models", () => {
     expect(modelKeys([])).toEqual([]);
+  });
+});
+
+describe("openCodeNumber", () => {
+  it("parses a numbered OpenCode key", () => {
+    expect(openCodeNumber("opencode-1")).toBe(1);
+    expect(openCodeNumber("opencode-10")).toBe(10);
+  });
+
+  it("returns null for non-openCode / malformed keys", () => {
+    expect(openCodeNumber("umans")).toBeNull();
+    expect(openCodeNumber("opencode")).toBeNull();
+    expect(openCodeNumber("opencode-0")).toBeNull();
+    expect(openCodeNumber("opencode-01")).toBeNull();
+  });
+});
+
+describe("modelKeyLabel", () => {
+  it("labels a numbered OpenCode key as OpenCode #N", () => {
+    expect(modelKeyLabel("opencode-2")).toBe("OpenCode #2");
+    expect(modelKeyLabel("opencode-10")).toBe("OpenCode #10");
+  });
+
+  it("leaves non-OpenCode keys unchanged", () => {
+    expect(modelKeyLabel("umans")).toBe("umans");
+  });
+});
+
+describe("migrateLegacyModelName", () => {
+  it("rewrites opencode/<model> to opencode-1/<model>", () => {
+    expect(migrateLegacyModelName("opencode/deepseek-v4-flash")).toBe(
+      "opencode-1/deepseek-v4-flash",
+    );
+    expect(migrateLegacyModelName("opencode/nested/model")).toBe("opencode-1/nested/model");
+  });
+
+  it("leaves already-numbered and other-provider names unchanged", () => {
+    expect(migrateLegacyModelName("opencode-1/deepseek-v4-flash")).toBe(
+      "opencode-1/deepseek-v4-flash",
+    );
+    expect(migrateLegacyModelName("umans/umans-glm-5.2")).toBe("umans/umans-glm-5.2");
+    expect(migrateLegacyModelName("opencode-2/x")).toBe("opencode-2/x");
+  });
+
+  it("is idempotent", () => {
+    const once = migrateLegacyModelName("opencode/deepseek-v4-flash");
+    expect(migrateLegacyModelName(once)).toBe(once);
   });
 });
 

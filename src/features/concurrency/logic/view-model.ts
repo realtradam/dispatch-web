@@ -170,6 +170,18 @@ export function providerOptions(
   return out;
 }
 
+/**
+ * Friendly display label for a concurrency provider id. A numbered OpenCode
+ * provider (`opencode-<n>`) renders as "OpenCode #<n>" (so "opencode-2" reads
+ * as a coherent credential identity, matching the model picker); any other id is
+ * shown unchanged. The RAW id is still what is sent to / displayed-with the
+ * backend — this only affects presentation.
+ */
+export function providerLabel(providerId: string): string {
+  const m = /^opencode-([1-9][0-9]*)$/.exec(providerId);
+  return m === null ? providerId : `OpenCode #${m[1]}`;
+}
+
 // ── Status → display view ──────────────────────────────────────────────────────
 
 const NO_LIMITS = "No limits configured";

@@ -1089,6 +1089,43 @@ describe("ModelSelector", () => {
     });
     expect(screen.getByText(/auto-described/i)).toBeInTheDocument();
   });
+
+  it("labels numbered OpenCode keys as OpenCode #N and sorts them numerically", () => {
+    const models = ["opencode-10/m1", "opencode-2/m2", "opencode-1/m3"];
+    const onSelect = vi.fn();
+    render(ModelSelector, {
+      props: { models, selected: "opencode-2/m2", onSelect },
+    });
+
+    const keySelect = screen.getByRole("combobox", { name: "Key selector" });
+    const options = within(keySelect).getAllByRole("option");
+    // Numeric order: #1 < #2 < #10, and values stay RAW (opencode-N).
+    expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual([
+      "opencode-1",
+      "opencode-2",
+      "opencode-10",
+    ]);
+    expect(options[0]?.textContent).toContain("OpenCode #1");
+    expect(options[1]?.textContent).toContain("OpenCode #2");
+    expect(options[2]?.textContent).toContain("OpenCode #10");
+  });
+
+  it("shows a disappeared saved credential as unavailable without silently falling back", () => {
+    // Saved selection references opencode-5, but the catalog no longer has it.
+    const models = ["opencode-1/deepseek-v4-flash"];
+    const onSelect = vi.fn();
+    render(ModelSelector, {
+      props: { models, selected: "opencode-5/deepseek-v4-flash", onSelect },
+    });
+
+    // The unavailable key is surfaced as an explicit (disabled) option + notice.
+    const keySelect = screen.getByRole("combobox", { name: "Key selector" });
+    const unavailable = within(keySelect).getByText(/OpenCode #5 \(unavailable\)/i);
+    expect(unavailable).toBeInTheDocument();
+    expect(screen.getByText(/Selected model .* unavailable/)).toBeInTheDocument();
+    // No silent switch is attempted.
+    expect(onSelect).not.toHaveBeenCalled();
+  });
 });
 
 describe("ReasoningEffortSelector", () => {

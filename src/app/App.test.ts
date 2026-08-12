@@ -58,7 +58,7 @@ function fakeFetchImpl(): typeof fetch {
   return async (input: string | URL | Request): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
     if (url.endsWith("/models")) {
-      return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+      return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
         status: 200,
       });
     }
@@ -492,7 +492,7 @@ describe("App component interaction tests", () => {
     const failingFetch = async (input: string | URL | Request): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith("/models")) {
-        return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+        return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
           status: 200,
         });
       }

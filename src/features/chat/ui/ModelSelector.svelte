@@ -1,6 +1,13 @@
 <script lang="ts">
   import type { ModelMetadata } from "@dispatch/transport-contract";
-  import { isVisionModel, joinModelName, modelKeys, modelsForKey, splitModelName } from "../model-select";
+  import {
+    isVisionModel,
+    joinModelName,
+    modelKeyLabel,
+    modelKeys,
+    modelsForKey,
+    splitModelName,
+  } from "../model-select";
 
   let {
     models,
@@ -27,8 +34,17 @@
   // Whether the currently-selected full model name is vision-capable.
   const selectedVision = $derived(isVisionModel(modelInfo, selected));
 
+  // Whether the currently-selected full name is PRESENT in the catalog. When a
+  // saved credential/model disappears, we show it as unavailable rather than
+  // silently switching to something else.
+  const selectedUnavailable = $derived(selected !== "" && !models.includes(selected));
+  // The key part is itself missing from the catalog (e.g. a whole numbered
+  // OpenCode credential was removed).
+  const keyUnavailable = $derived(selected !== "" && !keys.includes(current.key));
+
   // Switching key jumps to the first model available under it.
   function selectKey(key: string): void {
+    if (key === current.key) return;
     const first = modelsForKey(models, key)[0] ?? "";
     onSelect(joinModelName(key, first));
   }
@@ -50,8 +66,11 @@
     onchange={(e) => selectKey(e.currentTarget.value)}
     aria-label="Key selector"
   >
+    {#if keyUnavailable}
+      <option value={current.key} disabled>{modelKeyLabel(current.key)} (unavailable)</option>
+    {/if}
     {#each keys as key (key)}
-      <option value={key}>{key}</option>
+      <option value={key}>{modelKeyLabel(key)}</option>
     {/each}
   </select>
   <select
@@ -65,7 +84,15 @@
         {model}{#if isVisionModel(modelInfo, fullNameFor(model))} · vision{/if}
       </option>
     {/each}
+    {#if selectedUnavailable && !keyUnavailable}
+      <option value={current.model} disabled>{current.model} (unavailable)</option>
+    {/if}
   </select>
+  {#if selectedUnavailable}
+    <div class="text-xs text-warning" role="status">
+      Selected model “{selected}” is unavailable — choose another credential.
+    </div>
+  {/if}
   {#if selectedVision}
     <div class="flex items-center gap-1 text-xs text-base-content/60">
       <svg

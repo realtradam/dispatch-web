@@ -4,6 +4,7 @@
     DEFAULT_COOLDOWN_MS,
     parseCooldownInput,
     parseLimitInput,
+    providerLabel,
     statusLabel,
     type Badge,
     type ConcurrencyLimitView,
@@ -132,8 +133,8 @@
        the buttons never wrap; tight gap + narrow inputs keep the provider name
        visible; the provider shrinks via flex-1 + min-w-0). -->
   <div class="flex flex-nowrap items-center gap-1">
-    <span class="min-w-0 flex-1 truncate font-medium font-mono" title={limit.providerId}
-      >{limit.providerId}</span
+    <span class="min-w-0 flex-1 truncate font-medium" title={limit.providerId}
+      >{providerLabel(limit.providerId)}</span
     >
     <input
       type="text"

@@ -107,7 +107,7 @@ interface FakeFetchOptions {
 }
 
 function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
-  const models = opts?.models ?? ["opencode/deepseek-v4-flash", "openai/gpt-4o"];
+  const models = opts?.models ?? ["opencode-1/deepseek-v4-flash", "openai/gpt-4o"];
   const history = opts?.history ?? {};
   return async (input: string | URL | Request): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -524,7 +524,7 @@ describe("createAppStore", () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
       if (url.endsWith("/models")) {
-        return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+        return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
           status: 200,
         });
       }
@@ -573,7 +573,7 @@ describe("createAppStore", () => {
     const store = createAppStore({
       socketFactory: () => ws,
       fetchImpl: fakeFetchImpl({
-        models: ["opencode/deepseek-v4-flash", "openai/gpt-4o", "anthropic/claude-3"],
+        models: ["opencode-1/deepseek-v4-flash", "openai/gpt-4o", "anthropic/claude-3"],
       }),
       localStorage: createFakeStorage(),
     });
@@ -582,7 +582,7 @@ describe("createAppStore", () => {
     await new Promise((r) => setTimeout(r, 50));
 
     expect(store.models).toEqual([
-      "opencode/deepseek-v4-flash",
+      "opencode-1/deepseek-v4-flash",
       "openai/gpt-4o",
       "anthropic/claude-3",
     ]);
@@ -599,8 +599,59 @@ describe("createAppStore", () => {
     });
     ws.resolveOpen();
 
-    expect(store.activeModel).toBe("opencode/deepseek-v4-flash");
+    expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
 
+    store.dispose();
+  });
+
+  it("does not silently switch the active model when the selected one is absent from the catalog", async () => {
+    // The catalog only has umans; the active (default/selected) OpenCode model is
+    // NOT available. The FE must NOT auto-fall back to the first catalog model —
+    // it keeps the selection and lets the model selector surface it as unavailable.
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl({ models: ["umans/umans-glm-5.2"] }),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    await new Promise((r) => setTimeout(r, 50));
+
+    expect(store.models).toEqual(["umans/umans-glm-5.2"]);
+    expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
+
+    store.dispose();
+  });
+
+  it("migrates a legacy persisted opencode/<model> tab model to opencode-1/<model>", async () => {
+    const ws = fakeSocket();
+    // Seed localStorage with a persisted tab whose model is the OBSOLETE
+    // `opencode/deepseek-v4-flash` namespace.
+    const storage = createFakeStorage();
+    storage.setItem(
+      "dispatch.tabs",
+      JSON.stringify({
+        tabs: [
+          {
+            conversationId: "c-legacy",
+            title: "Legacy",
+            model: "opencode/deepseek-v4-flash",
+            workspaceId: "default",
+          },
+        ],
+        activeConversationId: null,
+      }),
+    );
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: storage,
+    });
+    ws.resolveOpen();
+    // After restore, the restored tab's model + the persisted store are migrated.
+    const restored = store.tabs.find((t) => t.conversationId === "c-legacy");
+    expect(restored?.model).toBe("opencode-1/deepseek-v4-flash");
+    expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
     store.dispose();
   });
 
@@ -679,7 +730,7 @@ describe("createAppStore", () => {
     store.send("first message");
 
     // New tab opens with the default model until the persisted-model fetch resolves.
-    expect(store.activeModel).toBe("opencode/deepseek-v4-flash");
+    expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
 
     // Wait for the persisted model fetch to resolve.
     await vi.waitFor(() => expect(store.activeModel).toBe("openai/gpt-4o"));
@@ -1212,7 +1263,7 @@ describe("createAppStore", () => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
       if (url.endsWith("/models")) {
-        return new Response(JSON.stringify({ models: ["opencode/deepseek-v4-flash"] }), {
+        return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
           status: 200,
         });
       }
@@ -1518,7 +1569,7 @@ describe("createAppStore", () => {
     const limits = opts?.limits ?? {
       limits: [
         { providerId: "umans", limit: 4 },
-        { providerId: "openai-compat", limit: 5 },
+        { providerId: "opencode-1", limit: 5 },
       ],
     };
     const limit = opts?.limit ?? { providerId: "umans", limit: 4 };
@@ -1526,7 +1577,7 @@ describe("createAppStore", () => {
       providers: [
         { providerId: "umans", limit: 4, inFlight: 2, queued: 1, paused: false },
         {
-          providerId: "openai-compat",
+          providerId: "opencode-1",
           limit: 5,
           inFlight: 5,
           queued: 3,
@@ -1586,7 +1637,7 @@ describe("createAppStore", () => {
     if (!result.ok) throw new Error("unreachable");
     expect(result.limits).toEqual([
       { providerId: "umans", limit: 4 },
-      { providerId: "openai-compat", limit: 5 },
+      { providerId: "opencode-1", limit: 5 },
     ]);
     store.dispose();
   });
@@ -1758,7 +1809,7 @@ describe("createAppStore", () => {
       autoReduced: false,
     });
     expect(result.providers[1]).toMatchObject({
-      providerId: "openai-compat",
+      providerId: "opencode-1",
       paused: true,
       pausedUntil: 1_719_408_000_000,
       cooldownMs: 350,
