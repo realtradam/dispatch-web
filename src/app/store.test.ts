@@ -957,6 +957,7 @@ describe("createAppStore", () => {
       if (url.endsWith("/thinking")) {
         return new Response(JSON.stringify({ conversationId: "x", thinking: false }), {
           status: 200,
+          headers: { "content-type": "application/json" },
         });
       }
       return base(input, init);
@@ -1005,6 +1006,38 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("treats a SPA-fallback response (200 + text/html) as 'never set' (null ⇒ ON)", async () => {
+    // In production (DISPATCH_WEB_DIR set), unknown API routes get the SPA
+    // fallback: index.html with HTTP 200 + text/html. This must NOT crash
+    // res.json() — it should leave `thinking` null (ON, the default).
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/thinking")) {
+        return new Response("<!DOCTYPE html><html><body>SPA fallback</body></html>", {
+          status: 200,
+          headers: { "content-type": "text/html; charset=utf-8" },
+        });
+      }
+      return base(input, init);
+    };
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    // give the (HTML) fetch a tick to settle
+    await vi.waitFor(() => {
+      expect(store.reasoningEffort).not.toBe(undefined);
+    });
+    expect(store.thinking).toBeNull();
+
+    store.dispose();
+  });
+
   it("setThinking PUTs the flag and updates local state from the echo", async () => {
     const calls: { url: string; method: string; body: string | undefined }[] = [];
     const base = fakeFetchImpl();
@@ -1015,11 +1048,13 @@ describe("createAppStore", () => {
         const sent = JSON.parse(init.body as string) as { thinking: boolean };
         return new Response(JSON.stringify({ conversationId: "x", thinking: sent.thinking }), {
           status: 200,
+          headers: { "content-type": "application/json" },
         });
       }
       if (url.endsWith("/thinking")) {
         return new Response(JSON.stringify({ conversationId: "x", thinking: null }), {
           status: 200,
+          headers: { "content-type": "application/json" },
         });
       }
       return base(input, init);

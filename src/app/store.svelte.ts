@@ -779,6 +779,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     try {
       const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/thinking`);
       if (!res.ok) return;
+      // Guard against the SPA fallback: when DISPATCH_WEB_DIR is set (production),
+      // unknown API routes get index.html with HTTP 200 + text/html instead of a
+      // 404. Treat any non-JSON 200 as "endpoint not shipped" → leave null (ON).
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) return;
       const data = (await res.json()) as ThinkingResponse;
       // Guard a slow response losing a race with a conversation switch.
       if (workspaceConversationId() === id) thinking = data.thinking ?? null;
@@ -1710,6 +1715,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
             ok: false,
             error: errBody?.error ?? `Set thinking failed (HTTP ${res.status})`,
           };
+        }
+        // Guard against the SPA fallback (200 + text/html when the endpoint
+        // is not shipped). Optimistically apply locally — the backend can't
+        // persist it, but the UI reflects the user's intent for this session.
+        const contentType = res.headers.get("content-type") ?? "";
+        if (!contentType.includes("application/json")) {
+          if (workspaceConversationId() === id) thinking = enabled;
+          return { ok: true, thinking: enabled };
         }
         const data = (await res.json()) as ThinkingResponse;
         const next = data.thinking ?? enabled;
