@@ -61,10 +61,14 @@ the backend contract that shipped in parallel (both repos on the `named-agents` 
 - `@dispatch/ui-contract`: unchanged (no surface-based named-agent mechanism — it is a regular FE view).
 
 ### Open asks / for the backend
-- None blocking. The FE aligns with the backend's shipped contract. Confirm the backend's
-  `list_agent_models` returns ONLY named agents (not the raw catalog) and that `summon_agent` accepts
-  `agent` (name/id) resolving locally to the raw model with an `unknown-agent` error — the FE relies on
-  the `/named-agents` surface for CRUD + the model selector; the agent-tool behavior is purely backend.
+- **None.** The FE aligns with the backend's shipped contract (backend commit
+  `9039559 feat(named-agents): backend for Named Agents`). Verified: the backend's
+  `list_agent_models` reads ONLY the named-agents registry (not the raw catalog), and
+  `summon_agent` accepts `agent` (name/id) resolving locally to the raw model with an
+  `unknown-agent`/exactly-one-of guard; the `/named-agents` HTTP CRUD surface
+  (`GET/POST/PUT/DELETE`) + `ChatRequest.namedAgent`/`ModelResponse.namedAgent`/
+  `SetModelRequest.namedAgent` snapshot wiring are all present in `transport-http`.
+  There is nothing outstanding for the backend to implement.
 
 ### Findings
 - The backend contract shipped the snapshot on `ChatRequest`/`ModelResponse`/`SetModelRequest` (richer
@@ -73,4 +77,5 @@ the backend contract that shipped in parallel (both repos on the `named-agents` 
 
 ### Likely next asks
 - A live probe (after the backend boots) exercising `/named-agents` CRUD + the synthetic-provider
-  selection round-trips, when the user has the backend up.
+  selection round-trips, when the user has the backend up. This is a joint/user step, NOT backend work —
+  it needs the user to boot the backend (`bin/up`), then either repo's probe can run.
