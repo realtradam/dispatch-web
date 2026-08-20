@@ -74,6 +74,12 @@ the backend contract that shipped in parallel (both repos on the `named-agents` 
 - The backend contract shipped the snapshot on `ChatRequest`/`ModelResponse`/`SetModelRequest` (richer
   than the plan's "recommended HTTP surface"); the FE uses it for the model-selector + draft promotion
   paths so backward/raw-model conversations are unaffected.
+- **FE-only bug fix (no backend change):** row identity + duplicate-name validation in `ui/NamedAgentsView.svelte`
+  previously keyed editable rows by their nullable persisted `id` (or captured `agent` object/null), so
+  drafts (`agent === null`, `id === null`) falsely collided with their OWN name and saving/removing one of
+  multiple drafts could reconcile all of them. Fixed by identifying rows solely by each `Row`'s stable
+  numeric `key` for the other-names exclusion, the live `isNameTaken` predicate, and the save/remove
+  reconciliation. Direct component-level regression coverage added in `ui/NamedAgentsView.test.ts`.
 
 ### Likely next asks
 - A live probe (after the backend boots) exercising `/named-agents` CRUD + the synthetic-provider

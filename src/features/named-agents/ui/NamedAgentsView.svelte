@@ -39,59 +39,62 @@
     });
   });
 
-  /** The other rows' names (excluding the row with `exceptId`, or the given draft) — for the uniqueness hint. */
-  function otherNamesOf(exceptId: string | null): readonly string[] {
+  /**
+   * The other rows' names (excluding the row with `rowKey`) for the uniqueness
+   * hint. Identity is the ROW's stable `key` — a draft (`agent === null`) must
+   * still exclude ITSELF (otherwise a fresh draft collides with its own name),
+   * while any OTHER draft is a genuine sibling.
+   */
+  function otherNamesOf(rowKey: number): readonly string[] {
     const out: string[] = [];
     for (const r of rows) {
-      if (r.agent !== null) {
-        if (r.agent.id !== exceptId) out.push(r.agent.name);
-      } else if (exceptId === null) {
-        out.push(r.controller.draft.name);
-      }
+      if (r.key === rowKey) continue;
+      out.push(r.agent !== null ? r.agent.name : r.controller.draft.name);
     }
     return out;
   }
 
-  /** Live uniqueness predicate for a card: true when `name` collides with a SIBLING row (excludes the card's own id). */
-  function isNameTakenFor(exceptId: string | null): (name: string) => boolean {
+  /**
+   * Live uniqueness predicate for a card: true when `name` collides with a
+   * SIBLING row (excludes the card's own row by its stable `rowKey` — not by a
+   * nullable persisted id, so a draft excludes itself exactly once).
+   */
+  function isNameTakenFor(rowKey: number): (name: string) => boolean {
     return (name: string): boolean => {
       const lower = name.trim().toLowerCase();
       for (const r of rows) {
-        if (r.agent !== null) {
-          if (r.agent.id !== exceptId && r.agent.name.trim().toLowerCase() === lower) return true;
-        } else if (exceptId === null && r.controller.draft.name.trim().toLowerCase() === lower) {
-          return true;
-        }
+        if (r.key === rowKey) continue;
+        const candidate = r.agent !== null ? r.agent.name : r.controller.draft.name;
+        if (candidate.trim().toLowerCase() === lower) return true;
       }
       return false;
     };
   }
 
   function addRow(agent: NamedAgent | null): void {
-    const exceptId = agent?.id ?? null;
+    // Capture the row's stable key FIRST so the controller's callbacks reconcile
+    // THIS row only — never a sibling draft (`agent === null` matches all).
+    const key = nextKey++;
     const controller = createCardController({
       agent,
       savedModel: agent?.model ?? "",
-      isNameTaken: isNameTakenFor(exceptId),
+      isNameTaken: isNameTakenFor(key),
       ports,
-      onChanged: (saved) => replaceAgent(agent, saved),
-      onRemoved: () => removeRow(agent),
+      onChanged: (saved) => replaceAgent(key, saved),
+      onRemoved: () => removeRow(key),
     });
-    rows = [...rows, { key: nextKey++, agent, controller }];
+    rows = [...rows, { key, agent, controller }];
   }
 
-  function replaceAgent(original: NamedAgent | null, saved: NamedAgent): void {
-    rows = rows.map((r) => {
-      const sameOriginal = r.agent === original || (r.agent === null && original === null);
-      return sameOriginal ? { ...r, agent: saved } : r;
-    });
+  function replaceAgent(key: number, saved: NamedAgent): void {
+    rows = rows.map((r) => (r.key === key ? { ...r, agent: saved } : r));
   }
 
-  function removeRow(agent: NamedAgent | null): void {
-    const row = rows.find((r) => r.agent === agent || (agent === null && r.agent === null));
+  function removeRow(key: number): void {
+    const row = rows.find((r) => r.key === key);
     if (row === undefined) return;
     row.controller.dispose();
-    rows = rows.filter((r) => r !== row);
+    rows = rows.filter((r) => r.key !== key);
   }
 
   function addDraft(): void {
@@ -107,7 +110,7 @@
           models={models}
           agent={row.agent}
           controller={row.controller}
-          otherNames={otherNamesOf(row.agent?.id ?? null)}
+          otherNames={otherNamesOf(row.key)}
         />
       </li>
     {/each}
