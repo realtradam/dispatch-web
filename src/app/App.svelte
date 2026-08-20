@@ -45,6 +45,12 @@
 	import { manifest as tabsManifest, TabList } from "../features/tabs";
 	import { manifest as viewsManifest, ViewSidebar } from "../features/views";
 	import {
+		manifest as namedAgentsManifest,
+		NamedAgentsView,
+		type NamedAgentInput,
+		type NamedAgentSelectionSnapshot,
+	} from "../features/named-agents";
+	import {
 		CwdField,
 		type CwdSaveResult,
 		LspStatusView,
@@ -119,6 +125,7 @@
 	const viewKinds = [
 		{ id: "tabs", label: "Tabs" },
 		{ id: "model", label: "Model" },
+		{ id: "named-agents", label: "Named Agents" },
 		{ id: "lsp", label: "Language Servers" },
 		{ id: "mcp", label: "MCP Servers" },
 		{ id: "extensions", label: "Extensions" },
@@ -167,6 +174,7 @@
 		heartbeatManifest,
 		concurrencyManifest,
 		visionManifest,
+		namedAgentsManifest,
 	].map((m) => [m.name, m.description] as const);
 
 	// Smart-scroll: keep the transcript pinned to the bottom while it streams,
@@ -309,6 +317,21 @@
 	function handleSelectModel(model: string) {
 		store.selectModel(model);
 	}
+
+	// A Named Agent selected in the model selector: resolve it to its raw model
+	// AND record the snapshot on the active conversation (plan §6/§7). The store
+	// persists the raw model to `/conversations/:id/model` + retains the snapshot
+	// on the tab.
+	function handleSelectNamedAgent(snapshot: NamedAgentSelectionSnapshot) {
+		store.selectModel(snapshot.model, snapshot);
+	}
+
+	// Adapt the store's Named Agent CRUD to the named-agents feature's ports.
+	const namedAgentPorts = {
+		create: (input: NamedAgentInput) => store.createNamedAgent(input),
+		update: (id: string, input: NamedAgentInput) => store.updateNamedAgent(id, input),
+		remove: (id: string) => store.deleteNamedAgent(id),
+	};
 
 	// Adapt the store's WarmResult to the cache-warming feature's WarmNow port.
 	async function warmNow(): Promise<WarmFeedback | null> {
@@ -754,6 +777,9 @@
 			selected={store.activeModel}
 			onSelect={handleSelectModel}
 			modelInfo={store.modelInfo}
+			namedAgents={store.namedAgents}
+			namedAgentSnapshot={store.namedAgentSnapshot}
+			onSelectNamedAgent={handleSelectNamedAgent}
 		/>
 			<!-- Keyed on the workspace conversation (active tab OR draft) so the inputs
 			     re-mount per conversation — incl. switching between drafts — and can't
@@ -775,6 +801,15 @@
 				/>
 			{/key}
 		</div>
+	{:else if kind === "named-agents"}
+		<!-- Named Agents: a global, collapsible sidebar view of curated presets.
+		     The store owns the list (authoritative for the model selector + agent
+		     tooling); the view drives CRUD via injected ports (auto-save). -->
+		<NamedAgentsView
+			agents={store.namedAgents}
+			models={store.models}
+			ports={namedAgentPorts}
+		/>
 	{:else if kind === "lsp"}
 		<!-- Re-mount per conversation (incl. draft) so the loaded server list is isolated. -->
 		{#key store.currentConversationId}

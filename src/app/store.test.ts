@@ -1,5 +1,6 @@
 import type { ConversationHistoryResponse, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
+import type { NamedAgent } from "@dispatch/wire";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
 import { createAppStore } from "./store.svelte";
@@ -104,15 +105,66 @@ interface FakeFetchOptions {
   models?: readonly string[];
   history?: Record<string, ConversationHistoryResponse>;
   model?: string | null;
+  /** Persisted Named Agents (GET /named-agents + CRUD in-memory). */
+  namedAgents?: readonly NamedAgent[];
 }
 
 function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
   const models = opts?.models ?? ["opencode-1/deepseek-v4-flash", "openai/gpt-4o"];
   const history = opts?.history ?? {};
-  return async (input: string | URL | Request): Promise<Response> => {
+  // In-memory Named Agent store for the CRUD routes (the fake fetch mimics the
+  // backend's /named-agents surface).
+  let namedAgents: NamedAgent[] = opts?.namedAgents ? [...opts.namedAgents] : [];
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    const method =
+      init?.method ?? (typeof input !== "string" && !(input instanceof URL) ? input.method : "GET");
+    const bodyText =
+      typeof init?.body === "string"
+        ? init.body
+        : typeof input !== "string" &&
+            !(input instanceof URL) &&
+            typeof input.body !== "undefined" &&
+            "body" in input
+          ? await input.clone().text()
+          : null;
     if (url.endsWith("/models")) {
       return new Response(JSON.stringify({ models }), { status: 200 });
+    }
+    if (url.endsWith("/named-agents") && method === "GET") {
+      return new Response(JSON.stringify({ namedAgents }), { status: 200 });
+    }
+    if (url.endsWith("/named-agents") && method === "POST") {
+      const payload =
+        bodyText === null
+          ? null
+          : (JSON.parse(bodyText) as { name?: string; model?: string } | null);
+      const agent: NamedAgent = {
+        id: `na-${namedAgents.length + 1}`,
+        name: payload?.name ?? "",
+        model: payload?.model ?? "",
+      };
+      namedAgents = [...namedAgents, agent];
+      return new Response(JSON.stringify({ namedAgent: agent }), { status: 201 });
+    }
+    if (url.includes("/named-agents/") && method === "PUT") {
+      const id = url.split("/named-agents/")[1] ?? "";
+      const payload =
+        bodyText === null
+          ? null
+          : (JSON.parse(bodyText) as { name?: string; model?: string } | null);
+      const updated: NamedAgent = {
+        id,
+        name: payload?.name ?? "",
+        model: payload?.model ?? "",
+      };
+      namedAgents = namedAgents.map((a) => (a.id === id ? updated : a));
+      return new Response(JSON.stringify({ namedAgent: updated }), { status: 200 });
+    }
+    if (url.includes("/named-agents/") && method === "DELETE") {
+      const id = url.split("/named-agents/")[1] ?? "";
+      namedAgents = namedAgents.filter((a) => a.id !== id);
+      return new Response(JSON.stringify({ id }), { status: 200 });
     }
     if (url.endsWith("/model")) {
       return new Response(
@@ -2273,6 +2325,126 @@ describe("createAppStore — vision settings (global)", () => {
     if (result !== null && !result.ok) {
       expect(result.error).toContain("invalid imageLimit");
     }
+    store.dispose();
+  });
+});
+
+describe("createAppStore — Named Agents", () => {
+  it("seeds namedAgents from GET /named-agents on boot", async () => {
+    const ws = fakeSocket();
+    const agents: readonly NamedAgent[] = [
+      { id: "na-1", name: "Coding Agent", model: "opencode-1/claude-sonnet-4.5" },
+    ];
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl({ namedAgents: agents }),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    await vi.waitFor(() => expect(store.namedAgents).toEqual(agents));
+    store.dispose();
+  });
+
+  it("createNamedAgent appends to the store list", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    const result = await store.createNamedAgent({ name: "Research", model: "umans/glm" });
+    expect(result.ok).toBe(true);
+    if (result.ok) {
+      expect(result.agent.id).toBe("na-1");
+      expect(store.namedAgents).toHaveLength(1);
+      expect(store.namedAgents[0]?.name).toBe("Research");
+    }
+    store.dispose();
+  });
+
+  it("updateNamedAgent updates the record in place", async () => {
+    const ws = fakeSocket();
+    const agents: readonly NamedAgent[] = [
+      { id: "na-1", name: "Coding Agent", model: "opencode-1/claude-sonnet-4.5" },
+    ];
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl({ namedAgents: agents }),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    const result = await store.updateNamedAgent("na-1", {
+      name: "Coding",
+      model: "opencode-1/new",
+    });
+    expect(result.ok).toBe(true);
+    expect(store.namedAgents[0]?.name).toBe("Coding");
+    expect(store.namedAgents[0]?.model).toBe("opencode-1/new");
+    store.dispose();
+  });
+
+  it("deleteNamedAgent removes the record immediately", async () => {
+    const ws = fakeSocket();
+    const agents: readonly NamedAgent[] = [
+      { id: "na-1", name: "Coding Agent", model: "opencode-1/claude-sonnet-4.5" },
+      { id: "na-2", name: "Research Agent", model: "umans/glm" },
+    ];
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl({ namedAgents: agents }),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+    await vi.waitFor(() => expect(store.namedAgents).toHaveLength(agents.length));
+
+    const result = await store.deleteNamedAgent("na-1");
+    expect(result.ok).toBe(true);
+    expect(store.namedAgents.map((a) => a.id)).toEqual(["na-2"]);
+    store.dispose();
+  });
+
+  it("selectModel records a Named Agent snapshot on the active conversation", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    store.selectModel("opencode-1/claude-sonnet-4.5", {
+      namedAgentId: "na-1",
+      namedAgentName: "Coding Agent",
+      model: "opencode-1/claude-sonnet-4.5",
+    });
+
+    expect(store.activeModel).toBe("opencode-1/claude-sonnet-4.5");
+    expect(store.namedAgentSnapshot?.namedAgentName).toBe("Coding Agent");
+    store.dispose();
+  });
+
+  it("selectModel without a snapshot clears a prior Named Agent selection", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    store.selectModel("opencode-1/claude-sonnet-4.5", {
+      namedAgentId: "na-1",
+      namedAgentName: "Coding Agent",
+      model: "opencode-1/claude-sonnet-4.5",
+    });
+    store.selectModel("openai/gpt-4o");
+
+    expect(store.activeModel).toBe("openai/gpt-4o");
+    expect(store.namedAgentSnapshot).toBeNull();
     store.dispose();
   });
 });

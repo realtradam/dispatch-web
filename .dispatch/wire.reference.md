@@ -6,6 +6,16 @@
 >
 > **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers + provider-retry + concurrency-`queued` status). Regenerate whenever `@dispatch/wire` changes.
 >
+> **2026-08-20 delta (Named Agents — ADDITIVE, no version bump):** `@dispatch/wire` now exports two
+> named-agent shapes the FE consumes (`named-agents-plan.md`): `NamedAgent`
+> `{ id, name, model }` (a user-curated model preset; `model` = canonical `<provider>/<model>`) and
+> `NamedAgentSelectionSnapshot` `{ namedAgentId, namedAgentName, model }` (the snapshot a conversation
+> retains when selected via a Named Agent — plan §7). These mirror the backend's `packages/named-agents`.
+> The FE re-exports them from this package (`features/named-agents/logic/types.ts`) rather than
+> duplicating. Transport-contract also carries the `/named-agents` HTTP request/response types +
+> `ChatRequest.namedAgent` / `ModelResponse.namedAgent` / `SetModelRequest.namedAgent` (see
+> `transport-contract.reference.md`).
+>
 > **2026-06-27 delta (workspace starring — ADDITIVE to `wire@0.12.0`, NO version bump):** `Workspace` gains a
 > required `starred: boolean` (defaults to `false` on creation). A starred workspace's agents receive
 > PRIORITY in the concurrency limiter queue — they jump ahead of agents from non-starred workspaces

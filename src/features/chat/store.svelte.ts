@@ -34,6 +34,7 @@ import {
   selectOrderedTurnMetrics,
 } from "../../core/metrics";
 import type { ConversationCache } from "../conversation-cache";
+import type { NamedAgentSelectionSnapshot } from "../named-agents";
 import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 
 export interface ChatStoreDependencies {
@@ -145,6 +146,15 @@ export interface ChatStore {
   cancelQueuedMessage(messageId: string): void;
   setModel(model: string): void;
   /**
+   * Set (or clear, with null) the Named Agent selection snapshot this chat sends
+   * with `chat.send` (plan §7). The backend persists it on the conversation at
+   * creation so it freezes the friendly id/name + resolved model — later edits to
+   * the Named Agent do not change this conversation's selection. The raw model
+   * (already set via `setModel`) is sent alongside; the snapshot is display/identity
+   * metadata that preserves HOW it was selected.
+   */
+  setNamedAgent(snapshot: NamedAgentSelectionSnapshot | null): void;
+  /**
    * Update the chat limit LIVE: re-normalizes, then adjusts the loaded window.
    * Lowering it unloads older committed chunks (deferred via the gate while the
    * reader is scrolled up, catching up on the next mutation). Raising it
@@ -180,6 +190,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
   let _pendingSync = $state(false);
   let _error = $state<string | null>(null);
   let _model = $state<string | undefined>(deps.model);
+  let _namedAgent = $state<NamedAgentSelectionSnapshot | null>(null);
   let disposed = false;
 
   let chatLimit = normalizeChatLimit(deps.chatLimit);
@@ -342,6 +353,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
         conversationId: deps.conversationId,
         message: text,
         ...(_model !== undefined ? { model: _model } : {}),
+        ...(_namedAgent !== null ? { namedAgent: _namedAgent } : {}),
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
         ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
       };
@@ -377,6 +389,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
     setModel(model: string): void {
       _model = model;
+    },
+
+    setNamedAgent(snapshot: NamedAgentSelectionSnapshot | null): void {
+      _namedAgent = snapshot;
     },
 
     async setChatLimit(limit: number): Promise<void> {

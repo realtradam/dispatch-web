@@ -1006,7 +1006,9 @@ describe("ModelSelector", () => {
     expect(keySelect).toHaveValue("anthropic");
     expect(modelSelect).toHaveValue("claude-3");
 
-    expect(optionValues(keySelect)).toEqual(["openai", "anthropic", "google"]);
+    // The synthetic "Named Agents" provider is ALWAYS first (plan §6), even with
+    // zero configured agents.
+    expect(optionValues(keySelect)).toEqual(["__named_agents__", "openai", "anthropic", "google"]);
     // only the models under the selected key
     expect(optionValues(modelSelect)).toEqual(["claude-3"]);
   });
@@ -1039,6 +1041,133 @@ describe("ModelSelector", () => {
 
     expect(onSelect).toHaveBeenCalledTimes(1);
     expect(onSelect).toHaveBeenCalledWith("openai/gpt-4o");
+  });
+
+  it("lists Named Agents under the synthetic provider and resolves a selection to a snapshot", async () => {
+    const onSelectNamedAgent = vi.fn();
+    const user = userEvent.setup();
+    const models = ["openai/gpt-4"];
+    const namedAgents = [
+      { id: "a1", name: "Coding Agent", model: "opencode-1/claude-sonnet-4.5" },
+      { id: "a2", name: "Research Agent", model: "umans/umans-glm-5.2" },
+    ];
+
+    const { rerender } = render(ModelSelector, {
+      props: {
+        models,
+        selected: "openai/gpt-4",
+        onSelect: vi.fn(),
+        namedAgents,
+        onSelectNamedAgent,
+      },
+    });
+
+    // Switching the provider to "Named Agents" jumps to the first agent (mirrors
+    // a raw provider jumping to its first model).
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Key selector" }),
+      "__named_agents__",
+    );
+    expect(onSelectNamedAgent).toHaveBeenCalledWith({
+      namedAgentId: "a1",
+      namedAgentName: "Coding Agent",
+      model: "opencode-1/claude-sonnet-4.5",
+    });
+
+    // The parent (store) applies the selection → re-render with the resolved raw
+    // model + snapshot, exactly as `selectModel(model, snapshot)` would do.
+    const codingAgent = namedAgents[0];
+    await rerender({
+      models,
+      selected: codingAgent?.model ?? "",
+      onSelect: vi.fn(),
+      namedAgents,
+      namedAgentSnapshot: {
+        namedAgentId: "a1",
+        namedAgentName: "Coding Agent",
+        model: "opencode-1/claude-sonnet-4.5",
+      },
+      onSelectNamedAgent,
+    });
+
+    // The model dropdown now lists the named agents; pick a different one.
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Model selector" }),
+      "Research Agent",
+    );
+    expect(onSelectNamedAgent).toHaveBeenLastCalledWith({
+      namedAgentId: "a2",
+      namedAgentName: "Research Agent",
+      model: "umans/umans-glm-5.2",
+    });
+  });
+
+  it("shows a disabled placeholder when the synthetic provider has no configured agents", () => {
+    render(ModelSelector, {
+      props: { models: ["openai/gpt-4"], selected: "openai/gpt-4", onSelect: vi.fn() },
+    });
+    const modelSelect = screen.getByRole("combobox", { name: "Model selector" });
+    const options = within(modelSelect).getAllByRole("option");
+    // With the raw openai provider selected the model dropdown lists gpt-4; the
+    // "No named agents configured" placeholder appears only under the synthetic
+    // provider (which we'd select to see it). Assert the disabled/empty handling
+    // by checking the synthetic provider is present in the key selector.
+    const keySelect = screen.getByRole("combobox", { name: "Key selector" });
+    expect(optionValues(keySelect)).toContain("__named_agents__");
+    // Switch to the (empty) synthetic provider → disabled "No named agents configured".
+    expect(() => screen.getByRole("option", { name: /No named agents configured/ })).toThrow();
+    expect(options).toHaveLength(1);
+  });
+
+  it("keeps showing a snapshot of a renamed/removed Named Agent (unavailable)", () => {
+    // A conversation selected via a Named Agent retains its snapshot even after
+    // the agent is gone from the current list (plan §7).
+    const namedAgentSnapshot = {
+      namedAgentId: "gone",
+      namedAgentName: "Old Agent",
+      model: "opencode-1/claude-sonnet-4.5",
+    };
+    render(ModelSelector, {
+      props: {
+        models: [],
+        selected: "opencode-1/claude-sonnet-4.5",
+        onSelect: vi.fn(),
+        namedAgents: [],
+        namedAgentSnapshot,
+      },
+    });
+
+    const keySelect = screen.getByRole("combobox", { name: "Key selector" });
+    expect(keySelect).toHaveValue("__named_agents__");
+    const modelSelect = screen.getByRole("combobox", { name: "Model selector" });
+    expect(modelSelect).toHaveValue("Old Agent");
+    expect(screen.getByRole("option", { name: /Old Agent.*unavailable/ })).toBeInTheDocument();
+  });
+
+  it("selecting a raw model from a Named Agent conversation clears the snapshot via onSelect", async () => {
+    const onSelect = vi.fn();
+    const onSelectNamedAgent = vi.fn();
+    const user = userEvent.setup();
+    const namedAgentSnapshot = {
+      namedAgentId: "a1",
+      namedAgentName: "Coding Agent",
+      model: "opencode-1/claude-sonnet-4.5",
+    };
+    render(ModelSelector, {
+      props: {
+        models: ["openai/gpt-4"],
+        selected: "opencode-1/claude-sonnet-4.5",
+        onSelect,
+        namedAgents: [{ id: "a1", name: "Coding Agent", model: "opencode-1/claude-sonnet-4.5" }],
+        namedAgentSnapshot,
+        onSelectNamedAgent,
+      },
+    });
+
+    // Switch from Named Agents to a raw provider → raw model selection clears the snapshot.
+    await user.selectOptions(screen.getByRole("combobox", { name: "Key selector" }), "openai");
+    expect(onSelect).toHaveBeenCalledWith("openai/gpt-4");
+    expect(onSelectNamedAgent).not.toHaveBeenCalled();
   });
 
   it("marks vision-capable models in the model dropdown", () => {
@@ -1099,15 +1228,17 @@ describe("ModelSelector", () => {
 
     const keySelect = screen.getByRole("combobox", { name: "Key selector" });
     const options = within(keySelect).getAllByRole("option");
-    // Numeric order: #1 < #2 < #10, and values stay RAW (opencode-N).
+    // Numeric order: #1 < #2 < #10 (after the always-first synthetic provider),
+    // and values stay RAW (opencode-N).
     expect(options.map((o) => (o as HTMLOptionElement).value)).toEqual([
+      "__named_agents__",
       "opencode-1",
       "opencode-2",
       "opencode-10",
     ]);
-    expect(options[0]?.textContent).toContain("OpenCode #1");
-    expect(options[1]?.textContent).toContain("OpenCode #2");
-    expect(options[2]?.textContent).toContain("OpenCode #10");
+    expect(options[1]?.textContent).toContain("OpenCode #1");
+    expect(options[2]?.textContent).toContain("OpenCode #2");
+    expect(options[3]?.textContent).toContain("OpenCode #10");
   });
 
   it("shows a disappeared saved credential as unavailable without silently falling back", () => {

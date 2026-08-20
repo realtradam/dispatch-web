@@ -6,12 +6,19 @@ export type {
 } from "../../core/chunks";
 export { groupRenderedChunks, resolveImageUrl, viewProviderRetry } from "../../core/chunks";
 export type { TurnMetricsEntry } from "../../core/metrics";
+export type { NamedAgentLike, NamedAgentSnapshotLike } from "./model-select";
 export {
+  isNamedAgentSelection,
   isNumberedOpenCode,
   isVisionModel,
   migrateLegacyModelName,
   modelKeyLabel,
+  NAMED_AGENTS_PROVIDER,
+  namedAgentNames,
+  namedAgentSelectionLabel,
+  namedAgentsProviderLabel,
   openCodeNumber,
+  providerKeysWithNamedAgents,
 } from "./model-select";
 export type { ChatTransport, HistorySync, HistoryWindow, MetricsSync } from "./ports";
 export type {

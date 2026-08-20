@@ -1,12 +1,18 @@
 import { describe, expect, it } from "vitest";
 import {
+  isNamedAgentSelection,
   isVisionModel,
   joinModelName,
   migrateLegacyModelName,
   modelKeyLabel,
   modelKeys,
   modelsForKey,
+  NAMED_AGENTS_PROVIDER,
+  namedAgentNames,
+  namedAgentSelectionLabel,
+  namedAgentsProviderLabel,
   openCodeNumber,
+  providerKeysWithNamedAgents,
   splitModelName,
 } from "./model-select";
 
@@ -141,5 +147,48 @@ describe("isVisionModel", () => {
 
   it("returns false for an empty modelInfo map", () => {
     expect(isVisionModel({}, "kimi/k2")).toBe(false);
+  });
+});
+
+describe("named-agent provider helpers", () => {
+  it("providerKeysWithNamedAgents puts the synthetic provider first, then raw keys", () => {
+    expect(providerKeysWithNamedAgents(["openai/gpt-4", "anthropic/claude"])).toEqual([
+      NAMED_AGENTS_PROVIDER,
+      "openai",
+      "anthropic",
+    ]);
+    // Always present even with zero models.
+    expect(providerKeysWithNamedAgents([])).toEqual([NAMED_AGENTS_PROVIDER]);
+  });
+
+  it("namedAgentsProviderLabel + NAMED_AGENTS_PROVIDER are stable", () => {
+    expect(namedAgentsProviderLabel()).toBe("Named Agents");
+    expect(NAMED_AGENTS_PROVIDER).toBe("__named_agents__");
+  });
+
+  it("namedAgentNames returns the display names", () => {
+    expect(namedAgentNames([{ id: "a", name: "Coding", model: "m" }])).toEqual(["Coding"]);
+  });
+
+  it("isNamedAgentSelection is true only for a snapshot whose model equals the selection", () => {
+    expect(
+      isNamedAgentSelection("opencode-1/claude", {
+        namedAgentId: "a",
+        namedAgentName: "C",
+        model: "opencode-1/claude",
+      }),
+    ).toBe(true);
+    expect(
+      isNamedAgentSelection("other/model", {
+        namedAgentId: "a",
+        namedAgentName: "C",
+        model: "opencode-1/claude",
+      }),
+    ).toBe(false);
+    expect(isNamedAgentSelection("opencode-1/claude", null)).toBe(false);
+  });
+
+  it("namedAgentSelectionLabel renders 'Named Agents -> <name>'", () => {
+    expect(namedAgentSelectionLabel("Coding")).toBe("Named Agents -> Coding");
   });
 });

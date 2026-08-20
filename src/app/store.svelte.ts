@@ -80,6 +80,15 @@ import type {
   HeartbeatStopResult,
 } from "../features/heartbeat";
 import { normalizeHeartbeatConfig, normalizeHeartbeatRuns } from "../features/heartbeat";
+import type {
+  NamedAgent,
+  NamedAgentDeleteResult,
+  NamedAgentInput,
+  NamedAgentSaveResult,
+  NamedAgentSelectionSnapshot,
+  NamedAgentsResult,
+} from "../features/named-agents";
+import { normalizeNamedAgentRecord, normalizeNamedAgents } from "../features/named-agents";
 import type { Tab, TabsState } from "../features/tabs";
 import { createTabsStore, deriveTitle, type TabsStore } from "../features/tabs";
 import {
@@ -224,7 +233,8 @@ export interface AppStore {
    * message is a silent server no-op (nothing to roll back).
    */
   cancelQueuedMessage(messageId: string): void;
-  selectModel(model: string): void;
+  /** Select a raw model for the active conversation. Pass `snapshot` to record a Named Agent selection (plan §7). */
+  selectModel(model: string, snapshot?: NamedAgentSelectionSnapshot): void;
   newDraft(): void;
   /** Switch the active workspace (on route change) + reset to a fresh draft in it. */
   setActiveWorkspace(workspaceId: string): void;
@@ -518,6 +528,39 @@ export interface AppStore {
   readonly fatalError: string | null;
   /** Dismiss the fatal error (called by the error modal's X button). */
   clearFatalError(): void;
+  // ── Named Agents (global config; plan §9) ──────────────────────────────────
+  /**
+   * The persisted Named Agents (from `GET /named-agents`). Global user config
+   * (not per-workspace); seeded on boot. Drives the sidebar editor AND the
+   * synthetic "Named Agents" provider in the model selector (plan §6).
+   */
+  readonly namedAgents: readonly NamedAgent[];
+  /**
+   * The active conversation's Named Agent selection snapshot (plan §7), or null
+   * when it was selected via a raw model. Survives the Named Agent being renamed
+   * / removed (the snapshot retains the friendly label + captured raw model).
+   */
+  readonly namedAgentSnapshot: NamedAgentSelectionSnapshot | null;
+  /** Refetch the Named Agents (`GET /named-agents`). */
+  refreshNamedAgents(): Promise<NamedAgentsResult>;
+  /**
+   * Create a Named Agent (`POST /named-agents`). On success the store's
+   * `namedAgents` list is updated (append/replace) so every consumer — the
+   * sidebar editor AND the model selector — reflects it without a reload.
+   */
+  createNamedAgent(input: NamedAgentInput): Promise<NamedAgentSaveResult>;
+  /**
+   * Update a Named Agent (`PUT /named-agents/:id`). On success the store list is
+   * updated in place. Returns the canonical saved record.
+   */
+  updateNamedAgent(id: string, input: NamedAgentInput): Promise<NamedAgentSaveResult>;
+  /**
+   * Remove a Named Agent (`DELETE /named-agents/:id`). On success it leaves the
+   * store list immediately (removing it from the sidebar + model selector), and
+   * does NOT alter conversations that previously selected it (those keep their
+   * snapshot — plan §7).
+   */
+  deleteNamedAgent(id: string): Promise<NamedAgentDeleteResult>;
   dispose(): void;
 }
 
@@ -557,6 +600,16 @@ function createMetricsSync(httpBase: string, fetchImpl: typeof fetch): MetricsSy
   };
 }
 
+/** Replace-or-append a Named Agent into a list (immutably), keyed by id. */
+function upsertNamedAgentList(
+  agents: readonly NamedAgent[],
+  agent: NamedAgent,
+): readonly NamedAgent[] {
+  const idx = agents.findIndex((a) => a.id === agent.id);
+  if (idx === -1) return [...agents, agent];
+  return agents.map((a) => (a.id === agent.id ? agent : a));
+}
+
 export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   let protocol = $state<ProtocolState>(protocolInitialState());
   let models = $state<readonly string[]>([]);
@@ -566,7 +619,19 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // `~/.ssh/config`).
   let computers = $state<readonly ComputerEntry[]>([]);
   let activeModel = $state(DEFAULT_MODEL);
+  // The persisted Named Agents (global user config). Seeded from the backend on
+  // boot + kept in sync by the CRUD methods; drives both the sidebar editor and
+  // the synthetic model-selector provider.
+  let namedAgents = $state<readonly NamedAgent[]>([]);
+  // The active conversation's Named Agent snapshot (null when selected via a raw
+  // model). Derived from the active tab; survives a Named Agent being edited.
+  let namedAgentSnapshot = $state<NamedAgentSelectionSnapshot | null>(null);
   let fatalError = $state<string | null>(null);
+
+  /** Replace-or-append a Named Agent into the reactive list (immutably). */
+  function upsertNamedAgent(agent: NamedAgent): void {
+    namedAgents = upsertNamedAgentList(namedAgents, agent);
+  }
 
   // The workspace currently in view (its URL slug); "default" until routing
   // sets it. Tabs are filtered to this workspace; a new conversation is stamped
@@ -725,14 +790,21 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       if (!res.ok) return;
       const data = (await res.json()) as ModelResponse;
       if (workspaceConversationId() !== id) return;
+      // The backend is authoritative for the persisted snapshot: restore how the
+      // conversation was selected (a Named Agent, or none). Falls back to the tab's
+      // local snapshot when the response omits it (older backend).
+      namedAgentSnapshot = data.namedAgent ?? namedAgentSnapshot;
       if (typeof data.model === "string" && data.model.length > 0) {
         activeModel = data.model;
         const activeId = tabsStore.activeConversationId;
         if (activeId !== null) {
           tabsStore.setModel(activeId, data.model);
+          tabsStore.setSnapshot(activeId, namedAgentSnapshot);
           chatStores.get(activeId)?.setModel(data.model);
+          chatStores.get(activeId)?.setNamedAgent(namedAgentSnapshot);
         } else {
           draftStore.setModel(data.model);
+          draftStore.setNamedAgent(namedAgentSnapshot);
         }
       }
     } catch (err) {
@@ -1267,6 +1339,21 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       reportError("Failed to load computer list", err);
     });
 
+  // Fetch the persisted Named Agents (global user config). Seeded on boot so the
+  // sidebar editor + the synthetic model-selector provider have data immediately.
+  // Non-fatal: a failure leaves an empty list (the user can add agents).
+  void fetchImpl(`${httpBase}/named-agents`)
+    .then((res) => {
+      if (!res.ok) return { namedAgents: [] } as { namedAgents: NamedAgent[] };
+      return res.json() as Promise<{ namedAgents: NamedAgent[] }>;
+    })
+    .then((data) => {
+      namedAgents = normalizeNamedAgents(data);
+    })
+    .catch((err) => {
+      reportError("Failed to load named agents", err);
+    });
+
   // Restore persisted tabs
   const persistedState = storageAdapter.load();
   if (persistedState !== null && persistedState.tabs.length > 0) {
@@ -1292,6 +1379,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       );
       if (activeTab !== undefined) {
         activeModel = migrateLegacyModelName(activeTab.model);
+        namedAgentSnapshot = activeTab.snapshot ?? null;
       }
     }
   }
@@ -1331,6 +1419,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       draftStore = createChatFor(nextDraftId, activeModel, workspaceId);
       draftConversationId = nextDraftId;
       tabsStore.newDraft();
+      namedAgentSnapshot = null;
       refreshActiveChat();
       syncSubscriptions();
       void refreshCwd();
@@ -1414,14 +1503,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
     send(text: string, images?: readonly ImageInput[]): void {
       if (tabsStore.activeConversationId === null) {
-        // Draft: promote to tab on first send
+        // Draft: promote to tab on first send. Carry a Named Agent selection's
+        // snapshot so the promoted conversation retains how it was selected (§7).
         const conversationId = draftConversationId;
         const model = activeModel;
+        const snapshot = namedAgentSnapshot ?? undefined;
         tabsStore.createTab({
           conversationId,
           model,
           title: deriveTitle(text),
           workspaceId: activeWorkspaceId,
+          ...(snapshot ? { snapshot } : {}),
         });
         chatStores.set(conversationId, draftStore);
         void draftStore.load();
@@ -1465,21 +1557,26 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       activeChat.cancelQueuedMessage(messageId);
     },
 
-    selectModel(model: string): void {
+    selectModel(model: string, snapshot?: NamedAgentSelectionSnapshot): void {
       activeModel = model;
+      namedAgentSnapshot = snapshot ?? null;
       const activeId = tabsStore.activeConversationId;
       if (activeId !== null) {
         tabsStore.setModel(activeId, model);
+        tabsStore.setSnapshot(activeId, snapshot ?? null);
         chatStores.get(activeId)?.setModel(model);
+        chatStores.get(activeId)?.setNamedAgent(snapshot ?? null);
+        const body: SetModelRequest = { model, ...(snapshot ? { namedAgent: snapshot } : {}) };
         void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(activeId)}/model`, {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ model } satisfies SetModelRequest),
+          body: JSON.stringify(body),
         }).catch((err) => {
           reportError("Failed to persist model", err);
         });
       } else {
         draftStore.setModel(model);
+        draftStore.setNamedAgent(snapshot ?? null);
       }
     },
 
@@ -1488,6 +1585,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       const nextDraftId = randomId();
       draftStore = createChatFor(nextDraftId, activeModel, activeWorkspaceId);
       draftConversationId = nextDraftId;
+      namedAgentSnapshot = null;
       refreshActiveChat();
       syncSubscriptions();
       void refreshCwd();
@@ -1503,6 +1601,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       const tab = tabsStore.tabs.find((t) => t.conversationId === conversationId);
       if (tab !== undefined) {
         activeModel = tab.model;
+        namedAgentSnapshot = tab.snapshot ?? null;
+      } else {
+        namedAgentSnapshot = null;
       }
       refreshActiveChat();
       syncSubscriptions();
@@ -2283,6 +2384,110 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
 
     attachUnloadGate(gate: () => boolean): void {
       unloadGate = gate;
+    },
+
+    // ── Named Agents (global config; plan §9) ────────────────────────────────
+
+    get namedAgents(): readonly NamedAgent[] {
+      return namedAgents;
+    },
+    get namedAgentSnapshot(): NamedAgentSelectionSnapshot | null {
+      return namedAgentSnapshot;
+    },
+
+    async refreshNamedAgents(): Promise<NamedAgentsResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/named-agents`);
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Named agents failed (HTTP ${res.status})`,
+          };
+        }
+        const agents = normalizeNamedAgents(await res.json());
+        namedAgents = agents;
+        return { ok: true, agents };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Named agents request failed",
+        };
+      }
+    },
+
+    async createNamedAgent(input: NamedAgentInput): Promise<NamedAgentSaveResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/named-agents`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Create named agent failed (HTTP ${res.status})`,
+          };
+        }
+        const agent = normalizeNamedAgentRecord(await res.json());
+        if (agent === null) return { ok: false, error: "Malformed named agent response" };
+        upsertNamedAgent(agent);
+        return { ok: true, agent };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Create named agent request failed",
+        };
+      }
+    },
+
+    async updateNamedAgent(id: string, input: NamedAgentInput): Promise<NamedAgentSaveResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/named-agents/${encodeURIComponent(id)}`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(input),
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Update named agent failed (HTTP ${res.status})`,
+          };
+        }
+        const agent = normalizeNamedAgentRecord(await res.json());
+        if (agent === null) return { ok: false, error: "Malformed named agent response" };
+        upsertNamedAgent(agent);
+        return { ok: true, agent };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Update named agent request failed",
+        };
+      }
+    },
+
+    async deleteNamedAgent(id: string): Promise<NamedAgentDeleteResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/named-agents/${encodeURIComponent(id)}`, {
+          method: "DELETE",
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Delete named agent failed (HTTP ${res.status})`,
+          };
+        }
+        namedAgents = namedAgents.filter((a) => a.id !== id);
+        return { ok: true };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Delete named agent request failed",
+        };
+      }
     },
 
     get fatalError(): string | null {

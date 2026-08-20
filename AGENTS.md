@@ -145,6 +145,16 @@ reasoning-effort selector (Model view, under the provider/model dropdowns; stick
 `GET`/`PUT /reasoning-effort`, `null` ⇒ "high (default)"). Plan in
 `../backend/notes/frontend-design.md` §10.
 
+NAMED AGENTS DONE + committed (feature/named-agents): a collapsible **Named Agents** sidebar view
+(cards with name/provider/model controls, auto-save statuses incl. debounced name edits + the
+monotonic stale-response guard, Remove/Add/empty state), the synthetic **Named Agents** provider as
+the ALWAYS-FIRST option in the regular model selector (selecting one resolves it to its raw model and
+records a `NamedAgentSelectionSnapshot` on the conversation — plan §7), full CRUD over
+`GET/POST/PUT/DELETE /named-agents`, and snapshot semantics retained on tabs (survive rename/remove +
+persist to localStorage). Backend contract (this worktree) carries `NamedAgent`/`NamedAgentSelectionSnapshot`
+(`@dispatch/wire`) + `/named-agents` types and `ChatRequest.namedAgent`/`ModelResponse.namedAgent`/
+`SetModelRequest.namedAgent` (`@dispatch/transport-contract`); see `backend-handoff.md`.
+
 ## Reports
 Optionally record a finished milestone in `reports/<name>.md` (gitignored): what you built,
 the public surface, verification output, and any contract gaps / backend-contract CRs.

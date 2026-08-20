@@ -8,6 +8,18 @@
 > **Orchestrator:** SNAPSHOT of `transport-contract@0.24.0` (MCP status + computers + provider concurrency + cancel queued message). Regenerate whenever
 > it changes.
 >
+> **2026-08-20 delta (Named Agents — ADDITIVE, no version bump):** the `/named-agents` HTTP surface +
+> conversation snapshot wiring ships. New types: `NamedAgentsResponse` (`{ namedAgents: NamedAgent[] }`,
+> `GET /named-agents`), `NamedAgentResponse` (`{ namedAgent: NamedAgent }`, `POST`/`PUT`), and
+> `DeleteNamedAgentResponse` (`{ id }`), with `CreateNamedAgentRequest` / `UpdateNamedAgentRequest`
+> (`{ name, model }`). Snapshot semantics (plan §7): `ChatRequest.namedAgent?` (persist on the
+> conversation at creation), `ModelResponse.namedAgent?` (the persisted `NamedAgentSelectionSnapshot`),
+> and `SetModelRequest.namedAgent?` (persist/clear the snapshot with the model — omit for a raw
+> selection, pass `null` notion + omit `namedAgent` to clear). The FE consumes these via
+> `features/named-agents` + the app store's CRUD/`selectModel` methods (the local `logic/types.ts`
+> re-exports `NamedAgent`/`NamedAgentSelectionSnapshot` from `@dispatch/wire` and these request/response
+> types from this package).
+>
 > **2026-06-29 update (cancel-queued-message — ADDITIVE, 0.23.0 → 0.24.0):** a per-message
 > **cancel** for the steering message queue ships. While a turn is GENERATING and a user
 > message is queued (awaiting steering delivery), the client can cancel a single queued

@@ -108,3 +108,73 @@ export function isVisionModel(
 ): boolean {
   return modelInfo[fullName]?.vision === true;
 }
+
+// ── Named Agents synthetic provider (plan §6) ────────────────────────────────
+//
+// The regular model picker gains a "Named Agents" provider at the TOP of the
+// provider list. Selecting it + a Named Agent name resolves to that agent's raw
+// model for the conversation AND records a snapshot so the selection survives
+// later edits to the shared preset. These helpers are structural (they take a
+// minimal NamedAgent-ish shape) so `model-select` stays decoupled from the
+// named-agents feature up the chain; the picker binds the real types.
+
+/** A minimal Named Agent shape the synthetic provider needs (structural). */
+export interface NamedAgentLike {
+  readonly id: string;
+  readonly name: string;
+  readonly model: string;
+}
+
+/** A minimal per-conversation Named Agent selection snapshot (structural). */
+export interface NamedAgentSnapshotLike {
+  readonly namedAgentId: string;
+  readonly namedAgentName: string;
+  readonly model: string;
+}
+
+/**
+ * The synthetic "Named Agents" provider id used by the regular model picker
+ * (plan §6). Deliberately a value that can never collide with a real provider
+ * (`<credentialName>`), so the provider dropdown treats it as the first option.
+ */
+export const NAMED_AGENTS_PROVIDER = "__named_agents__";
+
+/** The friendly label of the synthetic Named Agents provider. */
+export function namedAgentsProviderLabel(): string {
+  return "Named Agents";
+}
+
+/**
+ * The provider dropdown options for the picker: the synthetic "Named Agents"
+ * provider ALWAYS first, then the raw providers (via `modelKeys`). The synthetic
+ * entry stays present even with zero Named Agents (plan §6 shows a disabled
+ * "No named agents configured" model option).
+ */
+export function providerKeysWithNamedAgents(models: readonly string[]): string[] {
+  return [NAMED_AGENTS_PROVIDER, ...modelKeys(models)];
+}
+
+/** The Named Agent names offered in the model dropdown when the synthetic provider is selected. */
+export function namedAgentNames(agents: readonly NamedAgentLike[]): string[] {
+  return agents.map((a) => a.name);
+}
+
+/**
+ * Whether a full raw model string corresponds to a Named Agent snapshot —
+ * i.e. the conversation was selected via a Named Agent whose captured raw model
+ * equals `selected`. When true, the picker displays `Named Agents -> <name>`.
+ */
+export function isNamedAgentSelection(
+  selected: string,
+  snapshot: NamedAgentSnapshotLike | null,
+): boolean {
+  return snapshot !== null && snapshot.model === selected;
+}
+
+/**
+ * The snapshot label shown in the model dropdown for a Named Agent selection:
+ * "Named Agents -> <name>". Pure display.
+ */
+export function namedAgentSelectionLabel(name: string): string {
+  return `${namedAgentsProviderLabel()} -> ${name}`;
+}

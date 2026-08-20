@@ -1,3 +1,4 @@
+import type { NamedAgentSelectionSnapshot } from "../named-agents";
 import type { Tab, TabsState } from "./tabs";
 import {
   initialState,
@@ -7,6 +8,7 @@ import {
   openTab as reduceOpenTab,
   selectTab as reduceSelectTab,
   setModel as reduceSetModel,
+  setSnapshot as reduceSetSnapshot,
   setTitle as reduceSetTitle,
   setWorkspaceId as reduceSetWorkspaceId,
   activeTab as selectActiveTab,
@@ -28,6 +30,11 @@ export interface TabsStore {
   selectTab(conversationId: string): void;
   closeTab(conversationId: string): void;
   setModel(conversationId: string, model: string): void;
+  /**
+   * Set (or clear, with null) a tab's Named Agent snapshot (plan §7). The caller
+   * keeps the snapshot's captured `model` in sync with the tab's `model`.
+   */
+  setSnapshot(conversationId: string, snapshot: NamedAgentSelectionSnapshot | null): void;
   setTitle(conversationId: string, title: string): void;
   setWorkspaceId(conversationId: string, workspaceId: string): void;
 }
@@ -67,6 +74,9 @@ export function createTabsStore(storage: TabsStorage): TabsStore {
     },
     setModel(conversationId: string, model: string): void {
       apply(reduceSetModel(state, conversationId, model));
+    },
+    setSnapshot(conversationId: string, snapshot: NamedAgentSelectionSnapshot | null): void {
+      apply(reduceSetSnapshot(state, conversationId, snapshot));
     },
     setTitle(conversationId: string, title: string): void {
       apply(reduceSetTitle(state, conversationId, title));

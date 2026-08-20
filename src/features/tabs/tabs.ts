@@ -1,9 +1,18 @@
+import type { NamedAgentSelectionSnapshot } from "../named-agents";
+
 export interface Tab {
   readonly conversationId: string;
   readonly model: string;
   readonly title: string;
   /** The workspace this tab belongs to (the workspace's URL slug). */
   readonly workspaceId: string;
+  /**
+   * The Named Agent selection snapshot, when this conversation was selected via
+   * a Named Agent (plan §7). Retained so the conversation keeps showing the
+   * friendly label (and its captured raw model) even after the Named Agent is
+   * renamed/removed. Absent for a raw model selection.
+   */
+  readonly snapshot?: NamedAgentSelectionSnapshot;
 }
 
 export interface TabsState {
@@ -73,7 +82,36 @@ export function closeTab(state: TabsState, conversationId: string): TabsState {
 }
 
 export function setModel(state: TabsState, conversationId: string, model: string): TabsState {
-  const tabs = state.tabs.map((t) => (t.conversationId === conversationId ? { ...t, model } : t));
+  // A raw-model selection clears any Named Agent snapshot (a raw selection is
+  // not "via a Named Agent"). Omit the key entirely (`exactOptionalPropertyTypes`).
+  const tabs = state.tabs.map((t) =>
+    t.conversationId !== conversationId ? t : omitSnapshot({ ...t, model }),
+  );
+  return { tabs, activeConversationId: state.activeConversationId };
+}
+
+/** Drop the optional `snapshot` key (used to clear a Named Agent selection). */
+function omitSnapshot(tab: Tab): Tab {
+  if (!("snapshot" in tab)) return tab;
+  const { snapshot: _omit, ...rest } = tab;
+  void _omit;
+  return rest;
+}
+
+/**
+ * Set (or clear) a tab's Named Agent selection snapshot (plan §7). The snapshot's
+ * captured `model` should equal the tab's `model` (the resolved raw model); this
+ * reducer does not rewrite `model` — the caller keeps them in sync. Pass `null`
+ * to clear (a raw model selection).
+ */
+export function setSnapshot(
+  state: TabsState,
+  conversationId: string,
+  snapshot: NamedAgentSelectionSnapshot | null,
+): TabsState {
+  const tabs = state.tabs.map((t) =>
+    t.conversationId === conversationId ? { ...t, ...(snapshot === null ? {} : { snapshot }) } : t,
+  );
   return { tabs, activeConversationId: state.activeConversationId };
 }
 
