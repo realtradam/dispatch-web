@@ -72,9 +72,17 @@ export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonl
       emittedSteps.add(stepId);
 
       const entries: ToolBatchEntry[] = [];
+      // Dedupe by toolCallId within the batch: a provider double-emission (or any
+      // corrupted transcript) can carry the SAME call id on multiple tool-call
+      // chunks in one step. The first occurrence (stream order) wins; later ones
+      // are skipped so the keyed `{#each}` in the UI never sees duplicate keys
+      // (Svelte `each_key_duplicate` aborts the reactive flush — tab appears dead).
+      const seenCallIds = new Set<string>();
       let provisional = false;
       for (const inner of rendered) {
         if (inner.chunk.type === "tool-call" && inner.chunk.stepId === stepId) {
+          if (seenCallIds.has(inner.chunk.toolCallId)) continue;
+          seenCallIds.add(inner.chunk.toolCallId);
           const result = resultByCallId.get(inner.chunk.toolCallId) ?? null;
           entries.push({ call: inner.chunk, result });
           if (inner.provisional) provisional = true;

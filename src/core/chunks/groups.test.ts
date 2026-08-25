@@ -122,4 +122,77 @@ describe("groupRenderedChunks", () => {
     expect(singles[0]?.kind === "single" && singles[0].chunk.chunk.type).toBe("tool-call");
     expect(singles[1]?.kind === "single" && singles[1].chunk.chunk.type).toBe("tool-result");
   });
+
+  // --- Duplicate toolCallId hardening (fix-toolcall-duplicate-keys) ---
+  // A provider double-emission (e.g. openrouter/stealth/ox-alpha) can persist the
+  // SAME toolCallId twice within one step. The renderer must NEVER crash on that
+  // (Svelte `each_key_duplicate` aborts the reactive flush — the tab appears dead).
+
+  it("dedupes duplicate toolCallIds within a batch", () => {
+    // The PII_REDACTED_CONVERSATION_SHORT_01 pattern: every id emitted twice, in order (seq 1,2 then 3,4).
+    const groups = groupRenderedChunks([
+      call(1, "a", "s1"),
+      call(2, "b", "s1"),
+      call(3, "a", "s1"),
+      call(4, "b", "s1"),
+    ]);
+    expect(groups).toHaveLength(1);
+    const g = groups[0];
+    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
+    expect(g.entries).toHaveLength(2);
+    expect(g.entries.map((e) => e.call.toolCallId)).toEqual(["a", "b"]);
+  });
+
+  it("dedupes duplicate toolCallIds and pairs each unique call with its result", () => {
+    const groups = groupRenderedChunks([
+      call(1, "a", "s1"),
+      call(2, "b", "s1"),
+      call(3, "a", "s1"),
+      call(4, "b", "s1"),
+      result(5, "a", "s1"),
+      result(6, "b", "s1"),
+      result(7, "a", "s1"),
+      result(8, "b", "s1"),
+    ]);
+    expect(groups).toHaveLength(1);
+    const g = groups[0];
+    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
+    expect(g.entries).toHaveLength(2);
+    expect(g.entries[0]?.call.toolCallId).toBe("a");
+    expect(g.entries[0]?.result?.content).toBe("result-a");
+    expect(g.entries[1]?.call.toolCallId).toBe("b");
+    expect(g.entries[1]?.result?.content).toBe("result-b");
+  });
+
+  it("keeps the first occurrence of a duplicate toolCallId and skips the second", () => {
+    const firstA = call(1, "a", "s1"); // first occurrence of a
+    const firstB = call(2, "b", "s1"); // first occurrence of b
+    const groups = groupRenderedChunks([
+      firstA,
+      firstB,
+      call(3, "a", "s1"), // duplicate of a — skipped
+      call(4, "b", "s1"), // duplicate of b — skipped
+    ]);
+    const g = groups[0];
+    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
+    expect(g.entries).toHaveLength(2);
+    // The FIRST occurrence (by stream order) is the one kept — referential
+    // equality against the seq-1 / seq-2 chunks (the entry stores the inner
+    // chunk; the outer `seq` lives on the RenderedChunk wrapper).
+    expect(g.entries[0]?.call).toBe(firstA.chunk);
+    expect(g.entries[1]?.call).toBe(firstB.chunk);
+  });
+
+  it("keeps the first (provisional) occurrence of a duplicate and marks the batch provisional", () => {
+    // One provisional + one committed chunk with the SAME id: the first
+    // (provisional) occurrence wins, and the batch stays provisional.
+    const prov = call(1, "a", "s1", true);
+    const groups = groupRenderedChunks([prov, call(2, "a", "s1")]);
+    const g = groups[0];
+    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
+    expect(g.provisional).toBe(true);
+    expect(g.entries).toHaveLength(1);
+    expect(g.entries[0]?.call).toBe(prov.chunk);
+    expect(g.entries[0]?.result).toBeNull();
+  });
 });

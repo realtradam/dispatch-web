@@ -301,7 +301,7 @@
       <div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
         <div class="chat-bubble w-full bg-transparent">
           <div class="flex flex-col gap-1">
-            {#each row.group.entries as entry (entry.call.toolCallId)}
+            {#each row.group.entries as entry, entryIndex (entryIndex)}
               <div class="collapse w-full rounded-box bg-base-200 text-sm">
                 <input type="checkbox" aria-label="Toggle tool call" />
                 <div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
