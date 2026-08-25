@@ -232,6 +232,38 @@ describe("parseServerMessage", () => {
     });
   });
 
+  it("parses a conversation.open message with a persisted model", () => {
+    const data = JSON.stringify({
+      type: "conversation.open",
+      conversationId: "c1",
+      workspaceId: "w1",
+      model: "openrouter/stealth/ox-alpha",
+    });
+    const result = parseServerMessage(data);
+    expect(result).toEqual({
+      type: "conversation.open",
+      conversationId: "c1",
+      workspaceId: "w1",
+      model: "openrouter/stealth/ox-alpha",
+    });
+  });
+
+  it("omits the model when conversation.open carries a non-string/empty model", () => {
+    const result = parseServerMessage(
+      JSON.stringify({
+        type: "conversation.open",
+        conversationId: "c1",
+        workspaceId: "w1",
+        model: 42,
+      }),
+    );
+    expect(result).toEqual({
+      type: "conversation.open",
+      conversationId: "c1",
+      workspaceId: "w1",
+    });
+  });
+
   it("returns null for conversation.open with missing conversationId", () => {
     expect(
       parseServerMessage(JSON.stringify({ type: "conversation.open", workspaceId: "w1" })),

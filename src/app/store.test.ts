@@ -799,6 +799,88 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("fetchOpenConversations stamps tabs with the conversation's persisted model (not the global active model)", async () => {
+    const ws = fakeSocket();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.endsWith("/models")) {
+        return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
+          status: 200,
+        });
+      }
+      // The authoritative open-conversation list — one conversation whose
+      // persisted model differs from the global activeModel.
+      if (url.includes("/conversations?status=")) {
+        return new Response(
+          JSON.stringify({
+            conversations: [
+              {
+                id: "conv-model",
+                createdAt: 1000,
+                lastActivityAt: 2000,
+                title: "Model conv",
+                status: "idle",
+                workspaceId: "default",
+                model: "openrouter/stealth/ox-alpha",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+    };
+
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    // global activeModel is the default until anything changes it
+    expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
+
+    // fetchOpenConversations (boot reconcile) opens the conversation's tab —
+    // stamped with the PERSISTED model from the list, not activeModel.
+    await vi.waitFor(() => {
+      const tab = store.tabs.find((t) => t.conversationId === "conv-model");
+      expect(tab?.model).toBe("openrouter/stealth/ox-alpha");
+    });
+
+    store.dispose();
+  });
+
+  it("conversation.open WS message carrying a model stamps the tab with it", async () => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    // The user stays on their current (draft) tab; the backend broadcasts
+    // `conversation.open` with the conversation's persisted model.
+    ws.feedServerMessage({
+      type: "conversation.open",
+      conversationId: "conv-ws",
+      workspaceId: "default",
+      model: "openrouter/stealth/ox-alpha",
+    });
+
+    await vi.waitFor(() => {
+      const tab = store.tabs.find((t) => t.conversationId === "conv-ws");
+      expect(tab?.model).toBe("openrouter/stealth/ox-alpha");
+      expect(tab?.workspaceId).toBe("default");
+    });
+
+    store.dispose();
+  });
+
   it("chat.delta routes to the matching tab only", () => {
     const ws = fakeSocket();
     const store = createAppStore({

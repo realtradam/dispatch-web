@@ -6,6 +6,14 @@
 >
 > **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers + provider-retry + concurrency-`queued` status). Regenerate whenever `@dispatch/wire` changes.
 >
+> **2026-08-25 delta (per-conversation model on ConversationMeta — ADDITIVE, no version bump):**
+> `ConversationMeta` gains an optional `model?: string` (`<credential>/<model>`, absENT = default
+> provider model). Surfaced on `GET /conversations` and the `conversation.open` WS broadcast so the
+> FE can stamp a tab with the conversation's ACTUAL model instead of the globally-selected one
+> (fix-toolcall-duplicate-keys plan Part 4 — prevents the stored model being overwritten by
+> `activeModel`). See `transport-contract.reference.md` for the `ConversationOpenMessage.model`
+> addition.
+>
 > **2026-08-20 delta (Named Agents — ADDITIVE, no version bump):** `@dispatch/wire` now exports two
 > named-agent shapes the FE consumes (`named-agents-plan.md`): `NamedAgent`
 > `{ id, name, model }` (a user-curated model preset; `model` = canonical `<provider>/<model>`) and
@@ -680,6 +688,15 @@ export interface ConversationMeta {
 	 * that have never been compacted.
 	 */
 	readonly compactedFrom?: string;
+	/**
+	 * The persisted per-conversation model name (`<credential>/<model>`), when
+	 * one has been set. Absent/null means the conversation uses the default
+	 * provider model. Surfaced on the open-conversation list + `conversation.open`
+	 * broadcast so a client can stamp a tab with the conversation's ACTUAL model
+	 * instead of the currently-selected global model (fix-toolcall-duplicate-keys
+	 * plan Part 4).
+	 */
+	readonly model?: string;
 }
 
 // ─── Compaction ──────────────────────────────────────────────────────────────

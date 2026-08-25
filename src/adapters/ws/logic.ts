@@ -116,10 +116,15 @@ export function parseServerMessage(data: string): WsServerMessage | null {
     case "conversation.open": {
       if (typeof parsed.conversationId !== "string") return null;
       if (typeof parsed.workspaceId !== "string") return null;
+      // Forward the persisted per-conversation model when the backend includes
+      // it, so a client can stamp the opened tab with the conversation's ACTUAL
+      // model (fix-toolcall-duplicate-keys plan Part 4).
+      const model = parsed.model;
       const msg: ConversationOpenMessage = {
         type: "conversation.open",
         conversationId: parsed.conversationId,
         workspaceId: parsed.workspaceId,
+        ...(typeof model === "string" && model.length > 0 ? { model } : {}),
       };
       return msg;
     }

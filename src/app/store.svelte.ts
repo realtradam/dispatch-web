@@ -1077,15 +1077,20 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
    * stamped with the conversation's actual `workspaceId`, NOT the viewer's
    * currently active workspace.
    */
-  function openConversation(conversationId: string, workspaceId: string): void {
+  function openConversation(conversationId: string, workspaceId: string, model?: string): void {
     if (chatStores.has(conversationId)) return;
-    const store = createChatFor(conversationId, activeModel, workspaceId);
+    // Stamp the tab with the conversation's PERSISTED model when the open
+    // broadcast carries it (falling back to the current global selection) —
+    // never let the globally-active model overwrite a conversation's real one
+    // (fix-toolcall-duplicate-keys plan Part 4).
+    const tabModel = model ?? activeModel;
+    const store = createChatFor(conversationId, tabModel, workspaceId);
     chatStores.set(conversationId, store);
     void store.load();
     subscribeChat(conversationId);
     tabsStore.openTab({
       conversationId,
-      model: activeModel,
+      model: tabModel,
       title: "Conversation",
       workspaceId,
     });
@@ -1172,13 +1177,18 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       const existingIds = new Set(chatStores.keys());
       for (const conv of data.conversations) {
         if (!existingIds.has(conv.id)) {
-          const store = createChatFor(conv.id, activeModel, conv.workspaceId);
+          // Stamp the tab with the conversation's PERSISTED model (when the
+          // list carries it) instead of the global active model — the fix for
+          // tabs showing/overwriting the wrong model
+          // (fix-toolcall-duplicate-keys plan Part 4).
+          const model = conv.model ?? activeModel;
+          const store = createChatFor(conv.id, model, conv.workspaceId);
           chatStores.set(conv.id, store);
           void store.load();
           subscribeChat(conv.id);
           tabsStore.openTab({
             conversationId: conv.id,
-            model: activeModel,
+            model,
             title: conv.title,
             workspaceId: conv.workspaceId,
           });
@@ -1218,7 +1228,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     onMessage: handleServerMessage,
     onChat: handleChatMessage,
     onConversationOpen(msg: ConversationOpenMessage): void {
-      openConversation(msg.conversationId, msg.workspaceId);
+      openConversation(msg.conversationId, msg.workspaceId, msg.model);
     },
     onConversationStatusChanged(msg: ConversationStatusChangedMessage): void {
       const { conversationId, status, workspaceId } = msg;
