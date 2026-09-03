@@ -1,5 +1,5 @@
 import type { PluginListResponse } from "@dispatch/transport-contract";
-import { type PluginNode, type PluginSection, TIER_ORDER } from "./types";
+import { normalizeTier, type PluginNode, type PluginSection, TIER_ORDER } from "./types";
 
 /**
  * Normalize a `GET /plugins` response into the flat `PluginNode` list the
@@ -21,7 +21,10 @@ export function pluginNodes(response: PluginListResponse): readonly PluginNode[]
       id: row.id,
       name: row.name,
       version: row.version,
-      tier: row.tier,
+      // Normalize at the boundary: a missing/out-of-contract tier (backend
+      // bug, stale contract) folds into "standard" so every node's tier is
+      // canonical and the tier-keyed consumers below stay total.
+      tier: normalizeTier(row.tier),
       trust: row.trust,
       loaded: true,
       locked: row.locked,
@@ -35,7 +38,7 @@ export function pluginNodes(response: PluginListResponse): readonly PluginNode[]
       id: row.id,
       name: row.name,
       version: row.version,
-      tier: row.tier,
+      tier: normalizeTier(row.tier),
       trust: row.trust,
       loaded: false,
       locked: false,
@@ -49,7 +52,7 @@ export function pluginNodes(response: PluginListResponse): readonly PluginNode[]
       id: row.id,
       name: row.name,
       version: row.version,
-      tier: row.tier,
+      tier: normalizeTier(row.tier),
       trust: row.trust,
       loaded: false,
       locked: false,
@@ -79,19 +82,36 @@ export function pluginNodes(response: PluginListResponse): readonly PluginNode[]
  * Cluster nodes for one manager table: tier groups in display order (Core →
  * Providers → Standard), each tier's rows sorted by id. Tiers with no rows
  * are omitted. Used by the loaded table's tier grouping (plan 07 §7.2).
+ *
+ * Duplicate-key-proof BY CONSTRUCTION: nodes are bucketed through a Map keyed
+ * by the NORMALIZED tier, so each of the three canonical tiers can yield at
+ * most one group — `PluginTable.svelte` renders a keyed each
+ * (`{#each groups as group (group.tier)}`), and a duplicate key throws
+ * `each_key_duplicate` in Svelte 5, aborting the whole manager render. The
+ * normalization also means an unknown/missing tier (contract violation — the
+ * backend rejects tierless externals at boot and directory scans fail
+ * validation) folds into the `standard` bucket instead of forming a separate
+ * trailing group; the old fallback (`rest[0]?.tier ?? "standard"`) produced a
+ * DUPLICATE `standard` key when canonical standard rows were present.
+ * groupByTier normalizes on the way in even though `pluginNodes` already
+ * does at the boundary — it is exported and must be safe for any caller.
  */
 export function groupByTier(
   nodes: readonly PluginNode[],
 ): ReadonlyArray<{ readonly tier: PluginNode["tier"]; readonly rows: readonly PluginNode[] }> {
+  const byTier = new Map<PluginNode["tier"], PluginNode[]>();
+  for (const n of nodes) {
+    const tier = normalizeTier(n.tier);
+    const rows = byTier.get(tier);
+    if (rows) rows.push(n);
+    else byTier.set(tier, [n]);
+  }
   const out: { tier: PluginNode["tier"]; rows: PluginNode[] }[] = [];
   for (const tier of TIER_ORDER) {
-    const rows = nodes.filter((n) => n.tier === tier).sort((a, b) => a.id.localeCompare(b.id));
-    if (rows.length > 0) out.push({ tier, rows });
+    const rows = byTier.get(tier);
+    if (!rows || rows.length === 0) continue;
+    out.push({ tier, rows: rows.sort((a, b) => a.id.localeCompare(b.id)) });
   }
-  // Any tier outside TIER_ORDER (defensive — the contract pins three values).
-  const known = new Set<PluginNode["tier"]>(TIER_ORDER);
-  const rest = nodes.filter((n) => !known.has(n.tier)).sort((a, b) => a.id.localeCompare(b.id));
-  if (rest.length > 0) out.push({ tier: rest[0]?.tier ?? "standard", rows: rest });
   return out;
 }
 

@@ -42,3 +42,20 @@ export function tierLabel(tier: PluginTier): string {
 
 /** Display order of the tiers within a manager table (Core first). */
 export const TIER_ORDER: readonly PluginTier[] = ["core", "providers", "standard"];
+
+/**
+ * Runtime-normalize a tier value to the canonical THREE: anything that is not
+ * exactly `core` | `providers` | `standard` — a missing tier, or a value
+ * outside the contract ("kernel" is NOT a tier; the kernel hosts plugins, it
+ * is not one) — folds into `"standard"`, the safe catch-all classification.
+ * The wire contract pins the three values, so this only ever fires on a
+ * contract violation (the backend rejects tierless externals at boot and
+ * directory-scanned plugins fail manifest validation); folding rather than
+ * surfacing the raw value keeps every tier-keyed consumer total — e.g.
+ * `tierLabel`'s exhaustive switch (an out-of-contract value would render an
+ * empty badge) and the manager table's keyed grouping (a non-canonical key
+ * would create a second, colliding group).
+ */
+export function normalizeTier(tier: unknown): PluginTier {
+  return tier === "core" || tier === "providers" || tier === "standard" ? tier : "standard";
+}
