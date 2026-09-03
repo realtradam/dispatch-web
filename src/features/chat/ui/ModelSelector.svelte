@@ -22,6 +22,7 @@
     namedAgents = [],
     namedAgentSnapshot = null,
     onSelectNamedAgent,
+    zeroProviders = false,
   }: {
     models: readonly string[];
     selected: string;
@@ -39,6 +40,12 @@
     namedAgentSnapshot?: NamedAgentSelectionSnapshot | null;
     /** Called when a Named Agent is selected (the selector resolves it to a raw model + snapshot). */
     onSelectNamedAgent?: (snapshot: NamedAgentSelectionSnapshot) => void;
+    /**
+     * First-boot guardrail (§7): true when the ACTIVE workspace has ZERO
+     * enabled providers (plan 06's `providers-status`) — renders a visible
+     * prompt above the picker instead of a silently empty one.
+     */
+    zeroProviders?: boolean;
   } = $props();
 
   // Whether the current selection is a Named Agent snapshot (the conversation was
@@ -121,6 +128,16 @@
 </script>
 
 <div class="flex flex-col gap-2">
+  {#if zeroProviders}
+    <!-- First-boot guardrail (§7): a workspace with zero enabled providers
+         shows a visible prompt instead of a silently empty picker. -->
+    <div class="alert alert-warning text-sm" role="alert">
+      <span>
+        No providers enabled for this workspace — open the workspace <strong>Plugins</strong> to
+        enable one.
+      </span>
+    </div>
+  {/if}
   <select
     class="select w-full"
     value={currentProvider}

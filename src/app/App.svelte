@@ -780,6 +780,7 @@
 			namedAgents={store.namedAgents}
 			namedAgentSnapshot={store.namedAgentSnapshot}
 			onSelectNamedAgent={handleSelectNamedAgent}
+			zeroProviders={store.enabledProviderCount === 0}
 		/>
 			<!-- Keyed on the workspace conversation (active tab OR draft) so the inputs
 			     re-mount per conversation — incl. switching between drafts — and can't

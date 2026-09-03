@@ -128,7 +128,7 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
             "body" in input
           ? await input.clone().text()
           : null;
-    if (url.endsWith("/models")) {
+    if (/\/models(\?.*)?$/.test(url)) {
       return new Response(JSON.stringify({ models }), { status: 200 });
     }
     if (url.endsWith("/named-agents") && method === "GET") {
@@ -575,7 +575,7 @@ describe("createAppStore", () => {
     const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
-      if (url.endsWith("/models")) {
+      if (/\/models(\?.*)?$/.test(url)) {
         return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
           status: 200,
         });
@@ -806,7 +806,7 @@ describe("createAppStore", () => {
       init?: RequestInit,
     ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-      if (url.endsWith("/models")) {
+      if (/\/models(\?.*)?$/.test(url)) {
         return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
           status: 200,
         });
@@ -1439,7 +1439,7 @@ describe("createAppStore", () => {
     const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
-      if (url.endsWith("/models")) {
+      if (/\/models(\?.*)?$/.test(url)) {
         return new Response(JSON.stringify({ models: ["opencode-1/deepseek-v4-flash"] }), {
           status: 200,
         });
@@ -2299,7 +2299,7 @@ describe("createAppStore — vision settings (global)", () => {
       fetchImpl: async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
         const url =
           typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
-        if (url.endsWith("/models")) {
+        if (/\/models(\?.*)?$/.test(url)) {
           return new Response(
             JSON.stringify({
               models: ["kimi/k2", "umans/glm-5.2"],

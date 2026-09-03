@@ -8,6 +8,13 @@
 > **Orchestrator:** this is a SNAPSHOT of `ui-contract@0.2.0` — regenerate it whenever
 > `ui-contract` changes.
 >
+> **2026-09-03 delta (plugin system — plan 06):** `SurfaceCatalogEntry` gains an OPTIONAL
+> `pluginId?: string` — the id of the plugin contributing the surface (plan 06's
+> surface→plugin attribution for the per-workspace catalog filter). Absent on older
+> backends / host-contributed surfaces — treat as "no plugin" (never filtered). The
+> FE does not branch on it yet (the catalog is server-filtered via `workspace.set`
+> + `extensions-changed` re-pushes); it is available for future attribution UI.
+>
 > **2026-06-12 delta (CR-2/CR-4 handoff — package bumped `0.1.0` → `0.2.0`):** adds the optional
 > `scope?: "global" | "conversation"` to `SurfaceCatalogEntry` so a client can skip re-subscribing
 > GLOBAL surfaces on a conversation switch. ABSENT means assume conversation-scoped (the

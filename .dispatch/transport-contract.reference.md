@@ -8,6 +8,25 @@
 > **Orchestrator:** SNAPSHOT of `transport-contract@0.24.0` (MCP status + computers + provider concurrency + cancel queued message). Regenerate whenever
 > it changes.
 >
+> **2026-09-03 delta (plugin system — plans 05/06, NO version bump verified against the worktree):** the
+> plugin-manager + per-workspace enablement contract ships. NEW WS messages: `WorkspaceSetMessage`
+> (`{ type: "workspace.set"; workspaceId }` — client→server; the server records the connection's workspace
+> and re-pushes the workspace-filtered surface catalog on receipt + on every broadcast) and
+> `ExtensionsChangedMessage` (`{ type: "extensions-changed"; action: "load"|"unload"|"reload"|"scan"|"forget";
+> pluginId? }` — server→client broadcast after every plugin-manager mutation; clients refetch `GET /plugins`
+> while the server re-pushes the catalog). NEW HTTP routes: `GET /plugins` (`PluginListResponse` —
+> `loaded`/`disabledWithReason`/`discovered`/`missing` rows), `POST /plugins/scan` (`PluginScanResponse`),
+> `POST /plugins/:id/load|unload|reload|forget` (`PluginOpResponse` = `PluginOpSuccess | PluginOpBlocked`,
+> 404/409 with `PluginBlockReason`: `core-locked | last-provider | cascade-needs-force | not-loaded |
+> not-found | already-loaded | engine-refused`), and plan 06 §6.6's `GET /workspaces/:id/plugins`
+> (`WorkspacePluginsResponse` — read-through materialization), `PUT /workspaces/:id/plugins/:pluginId`
+> (`{ state: "enabled"|"disabled"|"unset" }` → 409 `core-locked|unloaded`), and
+> `GET /workspaces/:id/plugins/providers-status` (`{ workspaceId, enabledProviderCount }` — the §6.5
+> zero-providers guardrail signal). `GET /models?workspaceId=` is now workspace-aware (no-param = global).
+> NOTE: the body below does NOT yet contain these sections — read the types from
+> `node_modules/@dispatch/transport-contract` (or the backend worktree) until this mirror is fully
+> regenerated. The FE (plan 07) consumes them via `features/plugins`.
+>
 > **2026-08-20 delta (Named Agents — ADDITIVE, no version bump):** the `/named-agents` HTTP surface +
 > conversation snapshot wiring ships. New types: `NamedAgentsResponse` (`{ namedAgents: NamedAgent[] }`,
 > `GET /named-agents`), `NamedAgentResponse` (`{ namedAgent: NamedAgent }`, `POST`/`PUT`), and

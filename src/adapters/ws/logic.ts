@@ -4,6 +4,7 @@ import type {
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
+  ExtensionsChangedMessage,
   WsClientMessage,
   WsServerMessage,
 } from "@dispatch/transport-contract";
@@ -24,6 +25,7 @@ const VALID_SERVER_TYPES = new Set([
   "conversation.open",
   "conversation.statusChanged",
   "conversation.compacted",
+  "extensions-changed",
 ]);
 
 /** Serialize a client message to a JSON string for the wire. */
@@ -159,6 +161,22 @@ export function parseServerMessage(data: string): WsServerMessage | null {
         newConversationId: parsed.newConversationId,
         messagesSummarized: parsed.messagesSummarized,
         messagesKept: parsed.messagesKept,
+      };
+      return msg;
+    }
+    case "extensions-changed": {
+      // Plugin-manager broadcast (plan 05): the payload is intentionally
+      // minimal — clients refetch GET /plugins + the (server re-pushed)
+      // surface catalog rather than diffing here.
+      const action = parsed.action;
+      if (action !== "load" && action !== "unload" && action !== "reload") {
+        if (action !== "scan" && action !== "forget") return null;
+      }
+      const pluginId = parsed.pluginId;
+      const msg: ExtensionsChangedMessage = {
+        type: "extensions-changed",
+        action,
+        ...(pluginId !== undefined && typeof pluginId === "string" ? { pluginId } : {}),
       };
       return msg;
     }

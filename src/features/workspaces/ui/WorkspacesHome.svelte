@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { ComputerEntry } from "@dispatch/wire";
+  import { PluginManager, type PluginsStore } from "../../plugins";
   import type { WorkspaceStore } from "../store.svelte";
   import { isValidSlug, workspacePath } from "../logic/route";
   import WorkspaceCard from "./WorkspaceCard.svelte";
@@ -10,6 +11,7 @@
     onNavigate,
     computers,
     hasActive,
+    plugins,
   }: {
     store: WorkspaceStore;
     onNavigate: (path: string) => void;
@@ -20,6 +22,13 @@
      * Wired by the composition root to the app store. Absent → no indicator.
      */
     hasActive?: (workspaceId: string) => boolean;
+    /**
+     * The plugin manager store (plan 07): drives the page-header global
+     * "Plugins" button + the per-card workspace modals (forwarded to
+     * {@link WorkspaceCard}). Optional (absent in tests that don't exercise
+     * plugins) → the buttons don't render.
+     */
+    plugins?: PluginsStore;
   } = $props();
 
   onMount(() => {
@@ -30,6 +39,10 @@
   let slugError = $state<string | null>(null);
 
   const slugValid = $derived(newSlug.length > 0 && isValidSlug(newSlug));
+
+  // Global plugin manager modal (plan 07 §7.2): opened from the header
+  // button; the ONLY surface that loads/unloads code (strict layering).
+  let managerOpen = $state(false);
 
   function createWorkspace(): void {
     const slug = newSlug.trim();
@@ -46,16 +59,28 @@
 <div class="mx-auto flex h-screen w-full max-w-3xl flex-col gap-4 p-6">
   <header class="flex items-center justify-between">
     <h1 class="text-2xl font-bold">Workspaces</h1>
-    <a
-      href="/default"
-      class="btn btn-ghost btn-sm"
-      onclick={(e) => {
-        e.preventDefault();
-        onNavigate("/default");
-      }}
-    >
-      Default
-    </a>
+    <div class="flex items-center gap-2">
+      <a
+        href="/default"
+        class="btn btn-ghost btn-sm"
+        onclick={(e) => {
+          e.preventDefault();
+          onNavigate("/default");
+        }}
+      >
+        Default
+      </a>
+      {#if plugins}
+        <button
+          type="button"
+          class="btn btn-outline btn-sm"
+          onclick={() => (managerOpen = true)}
+          title="Open the plugin manager (load/unload plugins globally)"
+        >
+          Plugins
+        </button>
+      {/if}
+    </div>
   </header>
 
   <form
@@ -102,9 +127,14 @@
             {onNavigate}
             {computers}
             {...(hasActive ? { hasActive } : {})}
+            {...(plugins ? { plugins } : {})}
           />
         {/each}
       </ul>
     {/if}
   </div>
 </div>
+
+{#if managerOpen && plugins}
+  <PluginManager {plugins} onClose={() => (managerOpen = false)} />
+{/if}

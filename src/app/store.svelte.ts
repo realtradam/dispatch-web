@@ -13,6 +13,7 @@ import type {
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
   CwdResponse,
+  ExtensionsChangedMessage,
   LspStatusResponse,
   McpStatusResponse,
   ModelMetadata,
@@ -34,6 +35,7 @@ import type {
   TestComputerResponse,
   WarmRequest,
   WarmResponse,
+  WorkspaceSetMessage,
 } from "@dispatch/transport-contract";
 import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
 import type { ComputerEntry, ConversationStatus, ImageInput } from "@dispatch/wire";
@@ -89,6 +91,8 @@ import type {
   NamedAgentsResult,
 } from "../features/named-agents";
 import { normalizeNamedAgentRecord, normalizeNamedAgents } from "../features/named-agents";
+import type { PluginsStore } from "../features/plugins";
+import { createPluginsHttp, createPluginsStore } from "../features/plugins";
 import type { Tab, TabsState } from "../features/tabs";
 import { createTabsStore, deriveTitle, type TabsStore } from "../features/tabs";
 import {
@@ -543,6 +547,19 @@ export interface AppStore {
   readonly namedAgentSnapshot: NamedAgentSelectionSnapshot | null;
   /** Refetch the Named Agents (`GET /named-agents`). */
   refreshNamedAgents(): Promise<NamedAgentsResult>;
+  // ── Plugins (plan 07) ──────────────────────────────────────────────────────
+  /**
+   * The plugin manager + per-workspace enablement store (one instance per
+   * app store). The workspaces page's manager/modal read + mutate through
+   * it; the app store feeds its `onExtensionsChanged` hook.
+   */
+  readonly plugins: PluginsStore;
+  /**
+   * Loaded provider-tier plugins effectively enabled in the ACTIVE workspace
+   * (`GET /workspaces/:id/plugins/providers-status`). `null` = unknown — the
+   * first-boot guardrail renders only on a confident `0` (§7).
+   */
+  readonly enabledProviderCount: number | null;
   /**
    * Create a Named Agent (`POST /named-agents`). On success the store's
    * `namedAgents` list is updated (append/replace) so every consumer — the
@@ -628,6 +645,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   let namedAgentSnapshot = $state<NamedAgentSelectionSnapshot | null>(null);
   let fatalError = $state<string | null>(null);
 
+  /**
+   * Loaded provider-tier plugins effectively enabled in the ACTIVE workspace
+   * (`GET /workspaces/:id/plugins/providers-status`, plan 06 §6.5). `null` =
+   * unknown (not fetched yet / endpoint missing) — the first-boot guardrail
+   * shows only on a confident `0` (§7).
+   */
+  let enabledProviderCount = $state<number | null>(null);
+
   /** Replace-or-append a Named Agent into the reactive list (immutably). */
   function upsertNamedAgent(agent: NamedAgent): void {
     namedAgents = upsertNamedAgentList(namedAgents, agent);
@@ -660,6 +685,68 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   const fetchImpl = opts?.fetchImpl ?? globalThis.fetch.bind(globalThis);
   const indexedDBFactory = opts?.indexedDB ?? globalThis.indexedDB;
   const localStorageOpt = opts?.localStorage ?? globalThis.localStorage;
+
+  // ── Plugins (plan 07) ──────────────────────────────────────────────────────
+  // The plugin-manager + per-workspace enablement state lives in its own
+  // feature store (one instance per app store, passed explicitly to the UI).
+  // The app store wires the server's `extensions-changed` broadcast into it
+  // (§11 multi-client coherence) and refreshes the workspace-scoped model
+  // picker + guardrail on the same event.
+  const pluginsStore = createPluginsStore(createPluginsHttp(httpBase, fetchImpl));
+
+  /**
+   * Refetch the model catalog for the ACTIVE workspace
+   * (`GET /models?workspaceId=`, plan 06 §6.5 — workspace-aware; a backend
+   * without the param returns the global catalog, which stays correct).
+   * Re-run on boot, on every workspace switch, and on `extensions-changed`
+   * (a provider toggled in another client updates the picker here too).
+   */
+  async function refreshModels(): Promise<void> {
+    try {
+      const res = await fetchImpl(
+        `${httpBase}/models?workspaceId=${encodeURIComponent(activeWorkspaceId)}`,
+      );
+      if (!res.ok) return;
+      const data = (await res.json()) as ModelsResponse;
+      // Defensive: a malformed/SPA-fallback response must never poison the
+      // picker with a non-array (the old boot chain had the same exposure).
+      if (!Array.isArray(data.models)) return;
+      models = data.models;
+      modelInfo = data.modelInfo ?? {};
+    } catch (err) {
+      reportError("Failed to load model list", err);
+    }
+  }
+
+  /**
+   * Refetch the active workspace's provider status (the §6.5 first-boot
+   * guardrail signal). Guarded against a slow response losing a race with a
+   * workspace switch (only the CURRENT workspace's result lands). Non-JSON
+   * 200 (SPA fallback — endpoint not shipped) leaves it null (no prompt).
+   */
+  async function refreshProviderStatus(): Promise<void> {
+    const workspaceId = activeWorkspaceId;
+    try {
+      const res = await fetchImpl(
+        `${httpBase}/workspaces/${encodeURIComponent(workspaceId)}/plugins/providers-status`,
+      );
+      if (!res.ok) {
+        if (workspaceId === activeWorkspaceId) enabledProviderCount = null;
+        return;
+      }
+      const contentType = res.headers.get("content-type") ?? "";
+      if (!contentType.includes("application/json")) return;
+      const data = (await res.json()) as { enabledProviderCount?: number };
+      if (workspaceId === activeWorkspaceId) {
+        enabledProviderCount =
+          typeof data.enabledProviderCount === "number" ? data.enabledProviderCount : null;
+      }
+    } catch {
+      // Non-fatal: the guardrail just stays hidden (null) when the endpoint
+      // is unreachable.
+      if (workspaceId === activeWorkspaceId) enabledProviderCount = null;
+    }
+  }
 
   const storageAdapter = createLocalStore<TabsState>("dispatch.tabs", {
     storage: localStorageOpt,
@@ -1290,6 +1377,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
             : { type: "subscribe", surfaceId, conversationId: sub.conversationId };
         socket?.send(msg);
       }
+      // A reconnect is a NEW connection — the server forgot this client's
+      // workspace too. Re-declare it so the re-pushed catalog is filtered
+      // (plan 06 §6.4).
+      socket?.send(workspaceSetMsg(activeWorkspaceId));
       // Re-attach to every open conversation's turn stream. A turn that kept
       // running while we were disconnected resumes streaming (server replays it
       // from `turn-start`); one that sealed while we were gone is committed from
@@ -1305,34 +1396,41 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         watchStore.resync();
       }
     },
+    onExtensionsChanged(_msg: ExtensionsChangedMessage) {
+      // §11 multi-client coherence: another client (or this one) mutated the
+      // plugin set. Refetch the plugin list (+ any open workspace modal view),
+      // the workspace-scoped model catalog, and the provider guardrail. The
+      // surface catalog is NOT refetched here — the server re-pushes it
+      // (workspace-filtered) on the same broadcast.
+      pluginsStore.onExtensionsChanged();
+      void refreshModels();
+      void refreshProviderStatus();
+    },
   };
   if (opts?.socketFactory !== undefined) {
     socketOpts.socketFactory = opts.socketFactory;
   }
   socket = createSurfaceSocket(socketOpts);
 
-  // Fetch model catalog
-  void fetchImpl(`${httpBase}/models`)
-    .then((res) => {
-      if (!res.ok) return;
-      return res.json() as Promise<ModelsResponse>;
-    })
-    .then((data) => {
-      if (data === undefined) return;
-      models = data.models;
-      modelInfo = data.modelInfo ?? {};
-      // Do NOT silently switch the active model when the current selection is
-      // missing from the catalog (e.g. a saved numbered OpenCode credential was
-      // removed). The model selector surfaces it as unavailable; the user picks
-      // explicitly. activeModel is still normalized through the legacy-migration
-      // helper so an old `opencode/...` value is rewritten once.
-      if (migrateLegacyModelName(activeModel) !== activeModel) {
-        activeModel = migrateLegacyModelName(activeModel);
-      }
-    })
-    .catch((err) => {
-      reportError("Failed to load model list", err);
-    });
+  // Tell the backend THIS connection's active workspace (plan 06 §6.4). The
+  // socket queues the send until the connection opens; on receipt the server
+  // re-pushes the workspace-filtered surface catalog. Also refreshed on
+  // reconnect (onReopen — a new connection is anonymous again).
+  const workspaceSetMsg = (workspaceId: string): WorkspaceSetMessage => ({
+    type: "workspace.set",
+    workspaceId,
+  });
+  socket.send(workspaceSetMsg(activeWorkspaceId));
+
+  // Fetch the model catalog (workspace-scoped — plan 06 §6.5).
+  void refreshModels();
+  // Fetch the active workspace's provider status (§6.5 first-boot guardrail).
+  void refreshProviderStatus();
+  // One-time legacy model-name migration on boot (independent of the fetch;
+  // preserved from the pre-refreshModels boot chain).
+  if (migrateLegacyModelName(activeModel) !== activeModel) {
+    activeModel = migrateLegacyModelName(activeModel);
+  }
 
   // Fetch the discovered-computer catalog (global, like models). Empty until
   // the `ssh` extension lands — a safe no-op until then (the selector shows
@@ -1423,6 +1521,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     setActiveWorkspace(workspaceId: string): void {
       activeWorkspaceId = workspaceId;
+      // Tell the backend the switch (plan 06 §6.4): workspace switching is
+      // instant + client-side, so the server must be told explicitly — it
+      // re-pushes the workspace-filtered surface catalog on receipt. The send
+      // is idempotent + queued until the socket opens.
+      socket?.send(workspaceSetMsg(workspaceId));
       // Reset to a fresh draft scoped to the new workspace so a new chat is
       // stamped with the right `workspaceId` on `chat.send`.
       const nextDraftId = randomId();
@@ -1438,6 +1541,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       void refreshReasoningEffort();
       void refreshThinking();
       void refreshCompactPercent();
+      // The model picker + provider guardrail are WORKSPACE-SCOPED now
+      // (plan 06 §6.5): refetch both for the new workspace.
+      void refreshModels();
+      void refreshProviderStatus();
     },
     get activeChat(): ChatStore {
       return activeChat;
@@ -2403,6 +2510,14 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     get namedAgentSnapshot(): NamedAgentSelectionSnapshot | null {
       return namedAgentSnapshot;
+    },
+
+    // ── Plugins (plan 07) ────────────────────────────────────────────────────
+    get plugins(): PluginsStore {
+      return pluginsStore;
+    },
+    get enabledProviderCount(): number | null {
+      return enabledProviderCount;
     },
 
     async refreshNamedAgents(): Promise<NamedAgentsResult> {

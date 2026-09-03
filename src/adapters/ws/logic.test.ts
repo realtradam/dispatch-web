@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { nextBackoffMs, parseServerMessage, serialize } from "./logic";
 
+describe("serialize — workspace.set (plan 06 §6.4)", () => {
+  it("serializes a workspace.set client message", () => {
+    const msg = { type: "workspace.set" as const, workspaceId: "ws-1" };
+    expect(JSON.parse(serialize(msg))).toEqual(msg);
+  });
+});
+
 describe("serialize", () => {
   it("serializes a subscribe message", () => {
     const msg = { type: "subscribe" as const, surfaceId: "s1" };
@@ -428,5 +435,31 @@ describe("nextBackoffMs", () => {
       expect(ms).toBeGreaterThanOrEqual(400);
       expect(ms).toBeLessThanOrEqual(600);
     }
+  });
+});
+
+describe("parseServerMessage — extensions-changed (plan 05)", () => {
+  it("parses the broadcast with a pluginId", () => {
+    const result = parseServerMessage(
+      JSON.stringify({ type: "extensions-changed", action: "unload", pluginId: "mcp" }),
+    );
+    expect(result).toEqual({ type: "extensions-changed", action: "unload", pluginId: "mcp" });
+  });
+
+  it("parses a scan broadcast (no pluginId)", () => {
+    const result = parseServerMessage(
+      JSON.stringify({ type: "extensions-changed", action: "scan" }),
+    );
+    expect(result).toEqual({ type: "extensions-changed", action: "scan" });
+  });
+
+  it("rejects an unknown action", () => {
+    expect(
+      parseServerMessage(JSON.stringify({ type: "extensions-changed", action: "explode" })),
+    ).toBeNull();
+  });
+
+  it("rejects a missing action", () => {
+    expect(parseServerMessage(JSON.stringify({ type: "extensions-changed" }))).toBeNull();
   });
 });

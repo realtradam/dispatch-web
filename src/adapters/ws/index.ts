@@ -4,6 +4,7 @@ import type {
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
+  ExtensionsChangedMessage,
   WsClientMessage,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -27,6 +28,12 @@ export interface SurfaceSocketOptions {
   onConversationStatusChanged?: (msg: ConversationStatusChangedMessage) => void;
   /** Broadcast when a conversation's history has been compacted (reload needed). */
   onConversationCompacted?: (msg: ConversationCompactedMessage) => void;
+  /**
+   * Broadcast after every plugin-manager mutation (plan 05 §11): every
+   * connected frontend refetches its extension list (the server re-pushes the
+   * workspace-filtered surface catalog itself).
+   */
+  onExtensionsChanged?: (msg: ExtensionsChangedMessage) => void;
   onReopen?: () => void;
   socketFactory?: (url: string) => WebSocketLike;
 }
@@ -75,6 +82,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
           opts.onConversationStatusChanged?.(msg as ConversationStatusChangedMessage);
         } else if (msg.type === "conversation.compacted") {
           opts.onConversationCompacted?.(msg as ConversationCompactedMessage);
+        } else if (msg.type === "extensions-changed") {
+          opts.onExtensionsChanged?.(msg as ExtensionsChangedMessage);
         } else {
           opts.onMessage(msg as SurfaceServerMessage);
         }

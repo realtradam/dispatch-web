@@ -73,6 +73,7 @@
     onNavigate={navigate}
     computers={store.computers}
     hasActive={(id) => store.workspaceHasActiveConversations(id)}
+    plugins={store.plugins}
   />
 {:else}
   <App {store} onNavigate={navigate} />

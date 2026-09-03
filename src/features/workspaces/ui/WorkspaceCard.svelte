@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ComputerEntry, WorkspaceEntry } from "@dispatch/wire";
   import { untrack } from "svelte";
+  import { WorkspacePluginModal, type PluginsStore } from "../../plugins";
   import type { WorkspaceStore } from "../store.svelte";
   import { relativeTime } from "../logic/view-model";
   import { workspacePath } from "../logic/route";
@@ -12,6 +13,7 @@
     onNavigate,
     computers,
     hasActive,
+    plugins,
   }: {
     ws: WorkspaceEntry;
     store: WorkspaceStore;
@@ -25,6 +27,12 @@
      * `workspaceHasActiveConversations`. Absent → no indicator (e.g. tests).
      */
     hasActive?: (workspaceId: string) => boolean;
+    /**
+     * Optional plugin store (plan 07): when present, the card renders a
+     * "Plugins" button opening THIS workspace's enablement modal. Absent
+     * (tests) → no button.
+     */
+    plugins?: PluginsStore;
   } = $props();
 
   // Whether at least one conversation in this workspace is currently active
@@ -117,6 +125,11 @@
       savingStar = false;
     }
   }
+
+  // ── Per-workspace plugin modal (plan 07 §7.3) ─────────────────────────────
+  // Enable/disable what THIS workspace uses. Unloaded plugins are greyed out
+  // + unselectable there — only the global manager (page header) loads code.
+  let pluginsOpen = $state(false);
 
   // ── Delete ─────────────────────────────────────────────────────────────────
   let deleting = $state(false);
@@ -263,6 +276,16 @@
     >
       Open
     </a>
+    {#if plugins}
+      <button
+        type="button"
+        class="btn btn-outline btn-sm ml-2"
+        onclick={() => (pluginsOpen = true)}
+        title="Choose which plugins this workspace uses"
+      >
+        Plugins
+      </button>
+    {/if}
   </div>
 
   {#if cwdError}
@@ -277,3 +300,12 @@
     <p class="text-xs opacity-50">No default computer — conversations run locally (no SSH).</p>
   {/if}
 </li>
+
+{#if pluginsOpen && plugins}
+  <WorkspacePluginModal
+    workspaceId={ws.id}
+    workspaceTitle={ws.title}
+    {plugins}
+    onClose={() => (pluginsOpen = false)}
+  />
+{/if}

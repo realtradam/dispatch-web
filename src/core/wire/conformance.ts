@@ -91,6 +91,8 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "conversation.statusChanged";
     case "conversation.compacted":
       return "conversation.compacted";
+    case "extensions-changed":
+      return "extensions-changed";
     default:
       return msg satisfies never;
   }
@@ -118,6 +120,8 @@ export function assertWsClientMessageExhaustive(msg: WsClientMessage): string {
       return "chat.queue";
     case "chat.queue.cancel":
       return "chat.queue.cancel";
+    case "workspace.set":
+      return "workspace.set";
     default:
       return msg satisfies never;
   }
