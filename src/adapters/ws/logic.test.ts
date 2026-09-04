@@ -476,7 +476,9 @@ describe("parseServerMessage — layout (plan 02)", () => {
 
   it("rejects a missing/invalid workspaceId", () => {
     expect(parseServerMessage(JSON.stringify({ type: "layout", tree: TREE }))).toBeNull();
-    expect(parseServerMessage(JSON.stringify({ type: "layout", workspaceId: 7, tree: TREE }))).toBeNull();
+    expect(
+      parseServerMessage(JSON.stringify({ type: "layout", workspaceId: 7, tree: TREE })),
+    ).toBeNull();
   });
 
   it("rejects a missing/invalid tree (wrong version, missing root, non-object)", () => {
@@ -491,7 +493,9 @@ describe("parseServerMessage — layout (plan 02)", () => {
         JSON.stringify({ type: "layout", workspaceId: "ws-a", tree: { version: 1 } }),
       ),
     ).toBeNull();
-    expect(parseServerMessage(JSON.stringify({ type: "layout", workspaceId: "ws-a", tree: 7 }))).toBeNull();
+    expect(
+      parseServerMessage(JSON.stringify({ type: "layout", workspaceId: "ws-a", tree: 7 })),
+    ).toBeNull();
   });
 
   it("an unknown type still parses to null (the layout addition doesn't loosen the guard)", () => {

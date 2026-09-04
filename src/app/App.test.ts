@@ -1,12 +1,12 @@
-import type { SetCwdRequest, WsServerMessage } from "@dispatch/transport-contract";
 import type { LayoutTree } from "@dispatch/layout-contract";
 import { DEFAULT_LAYOUT } from "@dispatch/layout-contract";
-import { overlaySidePanels } from "../features/layout";
+import type { SetCwdRequest, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
+import { overlaySidePanels } from "../features/layout";
 import App from "./App.svelte";
 import { createAppStore } from "./store.svelte";
 
@@ -510,9 +510,7 @@ describe("App component interaction tests", () => {
 
     // The Extensions view arrives with the provider's tree (an async GET —
     // plan 02), so await the modules table rendering.
-    expect(
-      await screen.findByRole("columnheader", { name: "Module" }),
-    ).toBeInTheDocument();
+    expect(await screen.findByRole("columnheader", { name: "Module" })).toBeInTheDocument();
     for (const name of [
       "chat",
       "tabs",

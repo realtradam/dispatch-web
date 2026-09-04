@@ -1,7 +1,7 @@
 import { DEFAULT_LAYOUT, type LayoutTree } from "@dispatch/layout-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { overlaySidePanels } from "./logic/seed";
 import type { LayoutHttp, LayoutHttpResult } from "./adapter/http";
+import { overlaySidePanels } from "./logic/seed";
 import { createLayoutStore } from "./store.svelte";
 
 /**
@@ -300,7 +300,9 @@ describe("layout store — probe triggers (§2.6)", () => {
     let absent = true;
     const served = overlaySidePanels(DEFAULT_LAYOUT, ["extensions"]);
     const http = fakeHttp(() =>
-      absent ? { ok: false, notFound: true, error: "No layout provider is active" } : { ok: true, tree: served },
+      absent
+        ? { ok: false, notFound: true, error: "No layout provider is active" }
+        : { ok: true, tree: served },
     );
     const store = makeStore(http);
     await store.probe("ws-a");
@@ -315,7 +317,9 @@ describe("layout store — probe triggers (§2.6)", () => {
 
   it("a workspace switch resets to the default, probes the NEW workspace, and drops queued edits", async () => {
     const http = fakeHttp((ws) =>
-      ws === "ws-b" ? { ok: true, tree: overlaySidePanels(DEFAULT_LAYOUT, ["vision"]) } : { ok: true, tree: DEFAULT_LAYOUT },
+      ws === "ws-b"
+        ? { ok: true, tree: overlaySidePanels(DEFAULT_LAYOUT, ["vision"]) }
+        : { ok: true, tree: DEFAULT_LAYOUT },
     );
     const store = makeStore(http);
     await store.probe("ws-a");
@@ -405,7 +409,9 @@ describe("layout store — one-way localStorage migration (§2.7)", () => {
     const storage = storageWith(["extensions"]);
     let absent = true;
     const http = fakeHttp(() =>
-      absent ? { ok: false, notFound: true, error: "No layout provider is active" } : { ok: true, tree: DEFAULT_LAYOUT },
+      absent
+        ? { ok: false, notFound: true, error: "No layout provider is active" }
+        : { ok: true, tree: DEFAULT_LAYOUT },
     );
     const store = makeStore(http, { storage });
     await store.probe("ws-a", { boot: true });

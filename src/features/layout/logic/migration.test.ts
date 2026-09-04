@@ -1,10 +1,6 @@
-import { describe, expect, it } from "vitest";
 import { DEFAULT_LAYOUT } from "@dispatch/layout-contract";
-import {
-  migrationTree,
-  sidePanelViews,
-  storedPanelViews,
-} from "./migration";
+import { describe, expect, it } from "vitest";
+import { migrationTree, sidePanelViews, storedPanelViews } from "./migration";
 import { overlaySidePanels } from "./seed";
 
 const KNOWN = new Set(["tabs", "model", "extensions", "vision", "tasks"]);

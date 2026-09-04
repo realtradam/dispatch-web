@@ -16,7 +16,8 @@ function fetchReturning(
 ): typeof fetch {
   return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
     if (capture !== undefined) {
-      capture.url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      capture.url =
+        typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       capture.init = init;
     }
     return new Response(JSON.stringify(body), {
