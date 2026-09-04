@@ -10,18 +10,10 @@
 <script lang="ts">
   import type { LayoutTree } from "@dispatch/layout-contract";
   import { untrack } from "svelte";
-  import { createLocalStore } from "../adapters/local-storage";
-  import {
-    createCollapseStore,
-    firstCollapsibleNodeId,
-    firstPanelsNode,
-    listPanelViews,
-    TileRoot,
-  } from "../features/layout";
+  import { createCollapseStore, firstCollapsibleNodeId, TileRoot } from "../features/layout";
   import { RunModal, type HeartbeatRunView } from "../features/heartbeat";
   import { SystemPromptBuilder } from "../features/system-prompt";
   import type { AppStore } from "./store.svelte";
-  import { seedLayout } from "../features/layout";
   import type { AppViewPorts, ChatViewportBridge } from "./view-ports";
   import ErrorModal from "./ErrorModal.svelte";
 
@@ -33,27 +25,18 @@
   // closed). Holds a snapshot run view; the modal re-mounts per run (keyed).
   let heartbeatRun = $state<HeartbeatRunView | null>(null);
 
-  // --- The layout tree: seeded from DEFAULT_LAYOUT (the compatibility tree
-  // that reproduces today's layout) with the sidebar selection overlaid from
-  // localStorage — today's exact boot behavior (unknown/removed kinds dropped;
-  // nothing valid stored → the tabs+model defaults).
-  const sidebarStore = createLocalStore<readonly string[]>("dispatch.sidebar.views", {
-    storage: untrack(() => store.storage),
-  });
-  let tree = $state<LayoutTree>(
-    seedLayout(sidebarStore.load(), listPanelViews().map((v) => v.id)),
-  );
+  // --- The layout tree (plan 02): the ACTIVE workspace's tile tree, served
+  // by the backend's layout provider plugin when one is active (probed on
+  // boot, on workspace switch, and on extensions-changed; `layout` WS pushes
+  // re-render live) and the built-in DEFAULT_LAYOUT otherwise (no-provider
+  // mode: edits are ephemeral, logged once, no error UI). The store owns the
+  // whole lifecycle; the shell just renders `tree` and forwards edits.
+  // `dispatch.sidebar.views` is RETIRED (D-L4): its only reader is the store's
+  // one-way §2.7 migration.
+  const tree = $derived(store.layout.tree);
 
-  // Tile edits flow up from the panels; the OWNER decides persistence. The
-  // panels selection is written back to the SAME key in the SAME format
-  // (`dispatch.sidebar.views` — a JSON array of view ids) so the storage stays
-  // byte-compatible with today (plan 02 migrates it).
   function handleTreeChange(next: LayoutTree): void {
-    tree = next;
-    const panels = firstPanelsNode(next);
-    if (panels !== null) {
-      sidebarStore.save(panels.node.panels.map((p) => p.view));
-    }
+    store.layout.onTreeChange(next);
   }
 
   // --- Sidebar collapse: renderer chrome state (per-node-id open/closed),

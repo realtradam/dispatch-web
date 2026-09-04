@@ -7,6 +7,7 @@
  * OUTSIDE the tree — the tree owns the content region.
  */
 
+export { createLayoutHttp, type LayoutHttp, type LayoutHttpResult } from "./adapter/http";
 export {
   bootDefaultOpen,
   type CollapseState,
@@ -17,6 +18,7 @@ export {
   SIDEBAR_OPEN_KEY,
   WIDE_BREAKPOINT,
 } from "./logic/collapse";
+export { migrationTree, sidePanelViews, storedPanelViews } from "./logic/migration";
 export { addPanelOp, firstPanelView, removePanelOp, swapPanelOp } from "./logic/panels-edit";
 export {
   getView,
@@ -31,6 +33,7 @@ export {
 } from "./logic/registry";
 export { DEFAULT_PANEL_VIEWS, overlaySidePanels, seedLayout } from "./logic/seed";
 export { firstCollapsibleNodeId, firstPanelsNode } from "./logic/tree-query";
+export { createLayoutStore, type LayoutProviderState, type LayoutStore } from "./store.svelte";
 export { default as TileRoot } from "./ui/TileRoot.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */

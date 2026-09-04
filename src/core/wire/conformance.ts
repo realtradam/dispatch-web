@@ -93,6 +93,8 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "conversation.compacted";
     case "extensions-changed":
       return "extensions-changed";
+    case "layout":
+      return "layout";
     default:
       return msg satisfies never;
   }

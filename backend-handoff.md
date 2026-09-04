@@ -5,6 +5,62 @@
 > Per AGENTS.md "Backend seam": FE contract changes are edited + consumers updated here; BACKEND
 > contract changes are REPORTED UP here, and on the new version the FE re-pins the `file:` dep,
 > re-mirrors `.dispatch/*.reference.md`, and updates consumers. NEVER edit the backend repo.
+>
+> **NOTE (tiled-layout worktree, 2026-09-04):** plans 01–04 of the layout series are being
+> implemented in BOTH repos of this worktree by one task (branch `feature/tiled-layout`), so the
+> "never edit the backend repo" rule is superseded by that task's scope — the backend contract
+> changes below were made in the same branch and the FE consumes them via the `file:` deps
+> (dists rebuilt). Listed here for the record.
+
+## Milestone: Layout plan 02 — provider consumption + layout WS + localStorage migration
+
+**Slice status:** COMPLETE + committed (both repos, `feature/tiled-layout`).
+
+### What the FE built
+- `features/layout/adapter/http.ts` — `createLayoutHttp(httpBase, fetchImpl)`: typed
+  `GET/PUT/DELETE /workspaces/:id/layout` with the 404-as-signal mapping (`notFound`) +
+  malformed-200 degrade; tested against a scripted fetch edge.
+- `features/layout/logic/migration.ts` — the §2.7 one-way best-effort migration decision
+  (`migrationTree`/`storedPanelViews`/`sidePanelViews`): import the stored
+  `dispatch.sidebar.views` selection ONLY when the provider's tree is the untouched
+  DEFAULT_LAYOUT seed; the key is then never read again (bytes stay).
+- `features/layout/store.svelte.ts` — `createLayoutStore(deps)`: owns the ACTIVE workspace's
+  tree; probes on boot / workspace switch / `extensions-changed` (§2.6); WS `layout` push via
+  `onServerTree` (non-active workspaces ignored); edits PUT the WHOLE tree lightly debounced
+  (300ms) with rollback to the last server tree on failure (a PUT 404 flips to no-provider mode
+  and KEEPS the edit — ephemeral, no rollback, no warning beyond the once-per-absence log);
+  collapse state NOT touched (`dispatch.sidebar.open` unchanged).
+- `adapters/ws/logic.ts` parses `layout` (`{ type, workspaceId, tree }`, light shape checks);
+  `adapters/ws/index.ts` dispatches via `onLayout`; `core/wire/conformance.ts` exhaustive
+  guard extended.
+- `app/store.svelte.ts` — the app store owns the `LayoutStore` instance + exposes
+  `store.layout`; wires `onLayout` → `layoutStore.onServerTree`, the boot probe
+  (`{ boot: true }` arms the §2.7 migration), `onWorkspaceChanged` in `setActiveWorkspace`, and
+  a re-probe in `onExtensionsChanged`.
+- `app/App.svelte` — the tree is now `store.layout.tree` (was: local `$state` seeded from
+  localStorage); edits flow to `layout.onTreeChange`; the `dispatch.sidebar.views` READ (boot
+  seed) and WRITE (edit write-back) are RETIRED — its only reader is the one-way migration.
+- **App tests updated:** the tests that pre-seeded `dispatch.sidebar.views` to make a sidebar
+  view visible now drive the layout through the provider edge (`fakeFetchWithLayout([...])`
+  serving `GET /workspaces/:id/layout`); the Extensions-view test is async (the tree arrives
+  via the provider GET).
+
+### Pinned contract versions + mirrors
+- `@dispatch/transport-contract` (worktree dist rebuilt): consumed with the plan-02 types
+  (`LayoutChangedMessage` + the `layout` union member; `LayoutTree` re-exported from
+  `@dispatch/layout-contract`). Mirror `.dispatch/transport-contract.reference.md` updated with
+  a **2026-09-04 delta note**.
+
+### Findings / raises for the backend
+1. **Outward events emitter is a noop in the composition root** (host-bin `createNoopEvents`):
+   the plan-02 WS push therefore follows the LIVE `extensions-changed` path instead — a typed
+   event hook (`layoutChanged` in `@dispatch/layout-provider-contract`) that transport-ws
+   subscribes to and broadcasts verbatim. If a generic `host.events` → WS bridge ever ships,
+   the kit's `emitChange` dep is the single wiring point to switch.
+2. **§2.4 double-provide semantics VERIFIED from kernel source** (`kernel/src/bus/bus.ts`):
+   `provideService` on an already-provided handle THROWS ("Only one provider per handle is
+   allowed") → first-provider-wins; the host converts a throwing `activate()` into the
+   disabled-with-reason grammar. No kit wrapper needed (the plan's conditional).
 
 ## Milestone: Plugin Manager UI — FE scope (plan 07, feature/plugin-system)
 

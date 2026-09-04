@@ -5,6 +5,7 @@ import type {
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
   ExtensionsChangedMessage,
+  LayoutChangedMessage,
   WsClientMessage,
   WsServerMessage,
 } from "@dispatch/transport-contract";
@@ -26,6 +27,7 @@ const VALID_SERVER_TYPES = new Set([
   "conversation.statusChanged",
   "conversation.compacted",
   "extensions-changed",
+  "layout",
 ]);
 
 /** Serialize a client message to a JSON string for the wire. */
@@ -177,6 +179,30 @@ export function parseServerMessage(data: string): WsServerMessage | null {
         type: "extensions-changed",
         action,
         ...(pluginId !== undefined && typeof pluginId === "string" ? { pluginId } : {}),
+      };
+      return msg;
+    }
+    case "layout": {
+      // Layout-provider broadcast (plan 02 §2.5): the FULL tree for ONE
+      // workspace (decision 7 — no patch protocol). Light shape checks here
+      // (the tree's structural validation is the backend's write-time job);
+      // the store filters by its active workspace.
+      if (typeof parsed.workspaceId !== "string") return null;
+      const tree = parsed.tree;
+      if (
+        tree === null ||
+        typeof tree !== "object" ||
+        Array.isArray(tree) ||
+        (tree as { version?: unknown }).version !== 1 ||
+        typeof (tree as { root?: unknown }).root !== "object" ||
+        (tree as { root?: unknown }).root === null
+      ) {
+        return null;
+      }
+      const msg: LayoutChangedMessage = {
+        type: "layout",
+        workspaceId: parsed.workspaceId,
+        tree: tree as LayoutChangedMessage["tree"],
       };
       return msg;
     }

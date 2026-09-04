@@ -5,6 +5,7 @@ import type {
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
   ExtensionsChangedMessage,
+  LayoutChangedMessage,
   WsClientMessage,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -34,6 +35,11 @@ export interface SurfaceSocketOptions {
    * workspace-filtered surface catalog itself).
    */
   onExtensionsChanged?: (msg: ExtensionsChangedMessage) => void;
+  /**
+   * Broadcast after every successful layout write (plan 02 §2.5): the FULL
+   * tree for one workspace. The consumer filters by its active workspace.
+   */
+  onLayout?: (msg: LayoutChangedMessage) => void;
   onReopen?: () => void;
   socketFactory?: (url: string) => WebSocketLike;
 }
@@ -84,6 +90,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
           opts.onConversationCompacted?.(msg as ConversationCompactedMessage);
         } else if (msg.type === "extensions-changed") {
           opts.onExtensionsChanged?.(msg as ExtensionsChangedMessage);
+        } else if (msg.type === "layout") {
+          opts.onLayout?.(msg as LayoutChangedMessage);
         } else {
           opts.onMessage(msg as SurfaceServerMessage);
         }

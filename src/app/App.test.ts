@@ -1,4 +1,7 @@
 import type { SetCwdRequest, WsServerMessage } from "@dispatch/transport-contract";
+import type { LayoutTree } from "@dispatch/layout-contract";
+import { DEFAULT_LAYOUT } from "@dispatch/layout-contract";
+import { overlaySidePanels } from "../features/layout";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
@@ -62,6 +65,12 @@ function fakeFetchImpl(): typeof fetch {
         status: 200,
       });
     }
+    if (url.endsWith("/layout")) {
+      // No layout provider in these tests: the plan-02 no-provider signal.
+      return new Response(JSON.stringify({ error: "No layout provider is active" }), {
+        status: 404,
+      });
+    }
     if (url.includes("/conversations?status=")) {
       return new Response(JSON.stringify({ conversations: [] }), { status: 200 });
     }
@@ -79,6 +88,35 @@ function fakeFetchImpl(): typeof fetch {
       });
     }
     return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+  };
+}
+
+/**
+ * A fetch whose layout provider is ACTIVE and serves the given sidebar
+ * panels (plan 02): `GET /workspaces/:id/layout` returns DEFAULT_LAYOUT with
+ * the views overlaid; `PUT` echoes the tree (200). Tests that need specific
+ * sidebar views visible drive the layout through THIS edge — the pre-seeded
+ * `dispatch.sidebar.views` localStorage is only read by the one-way §2.7
+ * migration now.
+ */
+function fakeFetchWithLayout(views: readonly string[]): typeof fetch {
+  const inner = fakeFetchImpl();
+  return async (input: string | URL | Request, init?: RequestInit): Promise<Response> => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+    if (url.endsWith("/layout")) {
+      const method = init?.method ?? "GET";
+      if (method === "PUT" && typeof init?.body === "string") {
+        const body = JSON.parse(init.body) as { tree: LayoutTree };
+        return new Response(JSON.stringify({ tree: body.tree }), { status: 200 });
+      }
+      if (method === "GET") {
+        const tree = overlaySidePanels(DEFAULT_LAYOUT, views);
+        return new Response(JSON.stringify({ tree }), { status: 200 });
+      }
+      const tree = overlaySidePanels(DEFAULT_LAYOUT, views);
+      return new Response(JSON.stringify({ tree }), { status: 200 });
+    }
+    return inner(input, init);
   };
 }
 
@@ -236,7 +274,7 @@ describe("App component interaction tests", () => {
     const ws = fakeSocket();
     const store = createAppStore({
       socketFactory: () => ws,
-      fetchImpl: fakeFetchImpl(),
+      fetchImpl: fakeFetchWithLayout(["extensions"]),
       localStorage: createFakeStorageWithViews(),
     });
     ws.resolveOpen();
@@ -300,7 +338,7 @@ describe("App component interaction tests", () => {
     const ws = fakeSocket();
     const store = createAppStore({
       socketFactory: () => ws,
-      fetchImpl: fakeFetchImpl(),
+      fetchImpl: fakeFetchWithLayout(["extensions"]),
       localStorage: createFakeStorageWithViews(),
     });
     ws.resolveOpen();
@@ -420,7 +458,7 @@ describe("App component interaction tests", () => {
     const ws = fakeSocket();
     const store = createAppStore({
       socketFactory: () => ws,
-      fetchImpl: fakeFetchImpl(),
+      fetchImpl: fakeFetchWithLayout(["extensions"]),
       localStorage: createFakeStorageWithViews(),
     });
     ws.resolveOpen();
@@ -459,19 +497,22 @@ describe("App component interaction tests", () => {
     store.dispose();
   });
 
-  it("the Extensions view lists frontend modules aggregated from feature manifests", () => {
+  it("the Extensions view lists frontend modules aggregated from feature manifests", async () => {
     const ws = fakeSocket();
     const store = createAppStore({
       socketFactory: () => ws,
-      fetchImpl: fakeFetchImpl(),
+      fetchImpl: fakeFetchWithLayout(["extensions"]),
       localStorage: createFakeStorageWithViews(),
     });
     ws.resolveOpen();
 
     render(App, { props: { store, onNavigate: vi.fn() } });
 
-    // Extensions view is pre-populated in the fake storage, so the modules table renders immediately.
-    expect(screen.getByRole("columnheader", { name: "Module" })).toBeInTheDocument();
+    // The Extensions view arrives with the provider's tree (an async GET —
+    // plan 02), so await the modules table rendering.
+    expect(
+      await screen.findByRole("columnheader", { name: "Module" }),
+    ).toBeInTheDocument();
     for (const name of [
       "chat",
       "tabs",
@@ -593,7 +634,7 @@ describe("App component interaction tests", () => {
     const ws = fakeSocket();
     const store = createAppStore({
       socketFactory: () => ws,
-      fetchImpl: fakeFetchImpl(),
+      fetchImpl: fakeFetchWithLayout(["vision"]),
       localStorage: createFakeStorageWithViews(["vision"]),
     });
     ws.resolveOpen();

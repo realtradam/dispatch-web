@@ -14,6 +14,7 @@ import type {
   ConversationStatusChangedMessage,
   CwdResponse,
   ExtensionsChangedMessage,
+  LayoutChangedMessage,
   LspStatusResponse,
   McpStatusResponse,
   ModelMetadata,
@@ -82,6 +83,8 @@ import type {
   HeartbeatStopResult,
 } from "../features/heartbeat";
 import { normalizeHeartbeatConfig, normalizeHeartbeatRuns } from "../features/heartbeat";
+import type { LayoutStore } from "../features/layout";
+import { createLayoutHttp, createLayoutStore, listPanelViews } from "../features/layout";
 import type {
   NamedAgent,
   NamedAgentDeleteResult,
@@ -555,6 +558,14 @@ export interface AppStore {
    */
   readonly plugins: PluginsStore;
   /**
+   * The ACTIVE workspace's tile tree (plan 02): served by the backend's
+   * layout provider when one is active, the local default otherwise. The
+   * shell reads `tree` for the renderer and feeds edits back through
+   * `onTreeChange` (debounced PUT + rollback); the store owns the probes,
+   * the WS-push filter, and the no-provider degrade.
+   */
+  readonly layout: LayoutStore;
+  /**
    * Loaded provider-tier plugins effectively enabled in the ACTIVE workspace
    * (`GET /workspaces/:id/plugins/providers-status`). `null` = unknown — the
    * first-boot guardrail renders only on a confident `0` (§7).
@@ -693,6 +704,20 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // (§11 multi-client coherence) and refreshes the workspace-scoped model
   // picker + guardrail on the same event.
   const pluginsStore = createPluginsStore(createPluginsHttp(httpBase, fetchImpl));
+
+  // ── Layout (plan 02) ─────────────────────────────────────────────────────────
+  // The ACTIVE workspace's tile tree, owned by the backend's layout provider
+  // plugin when one is active (its well-known routes + the `layout` WS push)
+  // and rendered from the local default otherwise (no-provider mode: edits
+  // ephemeral, logged once, no error UI). Probes run on boot, on every
+  // workspace switch, and on `extensions-changed` (§2.6); the one-way
+  // localStorage migration (§2.7) arms on the boot probe.
+  const layoutStore = createLayoutStore({
+    http: createLayoutHttp(httpBase, fetchImpl),
+    workspaceId: activeWorkspaceId,
+    storage: localStorageOpt,
+    knownViews: listPanelViews().map((v) => v.id),
+  });
 
   /**
    * Refetch the model catalog for the ACTIVE workspace
@@ -1403,8 +1428,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // surface catalog is NOT refetched here — the server re-pushes it
       // (workspace-filtered) on the same broadcast.
       pluginsStore.onExtensionsChanged();
+      // A layout plugin enabled/disabled mid-session starts/stops serving —
+      // the probe picks the new provider state up without a reload (§2.6).
+      void layoutStore.probe(activeWorkspaceId);
       void refreshModels();
       void refreshProviderStatus();
+    },
+    onLayout(msg: LayoutChangedMessage) {
+      // §2.5 multi-client coherence: a layout write on ANY client (or a
+      // plugin's op) re-renders here — the store filters non-active
+      // workspaces (the server fans out to everyone).
+      layoutStore.onServerTree(msg.workspaceId, msg.tree);
     },
   };
   if (opts?.socketFactory !== undefined) {
@@ -1426,6 +1460,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   void refreshModels();
   // Fetch the active workspace's provider status (§6.5 first-boot guardrail).
   void refreshProviderStatus();
+  // Probe the ACTIVE layout provider (plan 02 §2.6 boot trigger): the tree is
+  // served by the backend's layout plugin when one is active. `boot: true`
+  // arms the one-way §2.7 localStorage migration on the first success.
+  void layoutStore.probe(activeWorkspaceId, { boot: true });
   // One-time legacy model-name migration on boot (independent of the fetch;
   // preserved from the pre-refreshModels boot chain).
   if (migrateLegacyModelName(activeModel) !== activeModel) {
@@ -1545,6 +1583,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // (plan 06 §6.5): refetch both for the new workspace.
       void refreshModels();
       void refreshProviderStatus();
+      // The tile tree is WORKSPACE-SCOPED too (plan 02): reset to the local
+      // default for the new workspace and probe its provider (§2.6 — every
+      // workspace switch is a probe, which is also the missed-push catch-up).
+      layoutStore.onWorkspaceChanged(workspaceId);
     },
     get activeChat(): ChatStore {
       return activeChat;
@@ -2515,6 +2557,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     // ── Plugins (plan 07) ────────────────────────────────────────────────────
     get plugins(): PluginsStore {
       return pluginsStore;
+    },
+    get layout(): LayoutStore {
+      return layoutStore;
     },
     get enabledProviderCount(): number | null {
       return enabledProviderCount;
