@@ -87,6 +87,23 @@ function fakeFetchImpl(): typeof fetch {
         status: 200,
       });
     }
+    if (/\/plugins\/[^/]+\/frontend/.test(url)) {
+      // plan 03 frontend module (no fixtures declare one) — the plain 404
+      // the route returns for unknown/unloaded/frontend-less plugins.
+      return new Response(JSON.stringify({ error: "No frontend module for this plugin" }), {
+        status: 404,
+      });
+    }
+    if (/\/plugins(\?.*)?$/.test(url)) {
+      // Valid EMPTY list (plan 03): the plugin host's boot
+      // `extensions-changed`/workspace syncs read this — a shapeless
+      // fallback body would be cast to PluginListResponse and crash the
+      // diff (`list.loaded` not iterable).
+      return new Response(
+        JSON.stringify({ loaded: [], disabledWithReason: [], discovered: [], missing: [] }),
+        { status: 200 },
+      );
+    }
     return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
   };
 }

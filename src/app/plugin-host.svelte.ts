@@ -122,6 +122,12 @@ export function createPluginHost(opts: PluginHostOptions): PluginHost {
         opts.http.workspacePlugins(workspaceId),
       ]);
       if (list === null) return;
+      // Shape guard at the outermost edge (asymmetric testing: the shell
+      // guards, the pure diff stays trusting): a malformed-but-200
+      // `/plugins` response (wrong shape, contract drift, a test fake that
+      // doesn't model the route) must fail SOFT exactly like `null` — keep
+      // the current imported set, never throw from the fire-and-forget sync.
+      if (!Array.isArray(list.loaded)) return;
       const candidates = frontendCandidates(list, {
         workspaceId,
         usableIds: usablePluginIds(workspace?.plugins ?? []),
