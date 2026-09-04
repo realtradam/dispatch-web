@@ -3,6 +3,7 @@ import type {
   SetWorkspacePluginStateRequest,
   WorkspacePluginRow,
 } from "@dispatch/transport-contract";
+import type { FrontendPluginState } from "../../core/plugin-abi";
 import type { PluginOpResult, PluginScanResult, PluginsHttp } from "./adapter/http";
 import type { PluginNode } from "./logic/types";
 import { pluginNodes } from "./logic/view-model";
@@ -70,6 +71,16 @@ export interface PluginsStore {
    * connected client converges. Fire-and-forget.
    */
   onExtensionsChanged(): void;
+
+  /**
+   * The frontend-plugin (plan 03) per-plugin FE states — reported by the
+   * plugin host after every driver sync. Rendered by the manager rows:
+   * `incompatible` → "incompatible frontend plugin" (the backend-mismatch
+   * grammar), `failed` → the activation error. Absent = no FE section.
+   */
+  readonly frontendStates: ReadonlyMap<string, FrontendPluginState>;
+  /** The plugin host's post-sync report (the only writer). */
+  setFrontendStates(states: ReadonlyMap<string, FrontendPluginState>): void;
 }
 
 /** One open workspace modal's view (rows + materialized provider count). */
@@ -86,6 +97,7 @@ export function createPluginsStore(http: PluginsHttp): PluginsStore {
   let error = $state<string | null>(null);
   let lastScan = $state<PluginScanResult | null>(null);
   let workspaceView = $state<WorkspacePluginsView | null>(null);
+  let frontendStates = $state<ReadonlyMap<string, FrontendPluginState>>(new Map());
 
   // Normalized nodes — derived so the graph logic re-runs only when the list
   // changes, not on every read.
@@ -193,6 +205,14 @@ export function createPluginsStore(http: PluginsHttp): PluginsStore {
       void this.refresh();
       const open = workspaceView?.workspaceId;
       if (open !== undefined) void this.openWorkspace(open);
+    },
+
+    get frontendStates(): ReadonlyMap<string, FrontendPluginState> {
+      return frontendStates;
+    },
+
+    setFrontendStates(states: ReadonlyMap<string, FrontendPluginState>): void {
+      frontendStates = states;
     },
   };
 }

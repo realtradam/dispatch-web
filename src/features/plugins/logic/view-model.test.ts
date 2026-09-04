@@ -1,7 +1,7 @@
 import type { PluginListResponse, PluginTier } from "@dispatch/transport-contract";
 import { describe, expect, it } from "vitest";
 import { emptyListResponse, node } from "./test-fixtures";
-import { groupByTier, pluginNodes, splitSections } from "./view-model";
+import { groupByTier, pluginNodes, splitSections, withFrontendStates } from "./view-model";
 
 function listResponse(overrides: Partial<PluginListResponse> = {}): PluginListResponse {
   return {
@@ -223,5 +223,74 @@ describe("splitSections", () => {
     expect(sections.loaded.map((n) => n.id)).toEqual(["kernel", "opencode"]);
     expect(sections.discovered.map((n) => n.id)).toEqual(["broken", "fresh"]);
     expect(sections.missing.map((n) => n.id)).toEqual(["gone"]);
+  });
+});
+
+// ── withFrontendStates (plan 03) — the manager rows' FE-half issues ─────────
+
+describe("withFrontendStates", () => {
+  function listWith(...ids: readonly string[]): PluginListResponse {
+    return {
+      loaded: ids.map((id) => ({
+        id,
+        name: id,
+        version: "1.0.0",
+        tier: "standard" as const,
+        trust: "local" as const,
+        locked: false,
+        dependsOn: [],
+      })),
+      disabledWithReason: [],
+      discovered: [],
+      missing: [],
+    };
+  }
+
+  it("renders the plan-mandated grammar for an incompatible FE half", () => {
+    const nodes = pluginNodes(listWith("bad"));
+    const states = new Map([["bad", { kind: "incompatible", apiVersion: "^2" } as const]]);
+    const out = withFrontendStates(nodes, states);
+    expect(out[0]?.frontendIssue).toBe("incompatible frontend plugin");
+  });
+
+  it("renders the activation error for a failed FE half", () => {
+    const nodes = pluginNodes(listWith("broken"));
+    const states = new Map([["broken", { kind: "failed", error: "boom" } as const]]);
+    const out = withFrontendStates(nodes, states);
+    expect(out[0]?.frontendIssue).toBe("frontend failed: boom");
+  });
+
+  it("a loaded FE half adds no issue line; absent states add none", () => {
+    const nodes = pluginNodes(listWith("ok", "no-fe"));
+    const states = new Map([["ok", { kind: "loaded" } as const]]);
+    const out = withFrontendStates(nodes, states);
+    expect(out.find((n) => n.id === "ok")?.frontendIssue).toBeUndefined();
+    expect(out.find((n) => n.id === "no-fe")?.frontendIssue).toBeUndefined();
+  });
+
+  it("never annotates non-loaded sections (discovered / missing rows)", () => {
+    const response: PluginListResponse = {
+      loaded: [],
+      disabledWithReason: [],
+      discovered: [
+        {
+          id: "dis",
+          name: "dis",
+          version: "1.0.0",
+          tier: "standard",
+          trust: "local",
+          dir: "/plugins/dis",
+        },
+      ],
+      missing: [],
+    };
+    const states = new Map([["dis", { kind: "failed", error: "boom" } as const]]);
+    const out = withFrontendStates(pluginNodes(response), states);
+    expect(out[0]?.frontendIssue).toBeUndefined();
+  });
+
+  it("an empty state map is the identity (no allocation on the hot path)", () => {
+    const nodes = pluginNodes(listWith("a"));
+    expect(withFrontendStates(nodes, new Map())).toBe(nodes);
   });
 });

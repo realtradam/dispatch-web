@@ -10,9 +10,12 @@ export type { HighlightSets } from "./logic/highlight";
 export { dependencyHighlightSets } from "./logic/highlight";
 export { isLastProvider, unloadBlockReason } from "./logic/last-provider";
 export { autoCheckBackendPrereqs } from "./logic/prereqs";
-export type { PluginNode, PluginSection } from "./logic/types";
+export type {
+  PluginNode,
+  PluginSection,
+} from "./logic/types";
 export { TIER_ORDER, tierLabel } from "./logic/types";
-export { groupByTier, pluginNodes, splitSections } from "./logic/view-model";
+export { groupByTier, pluginNodes, splitSections, withFrontendStates } from "./logic/view-model";
 export { rowBlockReason, rowChecked, rowSelectable, stateLabel } from "./logic/workspace-row";
 export type { PluginsStore, WorkspacePluginsView } from "./store.svelte";
 export { createPluginsStore } from "./store.svelte";

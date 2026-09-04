@@ -83,6 +83,10 @@
       {#if node.reason !== null}
         <span class="text-xs text-error">{node.reason}</span>
       {/if}
+      {#if node.frontendIssue !== undefined}
+        <!-- plan 03: the FE half's state — "incompatible frontend plugin" or the activation error -->
+        <span class="text-xs text-error">{node.frontendIssue}</span>
+      {/if}
       {#if node.dependsOn.length > 0}
         <span class="text-xs opacity-60">depends on: {node.dependsOn.join(", ")}</span>
       {/if}

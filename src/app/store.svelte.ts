@@ -103,6 +103,7 @@ import {
   type VisionSettings,
   type VisionSettingsPatch,
 } from "../features/vision";
+import { createPluginHost } from "./plugin-host.svelte";
 import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
 import { randomId } from "./uuid";
@@ -249,6 +250,15 @@ export interface AppStore {
   closeTab(conversationId: string): void;
   renameTab(conversationId: string, title: string): void;
   invoke(surfaceId: string, actionId: string, payload?: unknown): void;
+  /**
+   * Explicitly (re-)subscribe one surface, scoped to `conversationId` (or the
+   * focused conversation when absent) — the frontend-plugin ABI's
+   * `surfaces.subscribe` path (plan 03). The app auto-subscribes every
+   * catalog entry; this is the re-assertion port (same wire semantics).
+   */
+  subscribeSurface(surfaceId: string, conversationId?: string): void;
+  /** Drop one surface's subscription (the ABI's `surfaces.unsubscribe`). */
+  unsubscribeSurface(surfaceId: string, conversationId?: string): void;
   /**
    * Manually warm the focused conversation's prompt cache (`POST /chat/warm`).
    * Returns null when no conversation is focused (a draft has nothing to warm).
@@ -703,7 +713,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // The app store wires the server's `extensions-changed` broadcast into it
   // (§11 multi-client coherence) and refreshes the workspace-scoped model
   // picker + guardrail on the same event.
-  const pluginsStore = createPluginsStore(createPluginsHttp(httpBase, fetchImpl));
+  const pluginsHttp = createPluginsHttp(httpBase, fetchImpl);
+  const pluginsStore = createPluginsStore(pluginsHttp);
 
   // ── Layout (plan 02) ─────────────────────────────────────────────────────────
   // The ACTIVE workspace's tile tree, owned by the backend's layout provider
@@ -1180,6 +1191,57 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   let socket: ReturnType<typeof createSurfaceSocket> | null = null;
 
   /**
+   * The surface OP implementations — closure functions shared by the app
+   * store's public methods AND the frontend-plugin ABI's surfaces ports (the
+   * plugin host binds exactly these; there is no second protocol state).
+   */
+  function invokeSurfaceOp(
+    surfaceId: string,
+    actionId: string,
+    payload?: unknown,
+    conversationId?: string,
+  ): void {
+    const result = protocolInvoke(
+      protocol,
+      surfaceId,
+      actionId,
+      payload,
+      conversationId ?? focusedConversationId(),
+    );
+    protocol = result.state;
+    for (const msg of result.outgoing) {
+      socket?.send(msg);
+    }
+  }
+
+  function subscribeSurfaceOp(surfaceId: string, conversationId?: string): void {
+    const result = protocolSubscribe(
+      protocol,
+      surfaceId,
+      conversationId ?? focusedConversationId(),
+    );
+    protocol = result.state;
+    for (const msg of result.outgoing) {
+      socket?.send(msg);
+    }
+  }
+
+  function unsubscribeSurfaceOp(surfaceId: string, conversationId?: string): void {
+    // protocolUnsubscribe keys on the surface alone (it drops the pair it
+    // was subscribed under); the optional id documents the intent.
+    void conversationId;
+    const result = protocolUnsubscribe(protocol, surfaceId);
+    protocol = result.state;
+    for (const msg of result.outgoing) {
+      socket?.send(msg);
+    }
+  }
+
+  function surfaceSpecOp(surfaceId: string): SurfaceSpec | null {
+    return getSurfaceSpec(protocol, surfaceId);
+  }
+
+  /**
    * Open a conversation tab — used by the `conversation.open` WS broadcast
    * (CLI `--open` flag) and by `conversation.statusChanged` when a new active
    * conversation is discovered. If the conversation is already open, this is a
@@ -1335,6 +1397,28 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     }
   }
 
+  // ── Frontend plugins (plan 03) ─────────────────────────────────────────────
+  // The ABI driver's composition-root wiring: one host instance per app
+  // store. `sync()` runs on boot, on `extensions-changed`, and on every
+  // workspace switch (the three load-lifecycle triggers — the active
+  // workspace is read per call, which makes workspace.set meaningful).
+  // The surfaces ports delegate to the SAME protocol/socket machinery the
+  // app store's own surface methods use (closure functions below, shared
+  // with the returned object — no second protocol state).
+  const pluginHost = createPluginHost({
+    http: pluginsHttp,
+    httpBase,
+    reporter: pluginsStore,
+    activeWorkspaceId: () => activeWorkspaceId,
+    surfaces: {
+      subscribe: (surfaceId, conversationId) => subscribeSurfaceOp(surfaceId, conversationId),
+      unsubscribe: (surfaceId, conversationId) => unsubscribeSurfaceOp(surfaceId, conversationId),
+      invoke: (surfaceId, actionId, payload, conversationId) =>
+        invokeSurfaceOp(surfaceId, actionId, payload, conversationId),
+      getSpec: (surfaceId) => surfaceSpecOp(surfaceId),
+    },
+  });
+
   const socketOpts: SurfaceSocketOptions = {
     url: wsUrl,
     onMessage: handleServerMessage,
@@ -1428,6 +1512,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // surface catalog is NOT refetched here — the server re-pushes it
       // (workspace-filtered) on the same broadcast.
       pluginsStore.onExtensionsChanged();
+      // Frontend plugins (plan 03): the load lifecycle's extensions-changed
+      // trigger — newly-loaded/enabled frontend plugins import + activate;
+      // unloaded/disabled ones are swept (their tiles fall back).
+      void pluginHost.sync();
       // A layout plugin enabled/disabled mid-session starts/stops serving —
       // the probe picks the new provider state up without a reload (§2.6).
       void layoutStore.probe(activeWorkspaceId);
@@ -1464,6 +1552,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // served by the backend's layout plugin when one is active. `boot: true`
   // arms the one-way §2.7 localStorage migration on the first success.
   void layoutStore.probe(activeWorkspaceId, { boot: true });
+  // Frontend plugins (plan 03): the load lifecycle's boot trigger — every
+  // loaded ∧ enabled ∧ frontend-declaring ∧ handshake-passing plugin is
+  // imported + activated (after the first list fetch lands).
+  void pluginHost.sync();
   // One-time legacy model-name migration on boot (independent of the fetch;
   // preserved from the pre-refreshModels boot chain).
   if (migrateLegacyModelName(activeModel) !== activeModel) {
@@ -1587,6 +1679,10 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // default for the new workspace and probe its provider (§2.6 — every
       // workspace switch is a probe, which is also the missed-push catch-up).
       layoutStore.onWorkspaceChanged(workspaceId);
+      // Frontend plugins (plan 03): the load lifecycle's workspace.set
+      // trigger — the enablement set is WORKSPACE-SCOPED, so a switch may
+      // load and unload frontend plugins.
+      void pluginHost.sync();
     },
     get activeChat(): ChatStore {
       return activeChat;
@@ -1793,17 +1889,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
 
     invoke(surfaceId: string, actionId: string, payload?: unknown): void {
-      const result = protocolInvoke(
-        protocol,
-        surfaceId,
-        actionId,
-        payload,
-        focusedConversationId(),
-      );
-      protocol = result.state;
-      for (const msg of result.outgoing) {
-        socket?.send(msg);
-      }
+      invokeSurfaceOp(surfaceId, actionId, payload);
+    },
+
+    subscribeSurface(surfaceId: string, conversationId?: string): void {
+      subscribeSurfaceOp(surfaceId, conversationId);
+    },
+
+    unsubscribeSurface(surfaceId: string, conversationId?: string): void {
+      unsubscribeSurfaceOp(surfaceId, conversationId);
     },
 
     async warmNow(): Promise<WarmResult | null> {

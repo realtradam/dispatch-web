@@ -6,7 +6,7 @@
   import { autoCheckBackendPrereqs } from "../logic/prereqs";
   import { dependencyHighlightSets } from "../logic/highlight";
   import { unloadBlockReason } from "../logic/last-provider";
-  import { splitSections } from "../logic/view-model";
+  import { splitSections, withFrontendStates } from "../logic/view-model";
   import PluginTable from "./PluginTable.svelte";
   import UnloadConfirmModal from "./UnloadConfirmModal.svelte";
 
@@ -17,9 +17,13 @@
   });
 
   // ── Derived sections + hover highlighting (§8) ────────────────────────────
-  const sections = $derived(splitSections(plugins.nodes));
+  // The FE-half states (plan 03) merge into the nodes here — one reactive
+  // derivation over both inputs (the normalized nodes + the plugin host's
+  // post-sync state map).
+  const nodes = $derived(withFrontendStates(plugins.nodes, plugins.frontendStates));
+  const sections = $derived(splitSections(nodes));
   let hoveredId = $state<string | null>(null);
-  const highlight = $derived(dependencyHighlightSets(hoveredId, plugins.nodes));
+  const highlight = $derived(dependencyHighlightSets(hoveredId, nodes));
 
   function highlightFor(id: string): "dep" | "dependent" | null {
     if (highlight.deps.has(id)) return "dep";

@@ -1,4 +1,5 @@
 import type { PluginListResponse } from "@dispatch/transport-contract";
+import type { FrontendPluginState } from "../../../core/plugin-abi";
 import { normalizeTier, type PluginNode, type PluginSection, TIER_ORDER } from "./types";
 
 /**
@@ -76,6 +77,34 @@ export function pluginNodes(response: PluginListResponse): readonly PluginNode[]
     });
   }
   return nodes;
+}
+
+/**
+ * Merge the frontend-plugin (plan 03) per-plugin FE states into the node
+ * list — the manager rows' `frontendIssue` line. Pure input → output:
+ * - `incompatible` → the plan-mandated "incompatible frontend plugin"
+ *   grammar (the backend apiVersion-mismatch wording, FE half);
+ * - `failed` → the activation error (the FE half failed; the backend half
+ *   stays loaded).
+ * Loaded rows only — the FE states never apply to discovered/missing rows.
+ */
+export function withFrontendStates(
+  nodes: readonly PluginNode[],
+  states: ReadonlyMap<string, FrontendPluginState>,
+): readonly PluginNode[] {
+  if (states.size === 0) return nodes;
+  return nodes.map((node) => {
+    if (node.section !== "loaded") return node;
+    const state = states.get(node.id);
+    if (state === undefined) return node;
+    const issue =
+      state.kind === "incompatible"
+        ? "incompatible frontend plugin"
+        : state.kind === "failed"
+          ? `frontend failed: ${state.error}`
+          : null;
+    return issue === null ? node : { ...node, frontendIssue: issue };
+  });
 }
 
 /**

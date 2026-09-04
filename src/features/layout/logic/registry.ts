@@ -82,6 +82,38 @@ export function unregisterView(id: string): void {
   if (byId.delete(id)) publish();
 }
 
+/**
+ * Register a PLUGIN view (plan 03) — the ABI-facing registration: the
+ * `pluginId` attribution is FORCED to the importing plugin (plugins cannot
+ * attribute views to another plugin or to no plugin), which is what makes
+ * `unregisterViewsByPlugin`'s unload sweep exact. Returns the per-view
+ * disposer (the plugin's deactivate contract). A duplicate id throws
+ * LOUDLY — the driver catches it and marks the plugin's FE half failed.
+ */
+export function registerPluginView(
+  registration: Omit<ViewRegistration, "pluginId">,
+  pluginId: string,
+): () => void {
+  registerView({ ...registration, pluginId });
+  return () => unregisterView(registration.id);
+}
+
+/**
+ * Remove every view attributed to one plugin (the plan-03 unload sweep).
+ * Idempotent; the reactive registry re-renders open dropdowns, and tiles
+ * holding removed views fall back to `FallbackTile` (never a crash).
+ */
+export function unregisterViewsByPlugin(pluginId: string): void {
+  let changed = false;
+  for (const [id, view] of byId) {
+    if (view.pluginId === pluginId) {
+      byId.delete(id);
+      changed = true;
+    }
+  }
+  if (changed) publish();
+}
+
 /** Look a view up by id (undefined → the renderer shows its fallback tile). */
 export function getView(id: string): RegisteredView | undefined {
   return byId.get(id);

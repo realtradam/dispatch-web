@@ -25,6 +25,13 @@ export interface PluginNode {
   readonly dependsOn: readonly string[];
   /** Why the plugin is not loaded (disabled-with-reason) or gone (missing). */
   readonly reason: string | null;
+  /**
+   * The frontend-plugin (plan 03) issue line for the manager row, when the
+   * plugin's FE half is incompatible ("incompatible frontend plugin") or
+   * failed (`frontend failed: <error>`). Absent = the FE half is fine (or
+   * the plugin declares no frontend section).
+   */
+  readonly frontendIssue?: string;
   readonly section: PluginSection;
 }
 
