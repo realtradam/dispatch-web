@@ -51,6 +51,35 @@ function panelsOnlyTree(...views: string[]): LayoutTree {
   return { version: 1, root: { kind: "panels", id: "side", panels: views.map(leaf) } };
 }
 
+/** The default test tree WITH the diagnostic markers on its two root tiles. */
+function markedTestTree(): LayoutTree {
+  return {
+    version: 1,
+    root: {
+      kind: "split",
+      id: "root",
+      dir: "row",
+      children: [
+        {
+          size: 1,
+          node: {
+            kind: "stack",
+            id: "main",
+            marker: "main",
+            children: [{ grow: 1, node: leaf("fix-a") }],
+          },
+        },
+        {
+          size: 0,
+          basis: 320,
+          collapsible: true,
+          node: { kind: "panels", id: "side", marker: "side", panels: [leaf("fix-b")] },
+        },
+      ],
+    },
+  };
+}
+
 function sidePanelsOf(tree: LayoutTree | null): string[] {
   if (tree === null) return [];
   const side = (tree.root as SplitNode).children?.[1]?.node;
@@ -204,6 +233,53 @@ describe("TileRoot", () => {
     });
     const stackColumn = container.querySelector("[data-testid='fixture-a']")?.closest(".flex-col");
     expect(stackColumn).toHaveClass("h-full");
+  });
+
+  it("a marked stack/panels node draws its diagnostic outline (main red, side green)", () => {
+    // The inline outline IS the honest seam: marker values arrive in runtime
+    // tree data (Tailwind can't see them — dynamic classes would silently
+    // render nothing), so the renderer applies an inline style, and the test
+    // asserts exactly what lands on the tile wrapper.
+    const { container } = render(TileRoot, {
+      props: { tree: markedTestTree(), collapse: createCollapseStore({ viewportWidth: 1024 }) },
+    });
+    const stack = container.querySelector("[data-testid='fixture-a']")?.closest(".flex-col");
+    expect(stack?.getAttribute("style")).toContain("outline: 4px solid red");
+    const panels = container.querySelector("[data-testid='fixture-b']")?.closest(".gap-2");
+    expect(panels?.getAttribute("style")).toContain("outline: 4px solid green");
+  });
+
+  it("an unmarked tree draws NO outlines (trees without the field render exactly as before)", () => {
+    const { container } = render(TileRoot, {
+      props: { tree: defaultTestTree(), collapse: createCollapseStore() },
+    });
+    expect(container.querySelectorAll("[style*='outline']")).toHaveLength(0);
+  });
+
+  it("an unknown marker value draws nothing (the renderer ignores what it doesn't know)", () => {
+    // Both root tiles marked with a value the renderer doesn't know.
+    const tree = markedTestTree();
+    const root = tree.root;
+    if (root.kind !== "split") return;
+    const junked = root.children.map((child) => ({
+      ...child,
+      node: { ...child.node, marker: "purple" } as unknown as typeof child.node,
+    }));
+    const marked: LayoutTree = { version: 1, root: { ...root, children: junked } };
+    const { container } = render(TileRoot, {
+      props: { tree: marked, collapse: createCollapseStore({ viewportWidth: 1024 }) },
+    });
+    expect(container.querySelectorAll("[style*='outline']")).toHaveLength(0);
+  });
+
+  it("a marked LEAF draws its outline around a wrapper (the only wrapperless node kind)", () => {
+    const tree: LayoutTree = {
+      version: 1,
+      root: { kind: "leaf", view: "fix-a", marker: "side" },
+    };
+    const { container } = render(TileRoot, { props: { tree, collapse: createCollapseStore() } });
+    const fixture = container.querySelector("[data-testid='fixture-a']");
+    expect(fixture?.parentElement?.getAttribute("style")).toContain("outline: 4px solid green");
   });
 
   it("the dropdown lists panel-eligible views only (decision 5)", () => {

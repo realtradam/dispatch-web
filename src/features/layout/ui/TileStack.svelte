@@ -12,6 +12,7 @@
    */
   import type { LayoutOp, Path, StackNode } from "@dispatch/layout-contract";
   import type { CollapseStore } from "../logic/collapse";
+  import { markerOutline } from "../logic/marker";
   import TileNode from "./TileNode.svelte";
 
   let {
@@ -29,7 +30,10 @@
   } = $props();
 </script>
 
-<div class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden">
+<div
+  class="flex h-full min-h-0 min-w-0 flex-col overflow-hidden"
+  style:outline={markerOutline(node.marker)}
+>
   {#each node.children as child, i (i)}
     <div class="min-h-0 min-w-0" style={"flex: " + (child.grow ?? 0) + (child.grow === undefined ? " 0 auto" : " 1 0%")}>
       <TileNode node={child.node} path={[...path, i]} {ports} {collapse} {onEdit} />

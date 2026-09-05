@@ -9,6 +9,7 @@
   import type { LayoutOp, PanelsNode, Path } from "@dispatch/layout-contract";
   import { viewRegistry } from "../logic/registry";
   import { addPanelOp, firstPanelView, removePanelOp, swapPanelOp } from "../logic/panels-edit";
+  import { markerOutline } from "../logic/marker";
   import TileLeaf from "./TileLeaf.svelte";
 
   let {
@@ -29,7 +30,7 @@
   const addView = $derived(firstPanelView(panelViews));
 </script>
 
-<div class="flex min-h-0 flex-col gap-2">
+<div class="flex min-h-0 flex-col gap-2" style:outline={markerOutline(node.marker)}>
   {#each node.panels as panel, idx (idx)}
     <div class="flex flex-col rounded-lg bg-base-200 p-3">
       <div class="flex items-center gap-1">

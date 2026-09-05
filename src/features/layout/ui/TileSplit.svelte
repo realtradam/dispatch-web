@@ -8,6 +8,7 @@
    */
   import type { LayoutOp, Path, SplitNode } from "@dispatch/layout-contract";
   import type { CollapseStore } from "../logic/collapse";
+  import { markerOutline } from "../logic/marker";
   import TileNode from "./TileNode.svelte";
 
   let {
@@ -38,7 +39,7 @@
 </script>
 
 {#if node.dir === "col"}
-  <div class="flex min-h-0 w-full flex-col">
+  <div class="flex min-h-0 w-full flex-col" style:outline={markerOutline(node.marker)}>
     {#each node.children as child, i (i)}
       {@const key = keyOf(i, child.node.id)}
       <div
@@ -50,7 +51,7 @@
     {/each}
   </div>
 {:else}
-  <div class="flex min-h-0 h-full flex-row">
+  <div class="flex min-h-0 h-full flex-row" style:outline={markerOutline(node.marker)}>
     {#each node.children as child, i (i)}
       {@const key = keyOf(i, child.node.id)}
       {#if child.collapsible}
