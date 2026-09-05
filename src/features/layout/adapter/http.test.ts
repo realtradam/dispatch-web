@@ -135,3 +135,48 @@ describe("createLayoutHttp — deleteTree", () => {
     expect(result).toMatchObject({ ok: false, notFound: true });
   });
 });
+
+describe("createLayoutHttp — postOps (plan 04 §4.2)", () => {
+  it("POSTs { ops } to the ops route and unwraps { tree, applied }", async () => {
+    const capture: { url?: string; init?: RequestInit } = {};
+    const ops = [{ type: "ensurePanel", panels: "side", view: "demo" }] as const;
+    const http = createLayoutHttp(
+      "http://backend.test",
+      fetchReturning(200, { tree: DEFAULT_LAYOUT, applied: 1 }, capture),
+    );
+    const result = await http.postOps("ws-a", ops);
+    expect(result).toEqual({ ok: true, tree: DEFAULT_LAYOUT, applied: 1 });
+    expect(capture.url).toBe(`${LAYOUT_URL}/ops`);
+    expect(capture.init?.method).toBe("POST");
+    expect(capture.init?.body).toBe(JSON.stringify({ ops }));
+  });
+
+  it("maps a 404 to the typed no-provider error (the ABI's documented failure)", async () => {
+    const http = createLayoutHttp("http://backend.test", fetchReturning(404, {}));
+    const result = await http.postOps("ws-a", []);
+    expect(result).toEqual({ ok: false, error: "no layout provider active" });
+  });
+
+  it("maps a 400 { error, failedOp } to the atomic-reject failure", async () => {
+    const http = createLayoutHttp(
+      "http://backend.test",
+      fetchReturning(400, { error: "op 1: no such node", failedOp: 1 }),
+    );
+    const result = await http.postOps("ws-a", [{ type: "removeNode", target: "x" }]);
+    expect(result).toEqual({ ok: false, error: "op 1: no such node", failedOp: 1 });
+  });
+
+  it("a malformed 200 (no tree in the body) is a failure, never a silent ok", async () => {
+    const http = createLayoutHttp("http://backend.test", fetchReturning(200, { applied: 2 }));
+    const result = await http.postOps("ws-a", []);
+    expect(result).toMatchObject({ ok: false });
+  });
+
+  it("a network failure degrades to a typed failure (never throws)", async () => {
+    const http = createLayoutHttp("http://backend.test", async () => {
+      throw new TypeError("fetch failed");
+    });
+    const result = await http.postOps("ws-a", []);
+    expect(result).toEqual({ ok: false, error: "fetch failed" });
+  });
+});

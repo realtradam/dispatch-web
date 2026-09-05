@@ -15,6 +15,7 @@
  * FORCES the importing plugin's pluginId attribution (the host wraps the
  * registry call), which is what makes unload-time sweeps exact.
  */
+import type { ApplyOpsResult, LayoutOp, LayoutTree } from "@dispatch/layout-contract";
 import type { SurfaceSpec } from "@dispatch/ui-contract";
 import type { FRONTEND_ABI_VERSION } from "./version.js";
 
@@ -63,8 +64,25 @@ export interface FrontendHostAPI {
     readonly getSpec: (surfaceId: string) => SurfaceSpec | null;
   };
   readonly logger: { info: (msg: string) => void; warn: (msg: string) => void };
-  // plan 04 ADDS `layout: { applyOps(...) }` here — an additive ABI bump
-  // (v1 plugins keep working; range-checked per the handshake).
+  /**
+   * Edit the ACTIVE workspace's layout through the provider (plan 04 §4.5 —
+   * the additive ABI bump; v1 plugins keep working, a plugin REQUIRING the
+   * layout member declares `frontend.apiVersion: "^1.1"`). A thin adapter
+   * over `POST /workspaces/:id/layout/ops` (the same kit `applyOps` the
+   * service exposes — one code path, two doors):
+   * - the ops are the `@dispatch/layout-contract` vocabulary (prefer the
+   *   idempotent `ensure*` ops; address by node ID, never by numeric path);
+   * - the batch is ATOMIC — any failed op persists nothing and the result
+   *   names it (`failedOp`);
+   * - no layout provider active (the route 404s) → the typed no-provider
+   *   error `{ ok: false, error: "no layout provider active" }` — handle it;
+   *   the provider may also load later (retry on workspace switches).
+   */
+  readonly layout: {
+    readonly applyOps: (ops: readonly LayoutOp[]) => Promise<ApplyOpsResult>;
+    /** The ACTIVE workspace's tree; `null` in no-provider mode. */
+    readonly getTree: () => LayoutTree | null;
+  };
 }
 
 /**

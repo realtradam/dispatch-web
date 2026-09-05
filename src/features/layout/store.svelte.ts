@@ -54,6 +54,16 @@ export interface LayoutStore {
   onServerTree(workspaceId: string, tree: LayoutTree): void;
   /** A user edit (the panels' dropdowns / TileRoot ops). Persists via PUT. */
   onTreeChange(next: LayoutTree): void;
+  /**
+   * Reset the workspace's layout to the default seed (plan 04 §4.4 — the
+   * plugins modal's "Reset layout to default" affordance:
+   * `DELETE /workspaces/:id/layout` → re-seed → broadcast). Resolves to
+   * `null` on success (the fresh seed is applied locally + pushed via WS to
+   * every client) or to the FAILURE REASON — the no-provider 404 resolves
+   * to the user-facing "no layout plugin enabled" (the button's gate renders
+   * the same reason before this runs).
+   */
+  resetToDefault(workspaceId: string): Promise<string | null>;
   /** Multi-client coherence (§11): re-probe on `extensions-changed`. */
   onExtensionsChanged(): void;
 }
@@ -258,6 +268,21 @@ export function createLayoutStore(opts: LayoutStoreOptions): LayoutStore {
           if (lastServerTree !== null) tree = lastServerTree;
         });
       }, debounceMs);
+    },
+
+    async resetToDefault(workspaceId): Promise<string | null> {
+      const result = await http.deleteTree(workspaceId);
+      if (result.ok) {
+        // The server re-seeded and broadcast (every client resets); this
+        // client applies the fresh seed immediately too (idempotent with the
+        // WS echo). Only the ACTIVE workspace's tree is ours to update.
+        notePresent();
+        if (workspaceId === activeWorkspaceId) applyServerTree(result.tree);
+        return null;
+      }
+      // The no-provider 404: the user-facing reason the plan specifies.
+      if (result.notFound) return "no layout plugin enabled";
+      return result.error;
     },
 
     onExtensionsChanged() {

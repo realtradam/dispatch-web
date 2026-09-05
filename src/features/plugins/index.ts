@@ -13,6 +13,7 @@ export { autoCheckBackendPrereqs } from "./logic/prereqs";
 export type {
   PluginNode,
   PluginSection,
+  WorkspaceLayoutPort,
 } from "./logic/types";
 export { TIER_ORDER, tierLabel } from "./logic/types";
 export { groupByTier, pluginNodes, splitSections, withFrontendStates } from "./logic/view-model";

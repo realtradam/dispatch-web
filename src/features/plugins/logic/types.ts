@@ -51,6 +51,28 @@ export function tierLabel(tier: PluginTier): string {
 export const TIER_ORDER: readonly PluginTier[] = ["core", "providers", "standard"];
 
 /**
+ * The layout port (plan 04 §4.4) the workspace plugins modal needs for the
+ * "Reset layout to default" affordance — the modal is the natural home (it
+ * is where users manage the layout plugins themselves). Wired by the
+ * composition root over the layout store; absent → the section doesn't
+ * render (tests).
+ */
+export interface WorkspaceLayoutPort {
+  /**
+   * Whether a layout provider is active (the reset button's gate). False →
+   * the button is DISABLED with the reason shown ("no layout plugin
+   * enabled") — there is nothing to reset and no persistence to re-seed.
+   */
+  readonly providerActive: boolean;
+  /**
+   * Reset the workspace's layout to the default seed (`DELETE
+   * /workspaces/:id/layout` → re-seed → broadcast). Resolves to `null` on
+   * success or to the failure reason to display.
+   */
+  readonly reset: (workspaceId: string) => Promise<string | null>;
+}
+
+/**
  * Runtime-normalize a tier value to the canonical THREE: anything that is not
  * exactly `core` | `providers` | `standard` — a missing tier, or a value
  * outside the contract ("kernel" is NOT a tier; the kernel hosts plugins, it

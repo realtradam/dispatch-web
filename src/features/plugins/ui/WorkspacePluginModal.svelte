@@ -2,17 +2,25 @@
   import { onMount } from "svelte";
   import type { PluginsStore } from "../store.svelte";
   import { rowBlockReason, rowChecked, rowSelectable, stateLabel } from "../logic/workspace-row";
+  import type { WorkspaceLayoutPort } from "../logic/types";
+  import ResetLayoutConfirm from "./ResetLayoutConfirm.svelte";
 
   let {
     workspaceId,
     workspaceTitle,
     plugins,
+    layout,
     onClose,
   }: {
     workspaceId: string;
     /** The workspace's display title (modal heading). */
     workspaceTitle: string;
     plugins: PluginsStore;
+    /**
+     * The layout port (plan 04 §4.4) — gates + powers the "Reset layout to
+     * default" affordance. Absent → the section doesn't render (tests).
+     */
+    layout?: WorkspaceLayoutPort;
     onClose: () => void;
   } = $props();
 
@@ -30,6 +38,21 @@
 
   async function toggle(pluginId: string, checked: boolean): Promise<void> {
     await plugins.setWorkspaceState(workspaceId, pluginId, checked ? "enabled" : "disabled");
+  }
+
+  // ── The reset affordance (plan 04 §4.4) ─────────────────────────────────
+  let resetOpen = $state(false);
+  let resetting = $state(false);
+  let resetError = $state<string | null>(null);
+
+  async function confirmReset(): Promise<void> {
+    if (layout === undefined || resetting) return;
+    resetting = true;
+    resetError = null;
+    const failure = await layout.reset(workspaceId);
+    resetting = false;
+    resetOpen = false;
+    if (failure !== null) resetError = failure;
   }
 </script>
 
@@ -101,6 +124,35 @@
       </table>
     {/if}
 
+    {#if layout}
+      <div class="mt-3 border-t border-base-300 pt-3">
+        <div class="flex items-center justify-between gap-3">
+          <div>
+            <p class="text-sm font-medium">Layout</p>
+            {#if layout.providerActive}
+              <p class="text-xs opacity-60">Managed by the active layout plugin.</p>
+            {:else}
+              <p class="text-xs opacity-60">No layout plugin enabled — no layout to reset.</p>
+            {/if}
+          </div>
+          <button
+            type="button"
+            class="btn btn-warning btn-sm"
+            disabled={!layout.providerActive || resetting}
+            title={layout.providerActive
+              ? "Restore this workspace's default layout"
+              : "No layout plugin enabled"}
+            onclick={() => (resetOpen = true)}
+          >
+            Reset layout to default
+          </button>
+        </div>
+        {#if resetError}
+          <p class="mt-1 text-xs text-error" role="alert">Resetting the layout failed: {resetError}</p>
+        {/if}
+      </div>
+    {/if}
+
     <div class="modal-action">
       <button type="button" class="btn btn-sm" onclick={onClose}>Close</button>
     </div>
@@ -108,3 +160,7 @@
   <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
   <div class="modal-backdrop" onclick={onClose}></div>
 </div>
+
+{#if resetOpen && layout}
+  <ResetLayoutConfirm onConfirm={() => void confirmReset()} onCancel={() => (resetOpen = false)} />
+{/if}

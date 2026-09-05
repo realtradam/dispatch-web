@@ -1,4 +1,9 @@
-import { DEFAULT_LAYOUT, type LayoutTree } from "@dispatch/layout-contract";
+import {
+  type ApplyOpsResult,
+  DEFAULT_LAYOUT,
+  type LayoutOp,
+  type LayoutTree,
+} from "@dispatch/layout-contract";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { LayoutHttp, LayoutHttpResult } from "./adapter/http";
 import { overlaySidePanels } from "./logic/seed";
@@ -15,8 +20,11 @@ import { createLayoutStore } from "./store.svelte";
 interface HttpFake extends LayoutHttp {
   getCalls: string[];
   putCalls: Array<{ workspaceId: string; tree: LayoutTree }>;
+  deleteCalls: string[];
   getResult: (workspaceId: string) => LayoutHttpResult;
   putResult: (workspaceId: string, tree: LayoutTree) => LayoutHttpResult;
+  deleteResult: (workspaceId: string) => LayoutHttpResult;
+  opsResult: (workspaceId: string, ops: readonly LayoutOp[]) => ApplyOpsResult;
 }
 
 function fakeHttp(
@@ -32,11 +40,18 @@ function fakeHttp(
 ): HttpFake {
   const getCalls: string[] = [];
   const putCalls: Array<{ workspaceId: string; tree: LayoutTree }> = [];
+  const deleteCalls: string[] = [];
   const fake: HttpFake = {
     getCalls,
     putCalls,
+    deleteCalls,
     getResult,
     putResult,
+    // Re-scriptable outcome (default: the fresh seed a reset returns).
+    deleteResult: () => ({ ok: true, tree: DEFAULT_LAYOUT }),
+    // Re-scriptable outcome (default: the typed no-provider failure the ABI
+    // documents; tests re-assign mid-test like putResult).
+    opsResult: () => ({ ok: false, error: "no layout provider active" }),
     // Delegate to the CURRENT properties so a test can re-script outcomes
     // mid-test (http.putResult = …).
     async getTree(workspaceId) {
@@ -47,8 +62,12 @@ function fakeHttp(
       putCalls.push({ workspaceId, tree });
       return fake.putResult(workspaceId, tree);
     },
-    async deleteTree() {
-      return { ok: false, notFound: true, error: "unused" };
+    async deleteTree(workspaceId) {
+      deleteCalls.push(workspaceId);
+      return fake.deleteResult(workspaceId);
+    },
+    async postOps(workspaceId, ops) {
+      return fake.opsResult(workspaceId, ops);
     },
   };
   return fake;
@@ -422,5 +441,51 @@ describe("layout store — one-way localStorage migration (§2.7)", () => {
     expect(http.putCalls).toEqual([
       { workspaceId: "ws-a", tree: overlaySidePanels(DEFAULT_LAYOUT, ["extensions"]) },
     ]);
+  });
+});
+
+describe("layout store — resetToDefault (plan 04 §4.4, the reset affordance)", () => {
+  it("DELETEs the workspace's layout, applies the fresh seed, and resolves null", async () => {
+    const custom = overlaySidePanels(DEFAULT_LAYOUT, ["extensions"]);
+    const http = fakeHttp();
+    // The DELETE returns the FRESH SEED (the server re-seeded).
+    http.deleteResult = () => ({ ok: true, tree: DEFAULT_LAYOUT });
+    const store = makeStore(http);
+
+    // Get to a NON-default tree first: a present provider + a pushed edit.
+    http.getResult = () => ({ ok: true, tree: custom });
+    await store.probe("ws-a");
+    expect(store.tree).toEqual(custom);
+
+    const failure = await store.resetToDefault("ws-a");
+    expect(failure).toBeNull();
+    expect(http.deleteCalls).toEqual(["ws-a"]);
+    // The fresh seed is applied locally (the WS broadcast echo is idempotent).
+    expect(store.tree).toEqual(DEFAULT_LAYOUT);
+    expect(store.providerState).toBe("present");
+  });
+
+  it("a 404 (no provider) resolves to the user-facing 'no layout plugin enabled' reason", async () => {
+    const http = fakeHttp();
+    http.deleteResult = () => ({
+      ok: false,
+      notFound: true,
+      error: "No layout provider is active",
+    });
+    const store = makeStore(http);
+
+    const failure = await store.resetToDefault("ws-a");
+    expect(failure).toBe("no layout plugin enabled");
+    expect(store.tree).toEqual(DEFAULT_LAYOUT); // untouched local default
+  });
+
+  it("another failure (5xx on a present provider) resolves to its error message", async () => {
+    const http = fakeHttp(() => ({ ok: true, tree: DEFAULT_LAYOUT }));
+    http.deleteResult = () => ({ ok: false, notFound: false, error: "storage write failed" });
+    const store = makeStore(http);
+    await store.probe("ws-a");
+
+    const failure = await store.resetToDefault("ws-a");
+    expect(failure).toBe("storage write failed");
   });
 });

@@ -28,6 +28,7 @@ import {
   usablePluginIds,
 } from "../core/plugin-abi";
 import {
+  type LayoutAbiPort,
   registerPluginView,
   unregisterViewsByPlugin,
   type ViewComponent,
@@ -60,6 +61,12 @@ export interface PluginHostOptions {
   /** The ACTIVE workspace provider (read per sync — workspace.set trigger). */
   readonly activeWorkspaceId: () => string;
   readonly surfaces: FrontendSurfacesPorts;
+  /**
+   * The layout port (plan 04 §4.5) — the ABI's `api.layout` (applyOps to the
+   * ACTIVE workspace's provider + getTree, null in no-provider mode). Built
+   * by the composition root over the layout store + ops HTTP edge.
+   */
+  readonly layout: LayoutAbiPort;
 }
 
 export interface PluginHost {
@@ -108,6 +115,10 @@ export function createPluginHost(opts: PluginHostOptions): PluginHost {
         info: (msg) => console.info(`[frontend-plugin:${pluginId}] ${msg}`),
         warn: (msg) => console.warn(`[frontend-plugin:${pluginId}] ${msg}`),
       },
+      // plan 04 §4.5: the layout port — the composition-root-built adapter
+      // over the layout store + the ops HTTP edge (the plugin never sees
+      // either; only this typed port).
+      layout: opts.layout,
     };
   }
 

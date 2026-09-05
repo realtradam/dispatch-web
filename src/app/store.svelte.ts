@@ -84,7 +84,12 @@ import type {
 } from "../features/heartbeat";
 import { normalizeHeartbeatConfig, normalizeHeartbeatRuns } from "../features/heartbeat";
 import type { LayoutStore } from "../features/layout";
-import { createLayoutHttp, createLayoutStore, listPanelViews } from "../features/layout";
+import {
+  createLayoutAbiPort,
+  createLayoutHttp,
+  createLayoutStore,
+  listPanelViews,
+} from "../features/layout";
 import type {
   NamedAgent,
   NamedAgentDeleteResult,
@@ -723,8 +728,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // ephemeral, logged once, no error UI). Probes run on boot, on every
   // workspace switch, and on `extensions-changed` (§2.6); the one-way
   // localStorage migration (§2.7) arms on the boot probe.
+  const layoutHttp = createLayoutHttp(httpBase, fetchImpl);
   const layoutStore = createLayoutStore({
-    http: createLayoutHttp(httpBase, fetchImpl),
+    http: layoutHttp,
     workspaceId: activeWorkspaceId,
     storage: localStorageOpt,
     knownViews: listPanelViews().map((v) => v.id),
@@ -1417,6 +1423,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         invokeSurfaceOp(surfaceId, actionId, payload, conversationId),
       getSpec: (surfaceId) => surfaceSpecOp(surfaceId),
     },
+    // plan 04 §4.5: the plugins' `api.layout` port — applyOps posts to the
+    // ACTIVE workspace's provider (the ops route) and feeds the returned
+    // tree back through the store (instant local echo; the WS broadcast is
+    // every client's authoritative copy); getTree exposes the active tree
+    // only while a provider is PRESENT (null = no-provider mode).
+    layout: createLayoutAbiPort({
+      store: layoutStore,
+      postOps: (workspaceId, ops) => layoutHttp.postOps(workspaceId, ops),
+    }),
   });
 
   const socketOpts: SurfaceSocketOptions = {

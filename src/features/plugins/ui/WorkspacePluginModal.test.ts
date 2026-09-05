@@ -3,6 +3,7 @@ import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { PluginsHttp } from "../adapter/http";
+import type { WorkspaceLayoutPort } from "../logic/types";
 import { createPluginsStore } from "../store.svelte";
 import WorkspacePluginModal from "./WorkspacePluginModal.svelte";
 
@@ -44,6 +45,14 @@ async function renderModal(http: PluginsHttp = fakeHttp()) {
     props: { workspaceId: "ws", workspaceTitle: "My Workspace", plugins: store, onClose: vi.fn() },
   });
   return { store, http };
+}
+
+/** A layout port (plan 04 §4.4) scripted per test. */
+function fakeLayoutPort(
+  providerActive = true,
+  reset: WorkspaceLayoutPort["reset"] = vi.fn(async () => null),
+): WorkspaceLayoutPort {
+  return { providerActive, reset };
 }
 
 describe("WorkspacePluginModal", () => {
@@ -120,5 +129,77 @@ describe("WorkspacePluginModal", () => {
       },
     });
     expect(screen.getByText(/other workspaces inherit these states/i)).toBeInTheDocument();
+  });
+});
+
+describe("WorkspacePluginModal — the reset-layout affordance (plan 04 §4.4)", () => {
+  async function renderWithLayout(layout?: ReturnType<typeof fakeLayoutPort>) {
+    const store = createPluginsStore(fakeHttp());
+    await store.openWorkspace("ws");
+    render(WorkspacePluginModal, {
+      props: {
+        workspaceId: "ws",
+        workspaceTitle: "My Workspace",
+        plugins: store,
+        ...(layout ? { layout } : {}),
+        onClose: vi.fn(),
+      },
+    });
+    return layout;
+  }
+
+  it("renders an ENABLED reset button when a layout provider is active", async () => {
+    await renderWithLayout(fakeLayoutPort(true));
+    const button = screen.getByRole("button", { name: /reset layout to default/i });
+    expect(button).toBeEnabled();
+  });
+
+  it("the button is DISABLED with the 'no layout plugin enabled' reason when no provider is active", async () => {
+    await renderWithLayout(fakeLayoutPort(false));
+    const button = screen.getByRole("button", { name: /reset layout to default/i });
+    expect(button).toBeDisabled();
+    expect(button.getAttribute("title")).toMatch(/no layout plugin enabled/i);
+    expect(screen.getByText(/no layout plugin enabled/i)).toBeInTheDocument();
+  });
+
+  it("no layout port → the layout section doesn't render at all (tests / no wiring)", async () => {
+    await renderWithLayout(undefined);
+    expect(screen.queryByRole("button", { name: /reset layout to default/i })).toBeNull();
+  });
+
+  it("confirming the dialog resets the layout (and the dialog copy names the consequence)", async () => {
+    const user = userEvent.setup();
+    const reset = vi.fn(async () => null);
+    await renderWithLayout(fakeLayoutPort(true, reset));
+
+    await user.click(screen.getByRole("button", { name: /reset layout to default/i }));
+    // The confirm dialog names the consequence exactly (§4.4 copy).
+    expect(
+      screen.getByText(
+        /layout returns to the default; plugin and dropdown customizations are lost/i,
+      ),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^reset$/i }));
+    expect(reset).toHaveBeenCalledWith("ws");
+  });
+
+  it("cancelling the dialog never resets", async () => {
+    const user = userEvent.setup();
+    const reset = vi.fn(async () => null);
+    await renderWithLayout(fakeLayoutPort(true, reset));
+
+    await user.click(screen.getByRole("button", { name: /reset layout to default/i }));
+    await user.click(screen.getByRole("button", { name: /cancel/i }));
+    expect(reset).not.toHaveBeenCalled();
+  });
+
+  it("a failed reset surfaces the reason as an alert", async () => {
+    const user = userEvent.setup();
+    const reset = vi.fn(async () => "no layout plugin enabled");
+    await renderWithLayout(fakeLayoutPort(true, reset));
+
+    await user.click(screen.getByRole("button", { name: /reset layout to default/i }));
+    await user.click(screen.getByRole("button", { name: /^reset$/i }));
+    expect(await screen.findByRole("alert")).toHaveTextContent(/resetting the layout failed/i);
   });
 });

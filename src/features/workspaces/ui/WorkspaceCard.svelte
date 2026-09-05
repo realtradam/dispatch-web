@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { ComputerEntry, WorkspaceEntry } from "@dispatch/wire";
   import { untrack } from "svelte";
-  import { WorkspacePluginModal, type PluginsStore } from "../../plugins";
+  import { WorkspacePluginModal, type PluginsStore, type WorkspaceLayoutPort } from "../../plugins";
   import type { WorkspaceStore } from "../store.svelte";
   import { relativeTime } from "../logic/view-model";
   import { workspacePath } from "../logic/route";
@@ -14,6 +14,7 @@
     computers,
     hasActive,
     plugins,
+    layout,
   }: {
     ws: WorkspaceEntry;
     store: WorkspaceStore;
@@ -33,6 +34,12 @@
      * (tests) → no button.
      */
     plugins?: PluginsStore;
+    /**
+     * Optional layout port (plan 04 §4.4): forwarded to the plugins modal
+     * for the "Reset layout to default" affordance. Absent → the modal's
+     * layout section doesn't render.
+     */
+    layout?: WorkspaceLayoutPort;
   } = $props();
 
   // Whether at least one conversation in this workspace is currently active
@@ -306,6 +313,7 @@
     workspaceId={ws.id}
     workspaceTitle={ws.title}
     {plugins}
+    {...(layout ? { layout } : {})}
     onClose={() => (pluginsOpen = false)}
   />
 {/if}

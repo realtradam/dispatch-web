@@ -160,8 +160,24 @@ describe("decideFrontendLoads — the load diff (boot / extensions-changed / wor
   it("the handshake checks against FRONTEND_ABI_VERSION", () => {
     // A range that includes the host version passes — proving the version
     // constant feeds the check.
-    expect(FRONTEND_ABI_VERSION).toBe("1");
+    expect(FRONTEND_ABI_VERSION).toBe("1.1");
     const d = decideFrontendLoads([c("ok")], new Map());
+    expect(d.incompatible).toEqual([]);
+  });
+
+  it("the additive bump keeps v1 plugins loading (plan 04: ^1 spans 1.1)", () => {
+    // c() declares apiVersion "^1" — a bare-major range is a
+    // major-compatibility claim, so the 1.1 host (layout member added) still
+    // loads every v1 plugin.
+    const d = decideFrontendLoads([c("v1-plugin")], new Map());
+    expect(d.toLoad.map((x) => x.id)).toEqual(["v1-plugin"]);
+    expect(d.incompatible).toEqual([]);
+  });
+
+  it("plugins requiring the 1.1 ABI (^1.1) load on the 1.1 host", () => {
+    const layout = { ...c("layout-plugin"), apiVersion: "^1.1" };
+    const d = decideFrontendLoads([layout], new Map());
+    expect(d.toLoad.map((x) => x.id)).toEqual(["layout-plugin"]);
     expect(d.incompatible).toEqual([]);
   });
 });

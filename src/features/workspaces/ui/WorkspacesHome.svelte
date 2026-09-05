@@ -1,7 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import type { ComputerEntry } from "@dispatch/wire";
-  import { PluginManager, type PluginsStore } from "../../plugins";
+  import { PluginManager, type PluginsStore, type WorkspaceLayoutPort } from "../../plugins";
   import type { WorkspaceStore } from "../store.svelte";
   import { isValidSlug, workspacePath } from "../logic/route";
   import WorkspaceCard from "./WorkspaceCard.svelte";
@@ -12,6 +12,7 @@
     computers,
     hasActive,
     plugins,
+    layout,
   }: {
     store: WorkspaceStore;
     onNavigate: (path: string) => void;
@@ -29,6 +30,12 @@
      * plugins) → the buttons don't render.
      */
     plugins?: PluginsStore;
+    /**
+     * The layout port (plan 04 §4.4): forwarded to each {@link WorkspaceCard}
+     * for the plugins modal's "Reset layout to default" affordance. Absent →
+     * the modal's layout section doesn't render.
+     */
+    layout?: WorkspaceLayoutPort;
   } = $props();
 
   onMount(() => {
@@ -128,6 +135,7 @@
             {computers}
             {...(hasActive ? { hasActive } : {})}
             {...(plugins ? { plugins } : {})}
+            {...(layout ? { layout } : {})}
           />
         {/each}
       </ul>

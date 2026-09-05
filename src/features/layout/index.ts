@@ -7,6 +7,12 @@
  * OUTSIDE the tree — the tree owns the content region.
  */
 
+export {
+  abiTree,
+  createLayoutAbiPort,
+  type LayoutAbiPort,
+  type LayoutAbiPortDeps,
+} from "./adapter/abi-port";
 export { createLayoutHttp, type LayoutHttp, type LayoutHttpResult } from "./adapter/http";
 export {
   bootDefaultOpen,

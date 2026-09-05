@@ -41,7 +41,7 @@ function harness(): Harness {
       return mod;
     },
     buildHostApi: (pluginId) => ({
-      abiVersion: "1",
+      abiVersion: "1.1",
       registerView: () => () => {},
       surfaces: {
         subscribe: () => {},
@@ -50,6 +50,10 @@ function harness(): Harness {
         getSpec: () => null,
       },
       logger: { info: () => {}, warn: () => {} },
+      layout: {
+        applyOps: async () => ({ ok: false, error: "no layout provider active" }),
+        getTree: () => null,
+      },
       ...(pluginId === undefined ? {} : {}),
     }),
     unregisterViewsByPlugin: (pluginId) => sweeps.push(pluginId),

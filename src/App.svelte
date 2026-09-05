@@ -1,6 +1,7 @@
 <script lang="ts">
   import { App, createAppStore } from "./app";
   import { createHistoryAdapter } from "./adapters/history";
+  import type { WorkspaceLayoutPort } from "./features/plugins";
   import {
     createWorkspaceHttp,
     createWorkspaceStore,
@@ -65,6 +66,18 @@
   function navigate(path: string): void {
     history.navigate(path);
   }
+
+  // plan 04 §4.4: the workspace plugins modal's "Reset layout to default"
+  // affordance. The port gates on an ACTIVE layout provider (read through the
+  // store's reactive getters, so enable/disable mid-session flips the button)
+  // and resets via the layout store (`DELETE /workspaces/:id/layout` → the
+  // server re-seeds → the WS broadcast re-renders every client).
+  const layoutPort: WorkspaceLayoutPort = {
+    get providerActive() {
+      return store.layout.providerState === "present";
+    },
+    reset: (workspaceId) => store.layout.resetToDefault(workspaceId),
+  };
 </script>
 
 {#if route.kind === "home"}
@@ -74,6 +87,7 @@
     computers={store.computers}
     hasActive={(id) => store.workspaceHasActiveConversations(id)}
     plugins={store.plugins}
+    layout={layoutPort}
   />
 {:else}
   <App {store} onNavigate={navigate} />
