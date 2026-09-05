@@ -193,6 +193,19 @@ describe("TileRoot", () => {
     expect(natural?.getAttribute("style")).toContain("flex: 0 0 auto");
   });
 
+  it("the stack column is full-height so a grow child fills it even when empty", () => {
+    // jsdom can't compute flex layout — the honest seam is the CSS class.
+    // WITHOUT `h-full` the stack column's height is content-based, so the
+    // grow child's `flex: 1 1 0%` has no space to fill: an EMPTY chat leaf
+    // collapses to ~0 and the composer below it rides to the top (instead of
+    // staying pinned at the bottom of the column).
+    const { container } = render(TileRoot, {
+      props: { tree: defaultTestTree(), collapse: createCollapseStore() },
+    });
+    const stackColumn = container.querySelector("[data-testid='fixture-a']")?.closest(".flex-col");
+    expect(stackColumn).toHaveClass("h-full");
+  });
+
   it("the dropdown lists panel-eligible views only (decision 5)", () => {
     render(TileRoot, { props: { tree: panelsOnlyTree("fix-b"), collapse: createCollapseStore() } });
     const select = screen.getByRole("combobox", { name: "Select a view" });
