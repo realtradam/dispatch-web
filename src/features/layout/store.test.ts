@@ -315,6 +315,44 @@ describe("layout store — edits PUT the whole tree + rollback (§2.6)", () => {
 });
 
 describe("layout store — probe triggers (§2.6)", () => {
+  it("a per-workspace plugin-state change on the ACTIVE workspace re-probes (the plugins-modal toggle)", async () => {
+    let absent = true;
+    const served = overlaySidePanels(DEFAULT_LAYOUT, ["extensions"]);
+    const http = fakeHttp(() =>
+      absent
+        ? { ok: false, notFound: true, error: "No layout plugin is enabled in this workspace" }
+        : { ok: true, tree: served },
+    );
+    const store = makeStore(http);
+    await store.probe("ws-a");
+    expect(store.providerState).toBe("absent");
+
+    absent = false; // a layout plugin got enabled in THIS workspace
+    store.onWorkspacePluginsChanged("ws-a");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(store.providerState).toBe("present");
+    expect(store.tree).toEqual(served);
+  });
+
+  it("a per-workspace plugin-state change on ANOTHER workspace is ignored (its probe fetches on switch)", async () => {
+    let absent = true;
+    const served = overlaySidePanels(DEFAULT_LAYOUT, ["extensions"]);
+    const http = fakeHttp(() =>
+      absent
+        ? { ok: false, notFound: true, error: "No layout plugin is enabled in this workspace" }
+        : { ok: true, tree: served },
+    );
+    const store = makeStore(http);
+    await store.probe("ws-a");
+    expect(store.providerState).toBe("absent");
+
+    absent = false; // a DIFFERENT workspace's toggle — nothing re-renders here
+    store.onWorkspacePluginsChanged("ws-other");
+    await vi.advanceTimersByTimeAsync(0);
+    expect(http.getCalls).toEqual(["ws-a"]); // no second probe
+    expect(store.providerState).toBe("absent");
+  });
+
   it("extensions-changed re-probes the active workspace", async () => {
     let absent = true;
     const served = overlaySidePanels(DEFAULT_LAYOUT, ["extensions"]);

@@ -51,8 +51,9 @@ async function renderModal(http: PluginsHttp = fakeHttp()) {
 function fakeLayoutPort(
   providerActive = true,
   reset: WorkspaceLayoutPort["reset"] = vi.fn(async () => null),
+  refresh: WorkspaceLayoutPort["refresh"] = vi.fn(),
 ): WorkspaceLayoutPort {
-  return { providerActive, reset };
+  return { providerActive, reset, refresh };
 }
 
 describe("WorkspacePluginModal", () => {
@@ -115,6 +116,58 @@ describe("WorkspacePluginModal", () => {
     });
     await user.click(screen.getByRole("checkbox", { name: /Disable mcp/i }));
     expect(fake.setWorkspaceState).toHaveBeenCalledWith("ws", "mcp", "disabled");
+  });
+
+  it("a successful toggle calls the layout port's refresh (the per-workspace activation may change the served tree)", async () => {
+    const user = userEvent.setup();
+    const refresh = vi.fn();
+    const store = createPluginsStore(fakeHttp());
+    await store.openWorkspace("ws");
+    render(WorkspacePluginModal, {
+      props: {
+        workspaceId: "ws",
+        workspaceTitle: "My Workspace",
+        plugins: store,
+        layout: fakeLayoutPort(
+          true,
+          vi.fn(async () => null),
+          refresh,
+        ),
+        onClose: vi.fn(),
+      },
+    });
+    await user.click(screen.getByRole("checkbox", { name: /Enable mcp/i }));
+    expect(refresh).toHaveBeenCalledWith("ws");
+  });
+
+  it("a REFUSED toggle (state write fails) still calls refresh — the probe is the idempotent catch-up", async () => {
+    const user = userEvent.setup();
+    const refresh = vi.fn();
+    const fake = fakeHttp({
+      setWorkspaceState: async () => ({
+        ok: false,
+        error: "Plugin is not loaded — load it globally first",
+      }),
+    });
+    const store = createPluginsStore(fake);
+    await store.openWorkspace("ws");
+    render(WorkspacePluginModal, {
+      props: {
+        workspaceId: "ws",
+        workspaceTitle: "My Workspace",
+        plugins: store,
+        layout: fakeLayoutPort(
+          true,
+          vi.fn(async () => null),
+          refresh,
+        ),
+        onClose: vi.fn(),
+      },
+    });
+    await user.click(screen.getByRole("checkbox", { name: /Enable mcp/i }));
+    // The attempted state change re-probes either way (a refused write changed
+    // nothing, so the probe re-syncs the same tree — harmless and consistent).
+    expect(refresh).toHaveBeenCalledWith("ws");
   });
 
   it("shows the template hint for the default workspace", async () => {

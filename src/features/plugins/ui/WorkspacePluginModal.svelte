@@ -38,6 +38,11 @@
 
   async function toggle(pluginId: string, checked: boolean): Promise<void> {
     await plugins.setWorkspaceState(workspaceId, pluginId, checked ? "enabled" : "disabled");
+    // The per-workspace activation rule (layout): toggling a plugin may have
+    // changed which layout plugin serves THIS workspace — re-probe so the
+    // newly-enabled provider's tree (or the no-provider degrade) renders
+    // without a reload. The store ignores non-active workspaces.
+    layout?.refresh(workspaceId);
   }
 
   // ── The reset affordance (plan 04 §4.4) ─────────────────────────────────

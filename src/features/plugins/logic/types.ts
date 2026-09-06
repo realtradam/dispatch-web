@@ -70,6 +70,15 @@ export interface WorkspaceLayoutPort {
    * success or to the failure reason to display.
    */
   readonly reset: (workspaceId: string) => Promise<string | null>;
+  /**
+   * The workspace's PER-WORKSPACE PLUGIN STATE changed (the modal just
+   * toggled a plugin's enablement): the layout plugin that serves THIS
+   * workspace may have changed (the per-workspace activation rule) — the
+   * composition root re-probes the layout so the newly-enabled provider's
+   * tree (or the no-provider degrade) lands without a reload. Only the
+   * ACTIVE workspace's toggle re-renders; others are ignored by the store.
+   */
+  readonly refresh: (workspaceId: string) => void;
 }
 
 /**

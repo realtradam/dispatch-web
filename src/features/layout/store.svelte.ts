@@ -7,9 +7,11 @@ import { migrationTree } from "./logic/migration";
  * `LayoutHttp` edge (the plugins-store pattern). Owns the ACTIVE workspace's
  * tree and the provider lifecycle:
  *
- * - **Provider probe triggers** — boot, every workspace switch, and every
- *   `extensions-changed` (a provider enabled/disabled mid-session starts/
- *   stops serving; the probe picks it up without a reload).
+ * - **Provider probe triggers** — boot, every workspace switch, every
+ *   `extensions-changed`, and every change to the ACTIVE workspace's
+ *   per-workspace plugin state (a layout plugin enabled/disabled in the
+ *   workspace plugins modal starts/stops serving; the probe picks it up
+ *   without a reload).
  * - **No-provider mode** — a 404 (or network failure) keeps the tree on its
  *   local default; edits still work but are EPHEMERAL (in-memory only —
  *   D-L4 retired the localStorage write path); logged once, no error UI.
@@ -66,6 +68,15 @@ export interface LayoutStore {
   resetToDefault(workspaceId: string): Promise<string | null>;
   /** Multi-client coherence (§11): re-probe on `extensions-changed`. */
   onExtensionsChanged(): void;
+  /**
+   * The active workspace's PER-WORKSPACE PLUGIN STATE changed (the workspace
+   * plugins modal toggled a layout plugin's enablement — the per-workspace
+   * activation rule): re-probe so the newly-enabled provider's tree (or the
+   * no-provider degrade) lands without a reload. A NON-active workspace's
+   * toggle is ignored — its tree is fetched on its next probe (workspace
+   * switch); there is nothing to re-render here.
+   */
+  onWorkspacePluginsChanged(workspaceId: string): void;
 }
 
 export interface LayoutStoreOptions {
@@ -289,6 +300,16 @@ export function createLayoutStore(opts: LayoutStoreOptions): LayoutStore {
       void runProbe(activeWorkspaceId, false).catch(() => {
         // runProbe never throws for HTTP failures; this guard is for the
         // migration path. Staying silent keeps the degrade quiet.
+      });
+    },
+
+    onWorkspacePluginsChanged(workspaceId) {
+      // The per-workspace activation rule: only the ACTIVE workspace's tree
+      // can change what is rendered here — another workspace's toggle is
+      // picked up by its own probe (boot/workspace-switch/§2.6 triggers).
+      if (workspaceId !== activeWorkspaceId) return;
+      void runProbe(activeWorkspaceId, false).catch(() => {
+        // Same quiet-degrade guard as onExtensionsChanged.
       });
     },
   };

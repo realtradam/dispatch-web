@@ -77,6 +77,11 @@
       return store.layout.providerState === "present";
     },
     reset: (workspaceId) => store.layout.resetToDefault(workspaceId),
+    // The plugins modal's per-workspace toggles can change WHICH layout
+    // plugin serves the workspace (the per-workspace activation rule) — the
+    // store re-probes only the active workspace (non-active toggles are
+    // picked up by their own probe on switch).
+    refresh: (workspaceId) => store.layout.onWorkspacePluginsChanged(workspaceId),
   };
 </script>
 

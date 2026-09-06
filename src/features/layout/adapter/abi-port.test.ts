@@ -28,6 +28,7 @@ function fakeStore(
     onTreeChange: vi.fn(),
     resetToDefault: vi.fn(async () => null),
     onExtensionsChanged: vi.fn(),
+    onWorkspacePluginsChanged: vi.fn(),
     ...overrides,
   } as LayoutStore;
 }
