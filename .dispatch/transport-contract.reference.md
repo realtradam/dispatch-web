@@ -8,16 +8,19 @@
 > **Orchestrator:** SNAPSHOT of `transport-contract@0.24.0` (MCP status + computers + provider concurrency + cancel queued message). Regenerate whenever
 > it changes.
 >
-> **2026-09-04 delta (tiled layout plan 02 — ADDITIVE, no version bump):** the layout-provider contract ships. NEW
-> WS message: `LayoutChangedMessage` (`{ type: "layout"; workspaceId: string; tree: LayoutTree }` — server→client
-> broadcast after every successful layout write; the FULL tree, decision 7; a global fan-out and CLIENTS FILTER by
-> their active workspace). `LayoutTree` is re-exported from `@dispatch/layout-contract`. NEW HTTP routes (owned by the
-> ACTIVE layout provider — the bundled standard `layout-chat` plugin — consumed reactively; while NO provider is active
-> every route 404s, the frontend's no-provider signal): `GET /workspaces/:id/layout` (`{ tree }` — read seeds a fresh
-> workspace), `PUT /workspaces/:id/layout` (body `{ tree }` → 200 `{ tree }` / 400 `{ error }` structural-invalidity),
-> `DELETE /workspaces/:id/layout` (re-seed on next read; returns the fresh seed). The FE consumes these via
-> `features/layout` (`adapter/http.ts` + `store.svelte.ts`); the `layout` message is parsed in `adapters/ws/logic.ts`
-> and dispatched to `store.layout.onServerTree` (non-active workspaces ignored).
+> **2026-09-04 delta (tiled layout plan 02 — ADDITIVE, no version bump; 2026-09-06: activation is PER WORKSPACE):** the
+> layout-provider contract ships. NEW WS message: `LayoutChangedMessage` (`{ type: "layout"; workspaceId: string; tree:
+> LayoutTree }` — server→client broadcast after every successful layout write; the FULL tree, decision 7; a global
+> fan-out and CLIENTS FILTER by their active workspace). `LayoutTree` is re-exported from `@dispatch/layout-contract`.
+> NEW HTTP routes (owned by the workspace's ACTIVE layout plugin — multiple layout plugins coexist loaded, and the
+> WORKSPACE's per-workspace enablement state (the plugins modal) picks the ONE that serves; while the workspace enables
+> NO layout plugin every route 404s, the frontend's no-provider signal): `GET /workspaces/:id/layout` (`{ tree }` —
+> read seeds a fresh workspace), `PUT /workspaces/:id/layout` (body `{ tree }` → 200 `{ tree }` / 400 `{ error }`
+> structural-invalidity), `DELETE /workspaces/:id/layout` (re-seed on next read; returns the fresh seed). The FE
+> consumes these via `features/layout` (`adapter/http.ts` + `store.svelte.ts`); the `layout` message is parsed in
+> `adapters/ws/logic.ts` and dispatched to `store.layout.onServerTree` (non-active workspaces ignored); the workspace
+> plugins modal's toggles re-probe via `store.layout.onWorkspacePluginsChanged` (the per-workspace activation
+> trigger).
 >
 > **2026-09-03 delta (plugin system — plans 05/06, NO version bump verified against the worktree):** the
 > plugin-manager + per-workspace enablement contract ships. NEW WS messages: `WorkspaceSetMessage`
