@@ -11,7 +11,7 @@
    */
   import type { TileMarker } from "@dispatch/layout-contract";
   import { viewRegistry, type RegisteredView } from "../logic/registry";
-  import { markerOutline } from "../logic/marker";
+  import { MARKER_OUTLINE_OFFSET, markerOutline } from "../logic/marker";
   import FallbackTile from "./FallbackTile.svelte";
 
   let {
@@ -38,7 +38,7 @@
 {/snippet}
 
 {#if outline !== undefined}
-  <div style:outline={outline}>{@render content()}</div>
+  <div style:outline={outline} style:outline-offset={MARKER_OUTLINE_OFFSET}>{@render content()}</div>
 {:else}
   {@render content()}
 {/if}

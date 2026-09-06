@@ -9,7 +9,7 @@
   import type { LayoutOp, PanelsNode, Path } from "@dispatch/layout-contract";
   import { viewRegistry } from "../logic/registry";
   import { addPanelOp, firstPanelView, removePanelOp, swapPanelOp } from "../logic/panels-edit";
-  import { markerOutline } from "../logic/marker";
+  import { markerStyle } from "../logic/marker";
   import TileLeaf from "./TileLeaf.svelte";
 
   let {
@@ -17,11 +17,20 @@
     path,
     ports,
     onEdit,
+    renderMarker = false,
   }: {
     node: PanelsNode;
     path: Path;
     ports?: unknown;
     onEdit: (ops: readonly LayoutOp[]) => void;
+    /**
+     * Whether to draw the node's diagnostic marker on this root. Default NO:
+     * a panels node is the scrolled CONTENT of a split's collapsible child,
+     * so an outline here wraps the full scrollable region and scrolls with
+     * it — the split draws the marker on the aside (the fixed viewport)
+     * instead. Pass `true` only for a panels node used outside a split.
+     */
+    renderMarker?: boolean;
   } = $props();
 
   // Panel-eligible views only (decision 5): chat/composer/message-queue never
@@ -30,7 +39,10 @@
   const addView = $derived(firstPanelView(panelViews));
 </script>
 
-<div class="flex min-h-0 flex-col gap-2" style:outline={markerOutline(node.marker)}>
+<div
+  class="flex min-h-0 flex-col gap-2"
+  style={renderMarker ? markerStyle(node.marker) : undefined}
+>
   {#each node.panels as panel, idx (idx)}
     <div class="flex flex-col rounded-lg bg-base-200 p-3">
       <div class="flex items-center gap-1">

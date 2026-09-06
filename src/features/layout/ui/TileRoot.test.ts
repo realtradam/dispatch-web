@@ -245,8 +245,34 @@ describe("TileRoot", () => {
     });
     const stack = container.querySelector("[data-testid='fixture-a']")?.closest(".flex-col");
     expect(stack?.getAttribute("style")).toContain("outline: 4px solid red");
+    // The SIDE marker frames the SCROLL CONTAINER — the sidebar's fixed,
+    // opaquely-painted viewport (the aside's bg is transparent; this div's
+    // bg-base-100 would cover an outline drawn on the aside). The panels
+    // root is its SCROLLED content, so an outline there would wrap the
+    // whole scrollable region and scroll along with it.
+    const viewport = container.querySelector("[data-testid='sidebar-scroll-viewport']");
+    expect(viewport?.getAttribute("style")).toContain("outline: 4px solid green");
+  });
+
+  it("outlines are INSET so they draw inside the tile's box (never clipped at screen edges)", () => {
+    // Tiles span their containers edge-to-edge, so a default (outside)
+    // outline overflows the visible area and is clipped away — the offset
+    // pulls the ring inside the box. Pin it on both marked tiles.
+    const { container } = render(TileRoot, {
+      props: { tree: markedTestTree(), collapse: createCollapseStore({ viewportWidth: 1024 }) },
+    });
+    const stack = container.querySelector("[data-testid='fixture-a']")?.closest(".flex-col");
+    expect(stack?.getAttribute("style")).toContain("outline-offset: -4px");
+    const viewport = container.querySelector("[data-testid='sidebar-scroll-viewport']");
+    expect(viewport?.getAttribute("style")).toContain("outline-offset: -4px");
+  });
+
+  it("the panels CONTENT carries no outline (it scrolls — the marker must not scroll with it)", () => {
+    const { container } = render(TileRoot, {
+      props: { tree: markedTestTree(), collapse: createCollapseStore({ viewportWidth: 1024 }) },
+    });
     const panels = container.querySelector("[data-testid='fixture-b']")?.closest(".gap-2");
-    expect(panels?.getAttribute("style")).toContain("outline: 4px solid green");
+    expect(panels?.getAttribute("style") ?? "").not.toContain("outline");
   });
 
   it("an unmarked tree draws NO outlines (trees without the field render exactly as before)", () => {
