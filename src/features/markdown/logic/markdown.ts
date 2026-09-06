@@ -125,17 +125,48 @@ const md = new Marked(
 
 /**
  * While a message is still streaming, balance dangling fences / emphasis so the
- * partial text renders cleanly instead of flashing raw markers.
+ * partial text renders cleanly instead of flashing raw markers. `seed` carries
+ * the delimiter counts of the ALREADY-SETTLED prefix (see
+ * `logic/streaming-markdown`): the full-text streaming render appends markers
+ * at the very END of the whole source, so a tail rendered alone must count the
+ * prefix's parity to append in exactly the same place (or not) — otherwise a
+ * settled paragraph with a lone `**` would transiently render differently.
  */
-function closeOpenDelimiters(src: string): string {
+function closeOpenDelimiters(
+  src: string,
+  seed: DelimiterCounts = { fences: 0, bold: 0, code: 0 },
+): string {
   let out = src;
-  const fenceCount = (out.match(/^```/gm) ?? []).length;
+  const fenceCount = (out.match(/^```/gm) ?? []).length + seed.fences;
   if (fenceCount % 2 !== 0) out += "\n```";
-  const boldCount = (out.match(/\*\*/g) ?? []).length;
+  const boldCount = (out.match(/\*\*/g) ?? []).length + seed.bold;
   if (boldCount % 2 !== 0) out += "**";
-  const inlineCode = (out.match(/(?<!`)`(?!`)/g) ?? []).length;
+  const inlineCode = (out.match(/(?<!`)`(?!`)/g) ?? []).length + seed.code;
   if (inlineCode % 2 !== 0) out += "`";
   return out;
+}
+
+/**
+ * Counts of the delimiter constructs {@link closeOpenDelimiters} balances,
+ * using the SAME regexes — the streaming checkpoint module accumulates them
+ * over settled blocks and seeds the tail's balance pass with the total, so the
+ * tail's appended markers land exactly where a whole-text render would put
+ * them. Pure: `input → output`.
+ */
+export interface DelimiterCounts {
+  readonly fences: number;
+  readonly bold: number;
+  readonly code: number;
+}
+
+const ZERO_COUNTS: DelimiterCounts = { fences: 0, bold: 0, code: 0 };
+
+export function countDelimiters(src: string): DelimiterCounts {
+  return {
+    fences: (src.match(/^```/gm) ?? []).length,
+    bold: (src.match(/\*\*/g) ?? []).length,
+    code: (src.match(/(?<!`)`(?!`)/g) ?? []).length,
+  };
 }
 
 // Wrap each fenced code block (`<pre>…</pre>`) in a positioned container with a
@@ -159,6 +190,55 @@ export function renderMarkdown(text: string, opts?: { streaming?: boolean }): st
   try {
     const raw = md.parse(src) as string;
     return DOMPurify.sanitize(addCopyButtons(raw));
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * The streaming TAIL pipeline — today's exact pipeline for the UNSETTLED tail
+ * of a streaming message (`closeOpenDelimiters` → marked → copy buttons →
+ * DOMPurify), with the delimiter parity SEEDED from the settled prefix (see
+ * {@link countDelimiters}). With a zero seed this is byte-identical to
+ * `renderMarkdown(text, { streaming: true })`, so the checkpoint module's
+ * degenerate case (nothing settled yet) is exactly today's behavior.
+ * Returns `""` if parsing ever throws.
+ */
+export function renderMarkdownTail(text: string, seed: DelimiterCounts = ZERO_COUNTS): string {
+  const src = closeOpenDelimiters(text, seed);
+  try {
+    const raw = md.parse(src) as string;
+    return DOMPurify.sanitize(addCopyButtons(raw));
+  } catch {
+    return "";
+  }
+}
+
+/**
+ * Escapes code content the way marked does inside `<code>` (only `&`, `<`,
+ * `>` — quotes stay literal) so the plain open-fence render below is
+ * character-identical to what the closed-fence pipeline would emit.
+ */
+function escapeCode(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+
+/**
+ * Plain (UN-highlighted) rendering of an OPEN fenced code block — the Level-2
+ * streaming behavior: while a fence is still open its content is final-format
+ * escaped `<pre><code>` with NO hljs (hljs state spans lines — an unterminated
+ * string/block comment would recolor earlier lines, so line-incremental
+ * highlighting is unsound). The block is highlighted exactly ONCE, when it
+ * closes and settles into the checkpoint cache. Emits the same copy-button
+ * wrapper + `hljs language-X` classes as the closed pipeline (modulo color
+ * spans), so the pop-in on close is "just colour".
+ */
+export function renderOpenFence(info: string, code: string): string {
+  const lang = info.trim().split(/\s+/)[0] ?? "";
+  const cls = lang === "" ? "hljs" : `hljs language-${escapeHtml(lang)}`;
+  const html = `<pre><code class="${cls}">${escapeCode(code)}</code></pre>`;
+  try {
+    return DOMPurify.sanitize(addCopyButtons(html));
   } catch {
     return "";
   }
