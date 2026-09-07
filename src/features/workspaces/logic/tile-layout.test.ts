@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   clampSpan,
   displacePlace,
+  dragAppendLimit,
   fillOrderKey,
   firstEmptySlot,
   type GridGeometry,
@@ -521,6 +522,36 @@ describe("placeAtCell", () => {
   it("an unknown id changes nothing (no-op)", () => {
     const tiles = [tile("a", 0)];
     expect(placeAtCell(tiles, "nope", { col: 1, row: 1 }, WIDE)).toEqual(tiles);
+  });
+});
+
+describe("dragAppendLimit", () => {
+  it("caps a wide drag at 3 columns past the right-most content edge (span-aware)", () => {
+    // b spans cols 3-4 → the right-most occupied column is 4; +3 = 7.
+    const placements: Placement[] = [
+      { id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "b", col: 3, row: 1, colSpan: 2, rowSpan: 1 },
+    ];
+    expect(dragAppendLimit(placements, WIDE)).toBe(7);
+  });
+
+  it("caps a tall drag at 3 rows past the bottom-most content edge (span-aware)", () => {
+    // b spans rows 3-4 → the bottom-most occupied row is 4; +3 = 7.
+    const placements: Placement[] = [
+      { id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 2 },
+      { id: "b", col: 2, row: 3, colSpan: 1, rowSpan: 2 },
+    ];
+    expect(dragAppendLimit(placements, TALL)).toBe(7);
+  });
+
+  it("an empty grid still allows the first tiles within the first 3 columns", () => {
+    expect(dragAppendLimit([], WIDE)).toBe(3);
+    expect(dragAppendLimit([], TALL)).toBe(3);
+  });
+
+  it("honors a custom extra", () => {
+    const placements: Placement[] = [{ id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 }];
+    expect(dragAppendLimit(placements, WIDE, 5)).toBe(6);
   });
 });
 

@@ -6,6 +6,7 @@
   import { nextDragPhase, type DragEvent, type DragPhase } from "../logic/drag-controller";
   import {
     displacePlace,
+    dragAppendLimit,
     type Cell,
     type GridGeometry,
     type Placement,
@@ -203,6 +204,14 @@
   const pitchX = $derived(geometry.unit.width + geometry.unit.gap);
   const pitchY = $derived(geometry.unit.height + geometry.unit.gap);
 
+  /**
+   * The drag target's clamp on the growth axis — at most 3 columns (wide) /
+   * rows (tall) past the current content edge. Measured on the COMMITTED
+   * placements (the drag preview never ratchets the limit mid-drag), so the
+   * canvas can't endlessly grow when dragging far right / down.
+   */
+  const appendLimit = $derived(dragAppendLimit(placements, geometry));
+
   function cellAt(clientX: number, clientY: number): Cell | null {
     const el = gridEl;
     if (!el) return null;
@@ -213,8 +222,8 @@
     const col = Math.max(1, Math.floor((clientX - rect.left) / cellW) + 1);
     const row = Math.max(1, Math.floor((clientY - rect.top) / pitchY) + 1);
     return {
-      col: wide ? col : Math.min(col, geometry.flowCols),
-      row: wide ? Math.min(row, geometry.flowRows) : row,
+      col: wide ? Math.min(col, appendLimit) : Math.min(col, geometry.flowCols),
+      row: wide ? Math.min(row, geometry.flowRows) : Math.min(row, appendLimit),
     };
   }
 

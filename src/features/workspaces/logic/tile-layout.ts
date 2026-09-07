@@ -489,6 +489,35 @@ export function placeAtCell(
 }
 
 /**
+ * The drag target's clamp on the geometry's UNBOUNDED axis — a drop may aim
+ * at most `extra` columns (wide) / rows (tall) past the current content edge,
+ * so a drag can never create an endlessly growing canvas ("hard to place if
+ * it just grows"): wide bound = the right-most occupied column (span-aware) +
+ * `extra`; tall = the bottom-most occupied row + `extra`. Empty content → the
+ * first tiles may land within the first `extra` columns. The bound is measured
+ * on the COMMITTED placements — a drag always compares against the layout it
+ * started from, never the live preview, so the limit cannot ratchet mid-drag.
+ * Pure: placements + geometry in, the max allowed column (wide) / row (tall)
+ * out.
+ */
+export function dragAppendLimit(
+  placements: readonly Placement[],
+  geometry: GridGeometry,
+  extra = 3,
+): number {
+  let extent = 0;
+  for (const placement of placements) {
+    extent = Math.max(
+      extent,
+      geometry.mode === "wide"
+        ? placement.col + placement.colSpan - 1
+        : placement.row + placement.rowSpan - 1,
+    );
+  }
+  return extent + extra;
+}
+
+/**
  * The first footprint-fitting EMPTY slot in fill order — where a NEW tile of
  * the given span would go (the header's create flow). Pure: entries + span +
  * geometry in, a slot placement out (always exists; may be a new column/row

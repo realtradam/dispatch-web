@@ -24,6 +24,7 @@ export type {
 export {
   clampSpan,
   displacePlace,
+  dragAppendLimit,
   fillOrderKey,
   firstEmptySlot,
   geometryFor,
