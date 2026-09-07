@@ -1,10 +1,10 @@
+import type { TileGeometryMode, TileLayoutData } from "@dispatch/tile-layout-contract";
 import type { Workspace, WorkspaceEntry } from "@dispatch/wire";
 import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
-import type { LocalStore } from "../../../adapters/local-storage";
 import type { WorkspaceHttp, WorkspaceResult } from "../adapter/http";
-import type { TileLayoutData, TileLayoutEntry } from "../logic/tile-layout";
+import type { TileLayoutHttp } from "../adapter/tile-layout-http";
 import { createTileLayoutStore } from "../tile-layout-store.svelte";
 import WorkspacesHome from "./WorkspacesHome.svelte";
 
@@ -46,27 +46,37 @@ function fakeHttp(list: WorkspaceEntry[] = [ws()]): WorkspaceHttp {
   } as unknown as WorkspaceHttp;
 }
 
-function memoryLayout(initial: TileLayoutData | null = null): LocalStore<TileLayoutData> & {
-  data: TileLayoutData | null;
-} {
-  const store = {
-    data: initial,
-    load: () => store.data,
-    save: (value: TileLayoutData) => {
-      store.data = value;
+/**
+ * A fake tile-layout HTTP edge serving ONE controllable document per mode
+ * (no mocks of our modules). `docs` is the live store — assertions read it
+ * after `waitFor` (the boot probe + debounced sync writes land there).
+ */
+function memoryLayout(
+  initial: TileLayoutData | null = null,
+): TileLayoutHttp & { docs: Map<TileGeometryMode, TileLayoutData> } {
+  const docs = new Map<TileGeometryMode, TileLayoutData>();
+  if (initial !== null) docs.set("wide", initial);
+  return {
+    docs,
+    async getLayout(mode) {
+      return { ok: true, layout: docs.get(mode) ?? { version: 2, tiles: [] } };
     },
-    clear: () => {
-      store.data = null;
+    async putLayout(mode, layout) {
+      docs.set(mode, layout);
+      return { ok: true, layout };
+    },
+    async deleteLayout(mode) {
+      docs.set(mode, { version: 2, tiles: [] });
+      return { ok: true, layout: docs.get(mode) as TileLayoutData };
     },
   };
-  return store;
 }
 
 describe("WorkspacesHome (tile canvas)", () => {
   it("renders one tile per workspace, in the persisted tile order (not the list order)", async () => {
     const list = [ws({ id: "a", title: "A" }), ws({ id: "b", title: "B" })];
     const layout = memoryLayout({
-      version: 1,
+      version: 2,
       tiles: [
         { id: "b", order: 0, colSpan: 1, rowSpan: 1 },
         { id: "a", order: 1, colSpan: 1, rowSpan: 1 },
@@ -77,7 +87,7 @@ describe("WorkspacesHome (tile canvas)", () => {
         store: (await import("../store.svelte")).createWorkspaceStore(fakeHttp(list)),
         onNavigate: vi.fn(),
         computers: [],
-        tiles: createTileLayoutStore(layout),
+        tiles: createTileLayoutStore({ http: layout }),
       },
     });
 
@@ -94,7 +104,7 @@ describe("WorkspacesHome (tile canvas)", () => {
         store: (await import("../store.svelte")).createWorkspaceStore(fakeHttp()),
         onNavigate,
         computers: [],
-        tiles: createTileLayoutStore(memoryLayout()),
+        tiles: createTileLayoutStore({ http: memoryLayout() }),
       },
     });
 
@@ -113,7 +123,7 @@ describe("WorkspacesHome (tile canvas)", () => {
         store,
         onNavigate,
         computers: [],
-        tiles: createTileLayoutStore(memoryLayout()),
+        tiles: createTileLayoutStore({ http: memoryLayout() }),
       },
     });
 
@@ -139,7 +149,7 @@ describe("WorkspacesHome (tile canvas)", () => {
         store,
         onNavigate: vi.fn(),
         computers: [],
-        tiles: createTileLayoutStore(memoryLayout()),
+        tiles: createTileLayoutStore({ http: memoryLayout() }),
       },
     });
 
@@ -159,7 +169,7 @@ describe("WorkspacesHome (tile canvas)", () => {
   it("workspaces unknown to the layout append at the end (deep-link auto-create)", async () => {
     const list = [ws({ id: "a", title: "A" }), ws({ id: "b", title: "B" })];
     const layout = memoryLayout({
-      version: 1,
+      version: 2,
       tiles: [{ id: "b", order: 0, colSpan: 1, rowSpan: 1 }],
     });
     render(WorkspacesHome, {
@@ -167,7 +177,7 @@ describe("WorkspacesHome (tile canvas)", () => {
         store: (await import("../store.svelte")).createWorkspaceStore(fakeHttp(list)),
         onNavigate: vi.fn(),
         computers: [],
-        tiles: createTileLayoutStore(layout),
+        tiles: createTileLayoutStore({ http: layout }),
       },
     });
 
@@ -176,7 +186,9 @@ describe("WorkspacesHome (tile canvas)", () => {
     const wrappers = document.querySelectorAll("[data-tile-id]");
     expect([...wrappers].map((el) => el.getAttribute("data-tile-id"))).toEqual(["b", "a"]);
     // And the sync persisted the appended entry.
-    const entries = (layout.data?.tiles ?? []).map((tile: TileLayoutEntry) => tile.id);
-    expect(entries).toEqual(["b", "a"]);
+    await waitFor(() => {
+      const tiles = layout.docs.get("wide")?.tiles ?? [];
+      expect(tiles.map((tile) => tile.id)).toEqual(["b", "a"]);
+    });
   });
 });

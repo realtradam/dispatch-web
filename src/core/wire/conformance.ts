@@ -95,6 +95,8 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "extensions-changed";
     case "layout":
       return "layout";
+    case "tile-layout":
+      return "tile-layout";
     default:
       return msg satisfies never;
   }

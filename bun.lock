@@ -6,6 +6,7 @@
       "name": "dispatch-web",
       "dependencies": {
         "@dispatch/layout-contract": "file:../backend/packages/layout-contract",
+        "@dispatch/tile-layout-contract": "file:../backend/packages/tile-layout-contract",
         "@dispatch/transport-contract": "file:../backend/packages/transport-contract",
         "@dispatch/ui-contract": "file:../backend/packages/ui-contract",
         "@dispatch/wire": "file:../backend/packages/wire",
@@ -81,6 +82,8 @@
     "@csstools/css-tokenizer": ["@csstools/css-tokenizer@3.0.4", "", {}, "sha512-Vd/9EVDiu6PPJt9yAh6roZP6El1xHrdvIVGjyBsHR0RYwNHgL7FJPyIIW4fANJNG6FtyZfvlRPpFI4ZM/lubvw=="],
 
     "@dispatch/layout-contract": ["@dispatch/layout-contract@file:../backend/packages/layout-contract", {}],
+
+    "@dispatch/tile-layout-contract": ["@dispatch/tile-layout-contract@file:../backend/packages/tile-layout-contract", {}],
 
     "@dispatch/transport-contract": ["@dispatch/transport-contract@file:../backend/packages/transport-contract", { "dependencies": { "@dispatch/ui-contract": "workspace:*", "@dispatch/wire": "workspace:*" } }],
 

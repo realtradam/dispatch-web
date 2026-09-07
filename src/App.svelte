@@ -93,6 +93,7 @@
     hasActive={(id) => store.workspaceHasActiveConversations(id)}
     plugins={store.plugins}
     layout={layoutPort}
+    tiles={store.tileLayout}
   />
 {:else}
   <App {store} onNavigate={navigate} />

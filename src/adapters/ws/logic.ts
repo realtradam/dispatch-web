@@ -6,6 +6,7 @@ import type {
   ConversationStatusChangedMessage,
   ExtensionsChangedMessage,
   LayoutChangedMessage,
+  TileLayoutChangedMessage,
   WsClientMessage,
   WsServerMessage,
 } from "@dispatch/transport-contract";
@@ -28,6 +29,7 @@ const VALID_SERVER_TYPES = new Set([
   "conversation.compacted",
   "extensions-changed",
   "layout",
+  "tile-layout",
 ]);
 
 /** Serialize a client message to a JSON string for the wire. */
@@ -203,6 +205,23 @@ export function parseServerMessage(data: string): WsServerMessage | null {
         type: "layout",
         workspaceId: parsed.workspaceId,
         tree: tree as LayoutChangedMessage["tree"],
+      };
+      return msg;
+    }
+    case "tile-layout": {
+      // Home tile-layout broadcast (the synced home grid): the FULL document
+      // for ONE device orientation. Light shape checks here (the document's
+      // structural validation is the backend's write-time job); the store
+      // filters by its active geometry mode.
+      if (parsed.mode !== "wide" && parsed.mode !== "tall") return null;
+      const data = parsed.data;
+      if (data === null || !isRecord(data) || data.version !== 2 || !Array.isArray(data.tiles)) {
+        return null;
+      }
+      const msg: TileLayoutChangedMessage = {
+        type: "tile-layout",
+        mode: parsed.mode,
+        data: data as unknown as TileLayoutChangedMessage["data"],
       };
       return msg;
     }

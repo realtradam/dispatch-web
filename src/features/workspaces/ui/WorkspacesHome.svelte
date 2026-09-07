@@ -7,7 +7,6 @@
     type PluginsStore,
     type WorkspaceLayoutPort,
   } from "../../plugins";
-  import { createLocalStore } from "../../../adapters/local-storage";
   import type { WorkspaceStore } from "../store.svelte";
   import { workspacePath } from "../logic/route";
   import {
@@ -17,11 +16,7 @@
     type GridGeometry,
     type Span,
   } from "../logic/tile-layout";
-  import {
-    createTileLayoutStore,
-    TILE_LAYOUT_STORAGE_KEY,
-    type TileLayoutStore,
-  } from "../tile-layout-store.svelte";
+  import { type TileLayoutStore } from "../tile-layout-store.svelte";
   import HomeHeader from "./HomeHeader.svelte";
   import HomeTileGrid from "./HomeTileGrid.svelte";
   import TileActionBar from "./TileActionBar.svelte";
@@ -59,33 +54,30 @@
      */
     layout?: WorkspaceLayoutPort;
     /**
-     * The persisted tile layout store. Absent → created here over the real
-     * localStorage adapter (the page is the effect edge); tests inject one.
+     * The synced tile layout store (ONE shared document per device
+     * orientation, persisted by the backend's home-tile-layout plugin).
+     * Created by the page entry (App.svelte — the composition root that owns
+     * the httpBase); tests inject one.
      */
-    tiles?: TileLayoutStore;
+    tiles: TileLayoutStore;
   } = $props();
 
   onMount(() => {
     void store.refresh();
   });
 
-  // ── The persisted tile layout (order + spans only — never positions). ─────
-  // The store is created once per page from the (inert) override prop — the
-  // repo's `untrack` pattern for initial-value captures (cf. App.svelte).
-  const tiles: TileLayoutStore =
-    untrack(() => tilesOverride) ??
-    createTileLayoutStore(
-      createLocalStore(TILE_LAYOUT_STORAGE_KEY, {
-        storage: typeof localStorage !== "undefined" ? localStorage : undefined,
-      }),
-    );
+  // The store arrives fully wired (the page entry created it over the real
+  // HTTP edge). The `untrack` capture (the repo's initial-value pattern, cf.
+  // App.svelte) dealiases the prop once — the component instance is the
+  // store's single owner from here on.
+  const tiles: TileLayoutStore = untrack(() => tilesOverride);
 
   // Keep the layout merged with the live workspace list: unknown workspaces
-  // (deep-link auto-creates) append at the end; deleted ones drop. The no-op
-  // guard inside sync keeps this effect from looping. Skipped until the first
-  // non-empty list arrives — `sync([])` before the initial `refresh()` resolves
-  // would WIPE the persisted order (the backend always serves "default", so an
-  // empty list only ever means "not loaded yet").
+  // (deep-link auto-creates) append at the end; deleted ones drop. The
+  // no-op guards inside sync keep this effect from looping. Skipped until
+  // the first non-empty list arrives — `sync([])` before the initial
+  // `refresh()` resolves would WIPE the persisted order (the backend always
+  // serves "default", so an empty list only ever means "not loaded yet").
   $effect(() => {
     const ids = store.list.map((ws) => ws.id);
     if (ids.length === 0) return;
@@ -109,6 +101,15 @@
     });
     observer.observe(el);
     return () => observer.disconnect();
+  });
+
+  // Lock the store's active orientation to the resolved grid geometry: the
+  // landscape/portrait split IS the device-type split — every landscape
+  // device shares the `wide` document, every portrait device the `tall` one.
+  // Same-mode calls are a no-op inside the store; an orientation change
+  // resets + re-probes (never flashing the other orientation's arrangement).
+  $effect(() => {
+    tiles.setMode(geometry.mode);
   });
 
   // The grid view: the SAME persisted data packs into either geometry —

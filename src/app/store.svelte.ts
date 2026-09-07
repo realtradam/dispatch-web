@@ -34,6 +34,7 @@ import type {
   SystemPromptVariable,
   SystemPromptVariablesResponse,
   TestComputerResponse,
+  TileLayoutChangedMessage,
   WarmRequest,
   WarmResponse,
   WorkspaceSetMessage,
@@ -108,6 +109,9 @@ import {
   type VisionSettings,
   type VisionSettingsPatch,
 } from "../features/vision";
+import { createTileLayoutHttp } from "../features/workspaces/adapter/tile-layout-http";
+import type { TileLayoutStore } from "../features/workspaces/tile-layout-store.svelte";
+import { createTileLayoutStore } from "../features/workspaces/tile-layout-store.svelte";
 import { createPluginHost } from "./plugin-host.svelte";
 import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
@@ -581,6 +585,15 @@ export interface AppStore {
    */
   readonly layout: LayoutStore;
   /**
+   * The home grid's synced tile layout (ONE shared document per device
+   * orientation — `wide` = landscape/desktop, `tall` = portrait/mobile),
+   * served by the backend's home-tile-layout plugin. The home page locks the
+   * active orientation to the resolved grid geometry; this store owns the
+   * probes, the WS-push filter, the debounced PUT + rollback, and the
+   * offline degrade.
+   */
+  readonly tileLayout: TileLayoutStore;
+  /**
    * Loaded provider-tier plugins effectively enabled in the ACTIVE workspace
    * (`GET /workspaces/:id/plugins/providers-status`). `null` = unknown — the
    * first-boot guardrail renders only on a confident `0` (§7).
@@ -734,6 +747,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     workspaceId: activeWorkspaceId,
     storage: localStorageOpt,
     knownViews: listPanelViews().map((v) => v.id),
+  });
+
+  // ── Home tile-layout (the synced Win8-Start grid) ─────────────────────────
+  // ONE shared document PER device orientation (`wide` = landscape/desktop,
+  // `tall` = portrait/mobile), persisted by the backend's home-tile-layout
+  // plugin and broadcast over WS (`tile-layout`). The home page locks the
+  // active orientation to the resolved grid geometry and renders
+  // `tileLayout.entries`; this store owns the probes, the WS-push filter,
+  // the debounced PUT + rollback, and the offline degrade.
+  const tileLayoutStore = createTileLayoutStore({
+    http: createTileLayoutHttp(httpBase, fetchImpl),
   });
 
   /**
@@ -1542,6 +1566,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // plugin's op) re-renders here — the store filters non-active
       // workspaces (the server fans out to everyone).
       layoutStore.onServerTree(msg.workspaceId, msg.tree);
+    },
+    onTileLayout(msg: TileLayoutChangedMessage) {
+      // Multi-client coherence for the home grid's synced layouts: a write
+      // on ANY client re-renders here — the store filters the OTHER
+      // orientation (the server fans out to everyone).
+      tileLayoutStore.onServerTileLayout(msg.mode, msg.data);
     },
   };
   if (opts?.socketFactory !== undefined) {
@@ -2669,6 +2699,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     get layout(): LayoutStore {
       return layoutStore;
+    },
+    get tileLayout(): TileLayoutStore {
+      return tileLayoutStore;
     },
     get enabledProviderCount(): number | null {
       return enabledProviderCount;

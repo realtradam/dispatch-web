@@ -15,6 +15,7 @@
   },
   "dependencies": {
     "@dispatch/layout-contract": "file:../backend/packages/layout-contract",
+    "@dispatch/tile-layout-contract": "file:../backend/packages/tile-layout-contract",
     "@dispatch/transport-contract": "file:../backend/packages/transport-contract",
     "@dispatch/ui-contract": "file:../backend/packages/ui-contract",
     "@dispatch/wire": "file:../backend/packages/wire",

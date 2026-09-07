@@ -1,5 +1,6 @@
 export type { WorkspaceHttp, WorkspaceResult } from "./adapter/http";
 export { createWorkspaceHttp } from "./adapter/http";
+export { createTileLayoutHttp, type TileLayoutHttp } from "./adapter/tile-layout-http";
 export type {
   DragEmit,
   DragEvent as DragControllerEvent,
@@ -42,8 +43,8 @@ export {
 export { applyStarred, pageTitle, relativeTime, sortWorkspaces } from "./logic/view-model";
 export type { WorkspaceStore } from "./store.svelte";
 export { createWorkspaceStore } from "./store.svelte";
-export type { TileLayoutStore } from "./tile-layout-store.svelte";
-export { createTileLayoutStore, TILE_LAYOUT_STORAGE_KEY } from "./tile-layout-store.svelte";
+export type { TileLayoutProviderState, TileLayoutStore } from "./tile-layout-store.svelte";
+export { createTileLayoutStore } from "./tile-layout-store.svelte";
 export { default as WorkspacesHome } from "./ui/WorkspacesHome.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */

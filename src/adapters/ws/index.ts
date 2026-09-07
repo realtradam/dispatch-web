@@ -6,6 +6,7 @@ import type {
   ConversationStatusChangedMessage,
   ExtensionsChangedMessage,
   LayoutChangedMessage,
+  TileLayoutChangedMessage,
   WsClientMessage,
 } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
@@ -40,6 +41,12 @@ export interface SurfaceSocketOptions {
    * tree for one workspace. The consumer filters by its active workspace.
    */
   onLayout?: (msg: LayoutChangedMessage) => void;
+  /**
+   * Broadcast after every successful home tile-layout write: the FULL
+   * document for one device orientation (wide/tall). The consumer filters by
+   * its active geometry mode.
+   */
+  onTileLayout?: (msg: TileLayoutChangedMessage) => void;
   onReopen?: () => void;
   socketFactory?: (url: string) => WebSocketLike;
 }
@@ -92,6 +99,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
           opts.onExtensionsChanged?.(msg as ExtensionsChangedMessage);
         } else if (msg.type === "layout") {
           opts.onLayout?.(msg as LayoutChangedMessage);
+        } else if (msg.type === "tile-layout") {
+          opts.onTileLayout?.(msg as TileLayoutChangedMessage);
         } else {
           opts.onMessage(msg as SurfaceServerMessage);
         }
