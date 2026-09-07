@@ -96,10 +96,8 @@ export function relativeTime(then: number, now: number): string {
   const hours = Math.floor(mins / 60);
   if (hours < 24) return `${hours}h`;
   const days = Math.floor(hours / 24);
-  if (days < 7) return `${days}d`;
-  // Beyond a week: a short date (MM/DD). Uses UTC parts for determinism in tests.
-  const d = new Date(then);
-  const month = String(d.getUTCMonth() + 1).padStart(2, "0");
-  const day = String(d.getUTCDate()).padStart(2, "0");
-  return `${month}/${day}`;
+  if (days < 30) return `${days}d`;
+  // Past a month: months (a month ≈ 30 days). No short date — the label
+  // stays relative forever.
+  return `${Math.floor(days / 30)}mo`;
 }

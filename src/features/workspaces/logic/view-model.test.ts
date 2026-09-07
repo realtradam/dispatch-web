@@ -49,10 +49,15 @@ describe("relativeTime", () => {
     expect(relativeTime(now - 3 * 24 * 60 * 60_000, now)).toBe("3d");
   });
 
-  it("is a short date beyond a week", () => {
-    // 7+ days ago: just check it is a MM/DD string.
-    const s = relativeTime(now - 10 * 24 * 60 * 60_000, now);
-    expect(s).toMatch(/^\d{2}\/\d{2}$/);
+  it("keeps days past a week (no short date) up to a month", () => {
+    expect(relativeTime(now - 10 * 24 * 60 * 60_000, now)).toBe("10d");
+    expect(relativeTime(now - 29 * 24 * 60 * 60_000, now)).toBe("29d");
+  });
+
+  it("is months past a month", () => {
+    expect(relativeTime(now - 30 * 24 * 60 * 60_000, now)).toBe("1mo");
+    expect(relativeTime(now - 75 * 24 * 60 * 60_000, now)).toBe("2mo");
+    expect(relativeTime(now - 365 * 24 * 60 * 60_000, now)).toBe("12mo");
   });
 });
 
