@@ -286,6 +286,13 @@ changes, NO contract changes — the wire types and every endpoint consumed are 
   elements to the GRID CONTAINER, which `setPointerCapture`s the pointer and never gets
   re-parented/`pointer-events: none`/unmounted — so move/up stream to it over empty cells and off
   the canvas, and capture can never be lost to a DOM move again.
+- **Mobile (tall) scroll fix**: the grid's root was `flex-1` inside a BLOCK parent (the workspace
+  region), so it sized to its content and the scroller's `h-full` collapsed → `overflow-y-auto`
+  never engaged and the shell's `overflow-hidden` clipped the extra tiles. The root is now `h-full`,
+  giving the scroller a definite height so tall mode scrolls. Also: touch pointers are no longer
+  `setPointerCapture`d at pointerdown (an early touch capture can suppress native panning in
+  WebKit; touch already gets implicit capture and post-lift moves bubble to the container), keeping
+  touch scrolling reliable while drags still work.
 - **Drag append bound** (`dragAppendLimit` in `logic/tile-layout.ts`; `cellAt` in
   `HomeTileGrid.svelte`): the drop target is clamped to at most 3 columns (wide) / rows (tall)
   past the committed content edge (span-aware, measured on the COMMITTED layout so it can't

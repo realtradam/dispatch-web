@@ -160,7 +160,12 @@
     if (!tileEl || insideInteractive(e.target)) return;
     const id = tileEl.getAttribute("data-tile-id");
     if (id === null) return;
-    gridEl?.setPointerCapture?.(e.pointerId);
+    // Capture mouse/pen so fast drags keep streaming to this container. TOUCH
+    // is purposely NOT captured here: an early touch capture can suppress
+    // native scrolling (WebKit), and touch already gets the browser's implicit
+    // capture — after the long-press lift the moved events bubble up to this
+    // container anyway.
+    if (e.pointerType !== "touch") gridEl?.setPointerCapture?.(e.pointerId);
     // Where within the tile the pointer grabbed — the follow transform keeps
     // THIS point under the pointer (not the tile's top-left origin).
     const rect = tileEl.getBoundingClientRect();
@@ -453,7 +458,7 @@
 
 <svelte:window onkeydowncapture={windowKeydown} />
 
-<div class="relative min-h-0 flex-1">
+<div class="relative h-full">
   <div
     bind:this={scrollerEl}
     class="h-full overscroll-contain"
