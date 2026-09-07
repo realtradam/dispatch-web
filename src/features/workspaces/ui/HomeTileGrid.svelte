@@ -57,6 +57,8 @@
   let longPressTimer: ReturnType<typeof setTimeout> | undefined;
   /** Pointer position where the current press began (the follow transform base). */
   let pressOrigin = $state<{ x: number; y: number } | null>(null);
+  /** Where within the pressed tile the pointer grabbed (its follow-transform base). */
+  let grabOffset = $state<{ x: number; y: number } | null>(null);
   /** The tile mid-settle after a drop (excluded from FLIP until it lands). */
   let settling = $state<string | null>(null);
 
@@ -90,6 +92,7 @@
       // a CANCEL mid-drag flies the tile back to its committed slot.
       if (wasDragging && emit?.kind !== "drop") flyBack(wasDragging);
       pressOrigin = null;
+      grabOffset = null;
     }
     // Keep the long-press armed exactly while a TOUCH press is undecided.
     if (phase.kind === "pressing" && phase.touch) armLongPress();
@@ -142,10 +145,25 @@
     return el?.closest("input, select, textarea, button, a") !== null;
   }
 
-  function tilePointerDown(e: PointerEvent, id: string): void {
-    if (e.button !== 0 || insideInteractive(e.target)) return;
-    // Capture so fast drags keep the pointer events on this element.
-    (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
+  /**
+   * Drag gestures live on the GRID CONTAINER, not the tiles: the container is
+   * never re-parented, never toggles `pointer-events`, and never unmounts, so
+   * pointer capture set here survives the whole gesture. (A captured element
+   * whose DOM node MOVES loses its capture — the "stuck tile" bug — and an
+   * uncaptured pointer can't stream events over empty cells — the empty-cell
+   * bug.) Capture also keeps move/up flowing when the pointer leaves the grid.
+   */
+  function gridPointerDown(e: PointerEvent): void {
+    if (e.button !== 0) return;
+    const tileEl = (e.target as Element | null)?.closest("[data-tile-id]");
+    if (!tileEl || insideInteractive(e.target)) return;
+    const id = tileEl.getAttribute("data-tile-id");
+    if (id === null) return;
+    gridEl?.setPointerCapture?.(e.pointerId);
+    // Where within the tile the pointer grabbed — the follow transform keeps
+    // THIS point under the pointer (not the tile's top-left origin).
+    const rect = tileEl.getBoundingClientRect();
+    grabOffset = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     pressOrigin = { x: e.clientX, y: e.clientY };
     dispatch({
       type: "pointer-down",
@@ -156,8 +174,8 @@
     });
   }
 
-  function tilePointerMove(e: PointerEvent): void {
-    if (phase.kind === "idle" || insideInteractive(e.target)) return;
+  function gridPointerMove(e: PointerEvent): void {
+    if (phase.kind === "idle") return;
     dispatch({
       type: "pointer-move",
       x: e.clientX,
@@ -166,7 +184,7 @@
     });
   }
 
-  function tilePointerUp(): void {
+  function gridPointerUp(): void {
     if (phase.kind === "idle") return;
     dispatch({ type: "pointer-up" });
   }
@@ -352,11 +370,37 @@
     return `grid-column: ${placement.col} / span ${span.colSpan}; grid-row: ${placement.row} / span ${span.rowSpan};`;
   }
 
+  /**
+   * The landing cell's top-left in CLIENT coordinates — where the CSS grid
+   * actually places a tile anchored at `targetCell` (the true column pitch:
+   * fixed in wide; the fluid column width PLUS the gap in tall). The follow
+   * transform cancels exactly this, so the grab point tracks the pointer.
+   */
+  const targetCellOrigin = $derived.by<{ x: number; y: number } | null>(() => {
+    const el = gridEl;
+    if (!el || !targetCell) return null;
+    const rect = el.getBoundingClientRect();
+    const wide = geometry.mode === "wide";
+    const colPitch = wide ? pitchX : (rect.width + geometry.unit.gap) / geometry.flowCols;
+    return {
+      x: rect.left + (targetCell.col - 1) * colPitch,
+      y: rect.top + (targetCell.row - 1) * pitchY,
+    };
+  });
+
   /** The dragged tile's follow transform (it keeps its committed slot). */
   function followStyle(placement: Placement): string {
-    if (draggedId !== placement.id || !pressOrigin || phase.kind !== "dragging") return "";
-    const dx = phase.x - pressOrigin.x;
-    const dy = phase.y - pressOrigin.y;
+    if (draggedId !== placement.id || !pressOrigin || !grabOffset || phase.kind !== "dragging") {
+      return "";
+    }
+    const origin = targetCellOrigin;
+    if (!origin) return "";
+    // Pointer minus the tile's GRID anchor minus the grab offset — the grab
+    // point the user pressed tracks the pointer. A raw pointer-displacement
+    // translate would ride the tile's origin instead and jump by the grab
+    // offset (a center grab snaps the tile's top-left under the pointer).
+    const dx = phase.x - origin.x - grabOffset.x;
+    const dy = phase.y - origin.y - grabOffset.y;
     return `transform: translate(${dx}px, ${dy}px) scale(1.05);`;
   }
 
@@ -403,7 +447,16 @@
     onscroll={updateScroll}
     onwheel={handleWheel}
   >
-    <div bind:this={gridEl} class="relative grid" style={gridStyle}>
+    <!-- svelte-ignore a11y_no_static_element_interactions -- the grid owns the drag gestures (capture must live on a never-reparented element) -->
+    <div
+      bind:this={gridEl}
+      class="relative grid"
+      style={gridStyle}
+      onpointerdown={gridPointerDown}
+      onpointermove={gridPointerMove}
+      onpointerup={gridPointerUp}
+      onpointercancel={() => dispatch({ type: "cancel" })}
+    >
       {#if ghostStyle && draggedPlacement}
         <!-- The landing footprint (the dragged tile's tone, dashed). -->
         <div
@@ -441,10 +494,6 @@
             tabindex="0"
             aria-label={`Open workspace ${ws.title}`}
             use:trackTile={placement.id}
-            onpointerdown={(e) => tilePointerDown(e, placement.id)}
-            onpointermove={tilePointerMove}
-            onpointerup={tilePointerUp}
-            onpointercancel={() => dispatch({ type: "cancel" })}
             oncontextmenu={(e) => {
               e.preventDefault();
               onSelect(placement.id);

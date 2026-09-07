@@ -268,3 +268,25 @@ changes, NO contract changes — the wire types and every endpoint consumed are 
   it is still the concurrency-priority flag on `Workspace.starred`.
 - The create flow now calls `ensure(id)` directly (today's navigation-implicit ensure) — same
   endpoint, no new surface.
+
+### Follow-up: three drag-interaction bugfixes (2026-09-07, same branch, FE-only)
+- **Stuck-tile drop** (`displacePlace` in `logic/tile-layout.ts`): the displacement preview
+  returned placements SORTED BY STREAM ORDER, so as the dragged tile crossed stream positions the
+  keyed `{#each}` moved its DOM node and the browser silently dropped its pointer capture — the
+  subsequent `pointerup` never landed and the follow transform never cleared (phase stuck
+  `"dragging"`). `displacePlace` now returns the INPUT render order (coordinates change only);
+  `placeAtCell` re-sorts to stream order itself so the commit's order-renumbering semantics are
+  unchanged.
+- **Follow-transform grab offset** (`ui/HomeTileGrid.svelte`): the drag follow was a raw
+  pointer-displacement translate, so a grab away from the tile's top-left corner made the tile
+  jump (its origin rode the pointer instead of the grabbed point). `pointerdown` now records the
+  grab offset (pointer − tile rect) and the transform cancels the tile's true grid anchor, so the
+  GRAB POINT tracks the pointer.
+- **Empty-cell hover** (`ui/HomeTileGrid.svelte`): pointer handling moved from the per-tile
+  elements to the GRID CONTAINER, which `setPointerCapture`s the pointer and never gets
+  re-parented/`pointer-events: none`/unmounted — so move/up stream to it over empty cells and off
+  the canvas, and capture can never be lost to a DOM move again.
+- Verification: `typecheck` 0 errors/0 warnings, vitest 1689/1689 (incl. updated
+  `tile-layout.test.ts` order assertions — coordinates unchanged), biome clean on touched files,
+  `build` succeeds. Browser-only (pointer capture) — needs a human at the page to confirm the
+  three fixes live (see commit message checklist).

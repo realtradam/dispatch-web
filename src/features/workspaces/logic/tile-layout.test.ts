@@ -350,11 +350,12 @@ describe("displacePlace", () => {
       { id: "Y", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
     ];
     const next = displacePlace(placements, "Y", { col: 1, row: 1 }, WIDE);
-    // Y@1; X (was@1) pushed into the gap at 2; X2 (was@3) stays.
+    // Y@1; X (was@1) pushed into the gap at 2; X2 (was@3) stays. The array
+    // keeps the INPUT render order (only coordinates change).
     expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
-      ["Y", 1, 1],
       ["X", 1, 2],
       ["X2", 1, 3],
+      ["Y", 1, 1],
     ]);
   });
 
@@ -366,10 +367,11 @@ describe("displacePlace", () => {
       { id: "Y", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
     ];
     const next = displacePlace(placements, "Y", { col: 1, row: 2 }, WIDE);
+    // Same coordinates, input render order: X, Z, then the dragged Y.
     expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
-      ["Y", 1, 2],
       ["X", 1, 3],
       ["Z", 1, 4],
+      ["Y", 1, 2],
     ]);
   });
 
@@ -380,9 +382,10 @@ describe("displacePlace", () => {
     ];
     // Drag a (cell 1) to cell 3 — b stays at 2; a lands at 3.
     const next = displacePlace(placements, "a", { col: 1, row: 3 }, WIDE);
+    // The array keeps the input render order (a first) — only a's coords move.
     expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
-      ["b", 1, 2],
       ["a", 1, 3],
+      ["b", 1, 2],
     ]);
   });
 
@@ -432,12 +435,12 @@ describe("displacePlace", () => {
       { id: "d", col: 1, row: 4, colSpan: 1, rowSpan: 1 },
     ];
     const next = displacePlace(placements, "a", { col: 1, row: 4 }, WIDE);
-    // d is pushed past the column's end → column 2 row 1. Stream order:
-    // b(1) c(2) a(3) d(4).
+    // d is pushed past the column's end → column 2 row 1. The array keeps the
+    // INPUT render order (a,b,c,d) — only coordinates change.
     expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["a", 1, 4],
       ["b", 1, 2],
       ["c", 1, 3],
-      ["a", 1, 4],
       ["d", 2, 1],
     ]);
   });

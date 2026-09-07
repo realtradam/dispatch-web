@@ -413,7 +413,9 @@ function firstFitFrom(
  * one; the displaced re-anchor at the next fitting slot forward (spans ride
  * along; a span that can't fit the fixed cross-axis anywhere forward wraps to
  * the first fitting slot — it must land somewhere). Pure: placements + drop
- * in, a NEW placements array out (stream order).
+ * in, a NEW placements array out — in the INPUT array order (only coordinates
+ * change). A keyed `{#each}` over the result therefore never moves DOM nodes;
+ * moving a captured element drops its pointer capture — the "stuck tile" bug.
  */
 export function displacePlace(
   placements: readonly Placement[],
@@ -447,9 +449,12 @@ export function displacePlace(
     occupy(occupied, slot.col, slot.row, colSpan, rowSpan);
     placed.push({ ...placement, col: slot.col, row: slot.row });
   }
-  return placed.sort(
-    (a, b) => fillOrderKey(a.col, a.row, geometry) - fillOrderKey(b.col, b.row, geometry),
-  );
+  // Return in the INPUT render order (coordinates change only): the live drag
+  // preview feeds a keyed `{#each}`, and a reordered array moves the DOM nodes
+  // — a moved captured element silently loses pointer capture (the stuck-tile
+  // bug). The commit path re-sorts to stream order itself (`placeAtCell`).
+  const byId = new Map(placed.map((placement) => [placement.id, placement]));
+  return placements.map((placement) => byId.get(placement.id) ?? placement);
 }
 
 /**
@@ -468,7 +473,11 @@ export function placeAtCell(
   // An unknown dragged id changes nothing (order-sorted copy — the op's
   // canonical no-op shape, like `moveTile` before it).
   if (!tiles.some((tile) => tile.id === id)) return sortTiles(tiles);
-  const displaced = displacePlace(pack(tiles, geometry), id, cell, geometry);
+  // displacePlace preserves the input RENDER order for the live preview; the
+  // commit pins + renumbers in STREAM order, so re-sort before pinning.
+  const displaced = displacePlace(pack(tiles, geometry), id, cell, geometry)
+    .slice()
+    .sort((a, b) => fillOrderKey(a.col, a.row, geometry) - fillOrderKey(b.col, b.row, geometry));
   const result: TileLayoutEntry[] = [];
   for (const placement of displaced) {
     const entry = tiles.find((tile) => tile.id === placement.id);
