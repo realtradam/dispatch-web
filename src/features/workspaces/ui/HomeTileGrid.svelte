@@ -317,9 +317,11 @@
   }
 
   $effect(() => {
-    // Re-measure when the geometry flips or the content first renders/changes.
+    // Re-measure when the geometry flips, the content changes, or a drag
+    // starts/ends (the reserved canvas appears then disappears).
     void geometry.mode;
     void placements.length;
+    void dragging;
     updateScroll();
   });
 
@@ -342,30 +344,54 @@
   // ── Grid + tile styles (the geometry decides; no breakpoint classes) ──────
   const dragging = $derived(phase.kind === "dragging");
 
+  /**
+   * The canvas tracks reserved while dragging, on the growth axis: the append
+   * limit (committed content edge + 3) PLUS the dragged tile's span room — the
+   * tile may be anchored anywhere in the 3 spaces while its body stays inside
+   * the reserved canvas. Computed from the COMMITTED layout at drag start, so
+   * it is CONSTANT for the whole drag — the scroller never resizes mid-drag.
+   */
+  const reservedExtent = $derived(
+    dragging && draggedPlacement
+      ? dragAppendLimit(placements, geometry) +
+          (geometry.mode === "wide" ? draggedPlacement.colSpan : draggedPlacement.rowSpan) -
+          1
+      : 0,
+  );
+
   const gridStyle = $derived.by(() => {
+    const wide = geometry.mode === "wide";
+    // The grid's own size on the growth axis: `max-content` (wide) / auto
+    // (tall) when idle — the canvas hugs the committed content. While DRAGGING
+    // it becomes a FIXED reservation (the 3 append spaces + span room), so the
+    // spaces "show up" at drag start and the scrollbar size never changes
+    // until the drag ends (then the unused reservation disappears).
+    const canvas = dragging
+      ? wide
+        ? `width: ${reservedExtent * pitchX - geometry.unit.gap}px;`
+        : `height: ${reservedExtent * pitchY - geometry.unit.gap}px;`
+      : wide
+        ? "width: max-content;"
+        : "height: auto;";
     const base =
-      geometry.mode === "wide"
+      (wide
         ? `grid-template-rows: repeat(${geometry.flowRows}, ${geometry.unit.height}px);` +
-          ` grid-auto-flow: column; grid-auto-columns: ${geometry.unit.width}px;` +
-          ` gap: ${geometry.unit.gap}px; width: max-content;`
+          ` grid-auto-flow: column; grid-auto-columns: ${geometry.unit.width}px;`
         : `grid-template-columns: repeat(${geometry.flowCols}, minmax(0, 1fr));` +
-          ` grid-auto-flow: row; grid-auto-rows: ${geometry.unit.height}px;` +
-          ` gap: ${geometry.unit.gap}px;`;
+          ` grid-auto-flow: row; grid-auto-rows: ${geometry.unit.height}px;`) +
+      ` gap: ${geometry.unit.gap}px; ${canvas}`;
     if (!dragging) return base;
     // The drop-target dots: one faint dot at each unit cell's CENTER, painted
-    // as a background whose tile is the cell pitch. One extra pitch of padding
-    // past the content end gives the append-slot a dot too.
-    const dotSize =
-      geometry.mode === "wide" ? `${pitchX}px` : `calc(100% / ${geometry.flowCols})`;
-    const dotX = geometry.mode === "wide" ? geometry.unit.width / 2 : 0;
+    // as a background whose tile is the cell pitch. The reserved canvas IS the
+    // append area, so the 3 spaces (and the dragged tile's span room) get dots
+    // with no extra padding.
+    const dotSize = wide ? `${pitchX}px` : `calc(100% / ${geometry.flowCols})`;
+    const dotX = wide ? geometry.unit.width / 2 : 0;
     const dot =
       ` background-image: radial-gradient(circle 2.5px,` +
       ` color-mix(in oklab, var(--color-base-content) 22%, transparent) 98%, transparent 100%);` +
       ` background-size: ${dotSize} ${pitchY}px;` +
-      ` background-position: ${dotX}px ${geometry.unit.height / 2}px;` +
-      (geometry.mode === "wide"
-        ? ` padding-right: ${pitchX}px;`
-        : ` padding-bottom: ${pitchY}px;`);
+      ` background-position: ${dotX}px ${geometry.unit.height / 2}px;`;
     return base + dot;
   });
 

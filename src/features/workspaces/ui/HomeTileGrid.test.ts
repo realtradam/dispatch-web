@@ -105,9 +105,17 @@ describe("HomeTileGrid", () => {
     });
 
     const wrapper = screen.getByRole("button", { name: "Open workspace Workspace A" });
+    const grid = container.querySelector(".grid");
     // The cell math resolves against the grid element's rect (jsdom: 0s).
     fireEvent.pointerDown(wrapper, { button: 0, clientX: 10, clientY: 10, pointerType: "mouse" });
     fireEvent.pointerMove(wrapper, { clientX: 80, clientY: 40 });
+
+    // While dragging the canvas is a FIXED reservation (content edge + 3, plus
+    // the dragged tile's span room) — never max-content, so the scroller can't
+    // resize mid-drag.
+    const pitchX = WIDE.unit.width + WIDE.unit.gap;
+    expect(grid?.getAttribute("style")).toContain(`width: ${5 * pitchX - WIDE.unit.gap}px`);
+    expect(grid?.getAttribute("style")).not.toContain("width: max-content");
 
     // The dashed landing ghost appears…
     const ghost = container.querySelector("[aria-hidden='true'].border-dashed");
@@ -119,6 +127,8 @@ describe("HomeTileGrid", () => {
     fireEvent.pointerUp(wrapper);
     // The ghost + follow disappear on drop…
     expect(container.querySelector("[aria-hidden='true'].border-dashed")).toBeNull();
+    // …and the reservation is gone too (the canvas hugs the committed content).
+    expect(grid?.getAttribute("style")).toContain("width: max-content");
     // …and the drop committed a PLACE at the hovered cell (a lands where it
     // already was — the pointer hovered its own slot; a no-move drop).
     expect(props.onPlace).toHaveBeenCalledWith("a", { col: 1, row: 1 });

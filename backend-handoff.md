@@ -286,10 +286,13 @@ changes, NO contract changes — the wire types and every endpoint consumed are 
   elements to the GRID CONTAINER, which `setPointerCapture`s the pointer and never gets
   re-parented/`pointer-events: none`/unmounted — so move/up stream to it over empty cells and off
   the canvas, and capture can never be lost to a DOM move again.
-- **Drag append bound** (`dragAppendLimit` in `logic/tile-layout.ts` + `cellAt` in
-  `HomeTileGrid.svelte`): the drag target is clamped to at most 3 columns (wide) / rows (tall)
-  past the current content edge (span-aware, measured on the COMMITTED layout so it can't ratchet
-  mid-drag) — the canvas no longer grows endlessly when dragging far right / down.
+- **Drag append bound + reserved canvas** (`dragAppendLimit` in `logic/tile-layout.ts`;
+  `cellAt` + `gridStyle` in `HomeTileGrid.svelte`): the drag target is clamped to at most 3
+  columns (wide) / rows (tall) past the current content edge (span-aware, measured on the
+  COMMITTED layout so it can't ratchet mid-drag). While dragging, the grid's box is a FIXED
+  reservation — the 3 spaces (plus the dragged tile's span room) pop in at drag start and stay
+  constant, so the scroller never changes size mid-drag; the unused spaces vanish when the drag
+  ends.
 - Verification: `typecheck` 0 errors/0 warnings, vitest 1689/1689 (incl. updated
   `tile-layout.test.ts` order assertions — coordinates unchanged), biome clean on touched files,
   `build` succeeds. Browser-only (pointer capture) — needs a human at the page to confirm the
