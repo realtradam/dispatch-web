@@ -225,3 +225,46 @@ the backend contract that shipped in parallel (both repos on the `named-agents` 
 - A live probe (after the backend boots) exercising `/named-agents` CRUD + the synthetic-provider
   selection round-trips, when the user has the backend up. This is a joint/user step, NOT backend work —
   it needs the user to boot the backend (`bin/up`), then either repo's probe can run.
+## Milestone: Win8-Start-style home page — FE-only (feature/win8-tiles-home)
+
+**Slice status:** COMPLETE + committed (FE only; branch `feature/win8-tiles-home`). NO backend
+changes, NO contract changes — the wire types and every endpoint consumed are unchanged.
+
+### What the FE built
+- The workspaces home page (`features/workspaces/ui/WorkspacesHome.svelte`) is rebuilt as a
+  Windows 8 Start-screen-style TILE GRID (one tile per workspace):
+  - **Pure layout core** `logic/tile-layout.ts`: `geometryFor(width, height)` → WIDE
+    (landscape/desktop: 4 fixed ~120px rows, column-wise flow, 4×2 span cap) or TALL
+    (portrait/mobile: 2 fixed columns, row-wise flow, 2×2 cap); `pack(entries, geometry)` —
+    the ONLY order→coordinates transform (greedy first-fit in fill order, hole-free);
+    `firstEmptySlot`, `insertAtFirstEmptySlot`, `mergeLayout`, `resizeTile`, `moveTile`,
+    `sortByRecentActivity`, `clampSpan`, `sanitizeLayout`, `fillOrderKey`. Persisted data is
+    ORIENTATION-INDEPENDENT `{ version: 1, tiles: [{ id, colSpan, rowSpan, order }] }` — order +
+    spans only, NEVER positions; spans render-clamped per geometry (persisted values untouched).
+  - **Persistence** via the existing injected `adapters/local-storage` adapter, key
+    `dispatch.workspaces.tiles` (`tile-layout-store.svelte.ts`: thin reactive wrapper, ops
+    sync/resize/move/placeFirstEmpty/sortByRecentActivity).
+  - **Drag reorder** via a PURE pointer state machine (`logic/drag-controller.ts`): mouse =
+    threshold-drag, click = tap-open; touch = long-press (500ms) lifts + selects, pre-lift
+    movement cancels so vertical scrolling never fights the gesture; FLIP-animated reflow.
+  - **Tile select + action bar**: right-click (desktop) / long-press (touch) →
+    Open · Rename · Resize · Star/Unstar · Details · Plugins · Delete. Rename is the old card's
+    inline semantics; Delete keeps the old confirm + store call; Details is a flyout holding the
+    old card's default-cwd input + default-computer select (same store calls + error states).
+  - **Resize**: Word-style insert-table hover picker (wide 4×2 / tall 2×2 small squares) with
+    arrow-key/Enter/Escape support and a transient ghost footprint preview on the real grid.
+  - **Header chrome** (fixed, outside the scroll region): "Dispatch" display title, a primary
+    "New workspace" popover (same slug validation; creates via `PUT /workspaces/:id`
+    create-on-miss and does NOT navigate — the new tile is placed in the FIRST EMPTY SLOT in
+    fill order and enters rename mode), the global Plugins button, and a Sort-by-recent-activity
+    overflow. Tall screens collapse the controls to icon buttons + a bottom-sheet popover.
+  - Wide canvas: horizontal scroll + scroll-snap, wheel pans horizontally, pan arrow + thin
+    scroll-position indicator. Starred workspaces render a tint (star is no longer a sort key —
+    the persisted manual order rules; unknown workspaces append at the end).
+
+### Backend notes
+- The starred display semantics changed FE-side only: the home grid no longer sorts
+  starred-first (`sortWorkspaces` remains for the list getter). The star's MEANING is untouched —
+  it is still the concurrency-priority flag on `Workspace.starred`.
+- The create flow now calls `ensure(id)` directly (today's navigation-implicit ensure) — same
+  endpoint, no new surface.
