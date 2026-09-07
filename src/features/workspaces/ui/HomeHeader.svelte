@@ -65,8 +65,13 @@
   }
 </script>
 
-<header class="flex shrink-0 items-center justify-between gap-2 px-6 py-4">
-  <h1 class="text-3xl font-black tracking-tight">Dispatch</h1>
+<header class="flex shrink-0 items-end justify-between gap-2 px-8 pt-6 pb-4 md:px-12">
+  <div class="flex items-baseline gap-3">
+    <h1 class="text-4xl font-black tracking-tight">Dispatch</h1>
+    <span class="hidden text-sm font-medium tracking-widest uppercase opacity-40 sm:inline">
+      Workspaces
+    </span>
+  </div>
 
   <div class="flex items-center gap-2" class:gap-1={compact}>
     <!-- New workspace -->

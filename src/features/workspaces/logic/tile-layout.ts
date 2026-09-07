@@ -46,6 +46,13 @@ export interface GridGeometry {
   /** Maximum vertical span a tile may occupy in this geometry. */
   readonly maxRowSpan: number;
   readonly unit: TileUnitSize;
+  /**
+   * The breathing room around the whole tile field — the grid never renders
+   * flush against the canvas edge. In wide mode the scroller pads all four
+   * sides by this amount (the pan arrow/scroll indicator offset inward by it
+   * too); in tall mode it insets the two fluid columns horizontally.
+   */
+  readonly margin: number;
 }
 
 /** One persisted tile: which workspace it pins, how big it wants to be, and its manual position in the order. */
@@ -82,14 +89,41 @@ export interface Span {
 /** The viewport assumed before the canvas has been measured (a landscape desktop). */
 export const DEFAULT_VIEWPORT = { width: 1280, height: 800 } as const;
 
-const WIDE_UNIT: TileUnitSize = { width: 128, height: 120, gap: 8 };
-const TALL_UNIT: TileUnitSize = { width: 0, height: 120, gap: 8 };
+/**
+ * The wide unit's clamp band (px). Tiles FILL the canvas' height across the 4
+ * fixed rows (the Start-screen feel), but never shrink below a legible small
+ * tile nor grow past a comfortable large one.
+ */
+const WIDE_UNIT_MIN = 112;
+const WIDE_UNIT_MAX = 184;
+
+/** The wide canvas' outer margin band (px) — proportional to the unit size. */
+const WIDE_MARGIN_MIN = 24;
+const WIDE_MARGIN_MAX = 64;
+
+/** The tall unit: the two fluid columns size in `1fr` (width `0` = fluid). */
+const TALL_UNIT: TileUnitSize = { width: 0, height: 148, gap: 12 };
+const TALL_MARGIN = 16;
+
+/** Round to whole pixels (fractional track sizes blur tile edges). */
+function px(value: number): number {
+  return Math.round(value);
+}
+
+function clampNumber(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
 
 /**
  * Resolve the grid geometry from the tile canvas' size. Landscape/desktop →
- * WIDE (4 fixed ~120px rows, column-wise flow, 4×2 span cap); portrait/mobile
- * → TALL (2 fixed columns, row-wise flow, 2×2 span cap). Degenerate sizes
- * (not yet measured) resolve to wide. Pure: numbers in, geometry out.
+ * WIDE (4 fixed rows, column-wise flow, 4×2 span cap); portrait/mobile → TALL
+ * (2 fixed columns, row-wise flow, 2×2 span cap). Degenerate sizes (not yet
+ * measured) resolve to wide.
+ *
+ * The wide unit is DERIVED from the canvas height so the 4 rows exactly fill
+ * it (unit + margin + gap all proportional, clamped to their bands); the tall
+ * unit is fixed (its columns are fluid instead). Pure: numbers in, geometry
+ * out.
  */
 export function geometryFor(width: number, height: number): GridGeometry {
   const tall = width > 0 && height > 0 && height > width;
@@ -101,15 +135,24 @@ export function geometryFor(width: number, height: number): GridGeometry {
       maxColSpan: 2,
       maxRowSpan: 2,
       unit: TALL_UNIT,
+      margin: TALL_MARGIN,
     };
   }
+  // Solve 4·unit + 3·gap + 2·margin = height with gap = unit/9 and margin =
+  // unit/3: 4u + u/3 + 2u/3 = 5u → u = height/5. Unmeasured (height ≤ 0) →
+  // the band's middle, not a tiny tile.
+  const raw = height > 0 ? height / 5 : (WIDE_UNIT_MIN + WIDE_UNIT_MAX) / 2;
+  const unit = px(clampNumber(raw, WIDE_UNIT_MIN, WIDE_UNIT_MAX));
+  const gap = Math.max(10, px(unit / 9));
+  const margin = px(clampNumber(unit / 3, WIDE_MARGIN_MIN, WIDE_MARGIN_MAX));
   return {
     mode: "wide",
     flowRows: 4,
     flowCols: 0,
     maxColSpan: 4,
     maxRowSpan: 2,
-    unit: WIDE_UNIT,
+    unit: { width: unit, height: unit, gap },
+    margin,
   };
 }
 

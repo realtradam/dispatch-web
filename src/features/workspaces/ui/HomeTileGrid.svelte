@@ -2,8 +2,24 @@
   import type { WorkspaceEntry } from "@dispatch/wire";
   import { nextDragPhase, type DragEvent, type DragPhase } from "../logic/drag-controller";
   import type { GridGeometry, Placement, Span } from "../logic/tile-layout";
+  import { tileTone, type TileTone } from "../logic/view-model";
   import type { WorkspaceStore } from "../store.svelte";
   import WorkspaceTile from "./WorkspaceTile.svelte";
+
+  /**
+   * The Start-screen tile tones (static classes — Tailwind/DaisyUI must see
+   * the literal `bg-*`/`text-*-content` names to emit them). A tile is its
+   * tone's SATURATED color with the tone's `-content` text, like Win8's
+   * colored tiles on the dark Start canvas.
+   */
+  const TONE_CLASSES: Record<TileTone, string> = {
+    primary: "bg-primary text-primary-content border-primary",
+    secondary: "bg-secondary text-secondary-content border-secondary",
+    accent: "bg-accent text-accent-content border-accent",
+    info: "bg-info text-info-content border-info",
+    success: "bg-success text-success-content border-success",
+    warning: "bg-warning text-warning-content border-warning",
+  };
 
   let {
     geometry,
@@ -222,7 +238,7 @@
     class="h-full overscroll-contain"
     class:overflow-x-auto={geometry.mode === "wide"}
     class:overflow-y-auto={geometry.mode === "tall"}
-    style={`scroll-snap-type: ${geometry.mode === "wide" ? "x" : "y"} proximity;`}
+    style={`padding: ${geometry.margin}px; scroll-snap-type: ${geometry.mode === "wide" ? "x" : "y"} proximity;`}
     onscroll={updateScroll}
     onwheel={handleWheel}
   >
@@ -233,12 +249,12 @@
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
           <div
             data-tile-id={placement.id}
-            class={`flex select-none flex-col overflow-hidden rounded-box border transition-colors ${
-              selectedId === placement.id ? "border-primary/50 ring-2 ring-primary" : ""
+            class={`flex select-none flex-col overflow-hidden rounded-box border shadow-md transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-xl ${
+              TONE_CLASSES[tileTone(placement.id)]
             } ${
-              ws.starred
-                ? "border-primary/40 bg-primary/20"
-                : "border-base-content/10 bg-base-200"
+              selectedId === placement.id
+                ? "ring-4 ring-base-content/80 ring-offset-2 ring-offset-base-100"
+                : "border-transparent"
             } ${phase.kind === "dragging" && phase.id === placement.id ? "opacity-40" : ""}`}
             style={`${wrapperStyle(placement)} scroll-snap-align: start;`}
             role="button"
@@ -277,17 +293,22 @@
   </div>
 
   {#if canPan}
-    <!-- Pan arrow + thin scroll-position indicator (wide geometry only). -->
+    <!-- Pan arrow + thin scroll-position indicator (wide geometry only).
+         Both sit INSIDE the canvas' outer margin. -->
     <button
       type="button"
-      class="btn btn-circle btn-sm absolute right-3 bottom-3 z-10 border-base-content/20 bg-base-100/80 shadow-lg"
+      class="btn btn-circle absolute z-10 border-none bg-base-100 text-base-content shadow-xl"
+      style={`right: ${Math.max(12, geometry.margin / 2)}px; bottom: ${Math.max(12, geometry.margin / 2)}px;`}
       aria-label="Pan right"
       title="Pan one screen sideways"
       onclick={pan}
     >
       →
     </button>
-    <div class="absolute inset-x-0 bottom-0 z-10 h-0.5 bg-base-content/10">
+    <div
+      class="absolute right-0 bottom-0 left-0 z-10 h-0.5 bg-base-content/10"
+      style={`margin: 0 ${geometry.margin}px;`}
+    >
       <div
         class="h-full bg-primary transition-[width] duration-100"
         style={`width: ${Math.round(scrollProgress * 100)}%;`}
@@ -299,7 +320,7 @@
 {#if phase.kind === "dragging"}
   <!-- The drag ghost follows the pointer (transient; never a data change). -->
   <div
-    class="pointer-events-none fixed z-50 rounded-box border border-primary bg-primary/30 px-3 py-2 text-sm font-bold shadow-2xl"
+    class="pointer-events-none fixed z-50 rounded-box border border-base-content/25 bg-base-100/95 px-3 py-2 text-sm font-bold shadow-2xl"
     style={`left: ${phase.x + 10}px; top: ${phase.y + 10}px;`}
   >
     {workspacesById.get(phase.id)?.title ?? phase.id}

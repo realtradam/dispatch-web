@@ -6,6 +6,40 @@ import type { WorkspaceEntry } from "@dispatch/wire";
 import type { Route } from "./route";
 
 /**
+ * A home tile's color tone. Windows 8's Start screen gave every tile its own
+ * saturated color; here the tile's workspace id DETERMINISTICALLY picks one of
+ * the theme's six semantic tones, so the same workspace keeps its color across
+ * sessions and themes (the tone name maps to a DaisyUI color, which adapts to
+ * the active theme). Starred stays a separate visual concern (a badge), NOT a
+ * tone — any tile may be starred regardless of its color.
+ */
+export type TileTone = "primary" | "secondary" | "accent" | "info" | "success" | "warning";
+
+/** The tones a tile may take, in hash order. */
+const TILE_TONES: readonly TileTone[] = [
+  "primary",
+  "secondary",
+  "accent",
+  "info",
+  "success",
+  "warning",
+];
+
+/**
+ * Map a workspace id to its tile tone. Deterministic (FNV-1a hash of the id)
+ * and uniformly distributed across the six tones — pure: id in, tone out.
+ */
+export function tileTone(id: string): TileTone {
+  let hash = 0x811c9dc5;
+  for (let index = 0; index < id.length; index++) {
+    hash ^= id.charCodeAt(index);
+    // FNV prime (16777619), kept in 32-bit unsigned range.
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return TILE_TONES[hash % TILE_TONES.length] ?? "primary";
+}
+
+/**
  * The browser tab / page (`document.title`) text for a route. The home route
  * (`/`) is "Dispatch"; a workspace route (`/<id>`) is "Dispatch: {title}",
  * using the workspace's display title and falling back to the URL slug (`id`)

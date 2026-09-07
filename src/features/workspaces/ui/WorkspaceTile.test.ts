@@ -48,8 +48,21 @@ describe("WorkspaceTile", () => {
     });
     expect(screen.getByText("My Workspace")).toBeInTheDocument();
     expect(screen.getByText("/my-ws")).toBeInTheDocument();
-    expect(screen.getByText(/3 conversations/)).toBeInTheDocument();
+    // A 1×1 tile is tight: the count compacts to "conv." (wide tiles spell it out).
+    expect(screen.getByText(/3 conv\./)).toBeInTheDocument();
     expect(screen.getByText("1m")).toBeInTheDocument();
+  });
+
+  it("spells out 'conversations' on a wide tile", () => {
+    render(WorkspaceTile, {
+      props: {
+        ws: fakeEntry(),
+        store: fakeStore(),
+        placement: fakePlacement({ colSpan: 2, rowSpan: 1 }),
+        onRenameEnd: () => {},
+      },
+    });
+    expect(screen.getByText(/3 conversations/)).toBeInTheDocument();
   });
 
   it("shows the active indicator only when the active port says so", async () => {

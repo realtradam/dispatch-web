@@ -52,6 +52,44 @@ describe("geometryFor", () => {
   it("resolves degenerate (unmeasured) sizes to wide", () => {
     expect(geometryFor(0, 0).mode).toBe("wide");
   });
+
+  it("derives the wide unit from the canvas height so the 4 rows fill it", () => {
+    // 4·unit + 3·gap + 2·margin ≈ height: an 800px canvas gets ~160px tiles,
+    // NOT the old fixed 120px (the "squares are so small" complaint).
+    const geometry = geometryFor(1440, 800);
+    const filled = 4 * geometry.unit.height + 3 * geometry.unit.gap + 2 * geometry.margin;
+    expect(geometry.unit.height).toBeGreaterThanOrEqual(140);
+    expect(Math.abs(filled - 800)).toBeLessThanOrEqual(8);
+    expect(geometry.unit.width).toBe(geometry.unit.height);
+  });
+
+  it("clamps the wide unit to its band on very short and very tall canvases", () => {
+    const short = geometryFor(1200, 300);
+    const huge = geometryFor(5000, 4000); // wide (width ≥ height) with a huge height
+    expect(short.unit.height).toBe(112);
+    expect(huge.unit.height).toBe(184);
+    // The margin never collapses (the "no margins" complaint) nor dominates.
+    expect(short.margin).toBeGreaterThanOrEqual(24);
+    expect(huge.margin).toBeLessThanOrEqual(64);
+  });
+
+  it("always carries a positive margin (the tile field never hugs the edge)", () => {
+    const sizes: [number, number][] = [
+      [1920, 1080],
+      [390, 844],
+      [0, 0],
+      [1200, 300],
+    ];
+    for (const [w, h] of sizes) {
+      expect(geometryFor(w, h).margin).toBeGreaterThan(0);
+    }
+  });
+
+  it("keeps the tall unit fixed with a gap (its columns are fluid)", () => {
+    expect(TALL.unit.width).toBe(0);
+    expect(TALL.unit.height).toBeGreaterThanOrEqual(120);
+    expect(TALL.unit.gap).toBeGreaterThan(8);
+  });
 });
 
 describe("clampSpan", () => {
@@ -429,12 +467,15 @@ describe("geometry-agnostic persistence", () => {
 
 describe("type surface", () => {
   it("exposes the geometry fields the picker and grid need", () => {
+    // A 500px-tall canvas: the raw unit (100) clamps UP to the 112px minimum,
+    // so the gap is 12px and the margin 37px (never the old fixed 8px gap).
     const geometry: GridGeometry = geometryFor(1000, 500);
-    expect([geometry.mode, geometry.flowRows, geometry.flowCols, geometry.unit.gap]).toEqual([
-      "wide",
-      4,
-      0,
-      8,
-    ]);
+    expect([
+      geometry.mode,
+      geometry.flowRows,
+      geometry.flowCols,
+      geometry.unit.gap,
+      geometry.margin,
+    ]).toEqual(["wide", 4, 0, 12, 37]);
   });
 });

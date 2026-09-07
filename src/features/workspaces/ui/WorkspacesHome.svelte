@@ -248,14 +248,18 @@
 
   <div bind:this={regionEl} class="min-h-0 w-full flex-1">
     {#if store.loading && store.list.length === 0}
-      <div class="flex h-32 items-center justify-center">
-        <span class="loading loading-spinner loading-sm opacity-60"></span>
+      <div class="flex h-full items-center justify-center">
+        <span class="loading loading-spinner loading-lg opacity-60"></span>
       </div>
     {:else if store.list.length === 0}
-      <p class="py-8 text-center text-sm opacity-60">
-        No workspaces yet. Create one with <strong>New workspace</strong> above, or visit
-        <code>/your-name</code> in the URL.
-      </p>
+      <div class="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+        <p class="text-2xl font-black tracking-tight opacity-80">No workspaces yet</p>
+        <p class="max-w-md text-sm opacity-60">
+          Create one with <strong>New workspace</strong> above, or visit
+          <code class="rounded bg-base-200 px-1.5 py-0.5">/your-name</code> in the URL — the first
+          tile drops onto the canvas ready to rename.
+        </p>
+      </div>
     {:else}
       <HomeTileGrid
         {geometry}

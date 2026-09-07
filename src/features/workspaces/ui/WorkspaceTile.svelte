@@ -63,14 +63,53 @@
 
   // The face's semantic key (tests read it).
   const faceKey = $derived(`tile-${placement.id}`);
+
+  // Span-aware face: bigger footprints get more air + bigger type (all styles
+  // static so Tailwind sees them).
+  const wide = $derived(placement.colSpan > 1);
+  const tall = $derived(placement.rowSpan > 1);
+  const facePadding = $derived(wide || tall ? "p-5" : "p-4");
+  const titleClass = $derived(
+    wide && tall
+      ? "text-3xl leading-tight line-clamp-3"
+      : wide
+        ? "text-2xl leading-snug line-clamp-2"
+        : tall
+          ? "text-xl leading-snug line-clamp-4"
+          : "text-lg leading-snug line-clamp-3",
+  );
+  /** 1×1 tiles are tight: "20 conv." — wider tiles spell "conversations" out. */
+  const countLabel = $derived(
+    ws.conversationCount === 1 ? (wide ? "conversation" : "conv.") : wide ? "conversations" : "conv.",
+  );
 </script>
 
-<div data-tile-face={faceKey} class="flex h-full w-full flex-col gap-1 p-3">
+<div data-tile-face={faceKey} class={`relative flex h-full w-full flex-col ${facePadding}`}>
+  <!-- The slug label at the very top — the Win8 tile's small "app" caption. -->
+  <div class="flex items-center gap-1.5 text-[11px] font-semibold tracking-wider uppercase">
+    <span class="truncate opacity-70">/{ws.id}</span>
+    {#if active}
+      <span
+        class="loading loading-dots loading-xs shrink-0"
+        aria-label="Workspace has active conversations"
+        title="A conversation in this workspace is generating"></span>
+    {/if}
+  </div>
+
+  {#if ws.starred}
+    <!-- Starred is a badge, not a tint — the tone stays the tile's identity. -->
+    <span
+      class="absolute top-2.5 right-3 text-lg leading-none opacity-90"
+      aria-label="Starred workspace"
+      title="Starred — priority in the agent queue">★</span
+    >
+  {/if}
+
   {#if editing}
     <input
       bind:this={titleInput}
       bind:value={titleDraft}
-      class="input input-bordered input-sm"
+      class="input input-sm mt-2 w-full border-current/40 bg-black/25 text-inherit placeholder:text-current/50"
       aria-label="Workspace title"
       onkeydown={(e) => {
         if (e.key === "Enter") void saveTitle();
@@ -81,29 +120,30 @@
   {:else}
     <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
     <span
-      class="line-clamp-2 cursor-default text-lg leading-tight font-bold"
+      class={`mt-1 cursor-default font-bold ${titleClass}`}
       title="Double-click to rename"
       ondblclick={startEdit}>{ws.title}</span
     >
   {/if}
 
-  <span class="font-mono text-xs opacity-50">/{ws.id}</span>
-
   {#if titleError}
-    <p class="text-xs text-error">{titleError}</p>
+    <p class="mt-1 text-xs font-semibold">{titleError}</p>
   {/if}
 
-  <div class="mt-auto flex items-center gap-2 text-xs opacity-80">
-    {#if active}
-      <span
-        class="loading loading-dots loading-xs shrink-0 text-primary"
-        aria-label="Workspace has active conversations"
-        title="A conversation in this workspace is generating"></span>
-    {/if}
-    <span>
-      {ws.conversationCount}
-      {ws.conversationCount === 1 ? "conversation" : "conversations"}
+  <!-- The stat line pinned to the tile's bottom edge, like a live tile's
+       status row. Single-line, truncation-safe (narrow 1×1 tiles stay clean). -->
+  <div
+    class="mt-auto flex items-center gap-2 overflow-hidden border-t border-current/20 pt-2 text-xs font-medium whitespace-nowrap"
+  >
+    <span class="flex min-w-0 items-center gap-1.5">
+      <span aria-hidden="true" class="shrink-0 opacity-70">◱</span>
+      <span class="truncate">
+        {ws.conversationCount}
+        {countLabel}
+      </span>
     </span>
-    <span class="ml-auto font-mono opacity-70">{relativeTime(ws.lastActivityAt, Date.now())}</span>
+    <span class="ml-auto shrink-0 font-mono opacity-70">
+      {relativeTime(ws.lastActivityAt, Date.now())}
+    </span>
   </div>
 </div>

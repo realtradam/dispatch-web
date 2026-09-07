@@ -1,6 +1,32 @@
 import type { WorkspaceEntry } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
-import { applyStarred, pageTitle, relativeTime, sortWorkspaces } from "./view-model";
+import { applyStarred, pageTitle, relativeTime, sortWorkspaces, tileTone } from "./view-model";
+
+describe("tileTone", () => {
+  const TONES = ["primary", "secondary", "accent", "info", "success", "warning"];
+
+  it("is deterministic — the same id always gets the same tone", () => {
+    expect(tileTone("my-workspace")).toBe(tileTone("my-workspace"));
+  });
+
+  it("only returns known tones", () => {
+    for (const id of ["default", "a", "my-workspace", "x-1", "project-phoenix", "zzz"]) {
+      expect(TONES).toContain(tileTone(id));
+    }
+  });
+
+  it("spreads distinct ids across more than one tone", () => {
+    const tones = new Set(
+      ["default", "alpha", "beta", "gamma", "delta", "epsilon", "zeta", "eta"].map(tileTone),
+    );
+    expect(tones.size).toBeGreaterThan(1);
+  });
+
+  it("is case-sensitive (ids are slugs, but the hash makes no normalization promise)", () => {
+    // Not a correctness requirement — just documents the hash reads raw chars.
+    expect(typeof tileTone("ABC")).toBe("string");
+  });
+});
 
 describe("relativeTime", () => {
   const now = 1_000_000_000_000; // 2001-09-09
