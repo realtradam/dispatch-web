@@ -135,12 +135,9 @@
   <div
     class="mt-auto flex items-center gap-2 overflow-hidden border-t border-current/20 pt-2 text-xs font-medium whitespace-nowrap"
   >
-    <span class="flex min-w-0 items-center gap-1.5">
-      <span aria-hidden="true" class="shrink-0 opacity-70">◱</span>
-      <span class="truncate">
-        {ws.conversationCount}
-        {countLabel}
-      </span>
+    <span class="min-w-0 truncate">
+      {ws.conversationCount}
+      {countLabel}
     </span>
     <span class="ml-auto shrink-0 font-mono opacity-70">
       {relativeTime(ws.lastActivityAt, Date.now())}
