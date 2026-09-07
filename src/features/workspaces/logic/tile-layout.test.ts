@@ -1,18 +1,23 @@
 import { describe, expect, it } from "vitest";
 import {
   clampSpan,
+  displacePlace,
   fillOrderKey,
   firstEmptySlot,
   type GridGeometry,
   geometryFor,
-  insertAtFirstEmptySlot,
   mergeLayout,
-  moveTile,
+  type Placement,
   pack,
+  pinAtFirstEmpty,
+  placeAtCell,
   resizeTile,
   sanitizeLayout,
   sortByRecentActivity,
   type TileLayoutEntry,
+  toRenderCell,
+  toUniversalCell,
+  UNIVERSAL_ROWS,
 } from "./tile-layout";
 
 const WIDE = geometryFor(1920, 1080);
@@ -237,13 +242,13 @@ describe("firstEmptySlot", () => {
   });
 });
 
-describe("insertAtFirstEmptySlot", () => {
-  it("inserts a new tile so it packs into the first empty slot", () => {
+describe("pinAtFirstEmpty", () => {
+  it("pins a new tile at the first empty slot (holes count)", () => {
     // A double-height tile fills rows 1-2, a single fills row 3 → the first
-    // empty slot is (col1,row4); the new tile must land exactly there.
+    // empty slot is (col1,row4); the new tile PINS exactly there.
     const tiles = [tile("big", 0, 1, 2), tile("c", 1)];
-    const next = insertAtFirstEmptySlot(tiles, "new", WIDE);
-    expect(next.map((t) => t.id)).toEqual(["big", "c", "new"]);
+    const next = pinAtFirstEmpty(tiles, "new", WIDE);
+    expect(next.find((t) => t.id === "new")).toMatchObject({ col: 1, row: 4 });
     const placements = pack(next, WIDE);
     expect(placements.map((p) => [p.id, p.col, p.row])).toEqual([
       ["big", 1, 1],
@@ -252,30 +257,42 @@ describe("insertAtFirstEmptySlot", () => {
     ]);
   });
 
-  it("renumbers orders densely after the insert", () => {
-    const next = insertAtFirstEmptySlot([tile("a", 0, 1, 2), tile("b", 7)], "new", WIDE);
-    expect(next.map((t) => t.order)).toEqual([0, 1, 2]);
+  it("pins into a GAP between pinned tiles", () => {
+    // big is pinned out of the way; the flow left row 3 free for a 1×1.
+    const tiles = [
+      { ...tile("big", 0, 1, 2), col: 1, row: 1 },
+      { ...tile("z", 1), col: 1, row: 4 },
+    ];
+    const next = pinAtFirstEmpty(tiles, "new", WIDE);
+    expect(next.find((t) => t.id === "new")).toMatchObject({ col: 1, row: 3 });
   });
 
-  it("moves an already-present tile instead of duplicating (refresh-race idempotency)", () => {
+  it("re-pins an already-present tile instead of duplicating (refresh-race idempotency)", () => {
     const tiles = [tile("a", 0), tile("x", 1), tile("b", 2, 1, 2)];
-    const first = insertAtFirstEmptySlot(tiles, "x", WIDE);
-    const second = insertAtFirstEmptySlot(first, "x", WIDE);
+    const first = pinAtFirstEmpty(tiles, "x", WIDE);
+    const second = pinAtFirstEmpty(first, "x", WIDE);
     expect(second).toEqual(first);
     expect(second.filter((t) => t.id === "x")).toHaveLength(1);
   });
 
-  it("appends when the empty slot is beyond the current extent", () => {
+  it("appends (pins beyond the current extent) when the grid is full", () => {
     const tiles = [tile("a", 0), tile("b", 1), tile("c", 2), tile("d", 3)];
-    const next = insertAtFirstEmptySlot(tiles, "e", WIDE);
-    expect(next.map((t) => t.id)).toEqual(["a", "b", "c", "d", "e"]);
-    expect(pack(next, WIDE).at(-1)).toMatchObject({ id: "e", col: 2, row: 1 });
+    const next = pinAtFirstEmpty(tiles, "e", WIDE);
+    expect(next.find((t) => t.id === "e")).toMatchObject({ col: 2, row: 1 });
   });
 
-  it("preserves the spans of a moved existing tile", () => {
+  it("preserves the spans of a re-pinned existing tile", () => {
     const tiles = [tile("x", 0, 2, 2), tile("a", 1), tile("b", 2), tile("c", 3)];
-    const next = insertAtFirstEmptySlot(tiles, "x", WIDE);
+    const next = pinAtFirstEmpty(tiles, "x", WIDE);
     expect(next.find((t) => t.id === "x")).toMatchObject({ colSpan: 2, rowSpan: 2 });
+  });
+
+  it("saves the pin in the universal frame (tall)", () => {
+    const tiles = [{ ...tile("a", 0), col: 1, row: 1 }];
+    const next = pinAtFirstEmpty(tiles, "new", TALL);
+    // a renders at tall (1,1); the first empty slot is tall (2,1) → universal
+    // (col 1, row 2).
+    expect(next.find((t) => t.id === "new")).toMatchObject({ col: 1, row: 2 });
   });
 });
 
@@ -304,31 +321,203 @@ describe("resizeTile", () => {
   });
 });
 
-describe("moveTile", () => {
-  it("moves a tile forward, landing after the hovered tile", () => {
-    const next = moveTile([tile("a", 0), tile("b", 1), tile("c", 2), tile("d", 3)], "a", 2);
-    expect(next.map((t) => t.id)).toEqual(["b", "c", "a", "d"]);
+describe("displacePlace", () => {
+  /** Render placements as the column-1 stream (cells 1..n, `_` = empty,
+   *  one character per tile — the id's first char). */
+  const stream = (placements: Placement[], geometry: GridGeometry): string => {
+    const cells = new Map<number, string>();
+    for (const p of placements) {
+      for (let r = p.row; r < p.row + p.rowSpan; r++) {
+        for (let c = p.col; c < p.col + p.colSpan; c++) {
+          cells.set(fillOrderKey(c, r, geometry), p.id.charAt(0));
+        }
+      }
+    }
+    const maxKey = Math.max(0, ...cells.keys());
+    const out: string[] = [];
+    for (let key = 0; key <= maxKey; key++) {
+      out.push(cells.get(key) ?? "_");
+    }
+    return out.join("");
+  };
+
+  it("USER EXAMPLE 1: X_X + Y placed in slot 1 → YXX (the gap absorbs the shift)", () => {
+    // X at cells 1,3 (wide: (1,1) and (1,3)); Y sits at cell 5 (dragged in
+    // from outside the shown range — its origin is beyond the gap).
+    const placements: Placement[] = [
+      { id: "X", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "X2", col: 1, row: 3, colSpan: 1, rowSpan: 1 },
+      { id: "Y", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
+    ];
+    const next = displacePlace(placements, "Y", { col: 1, row: 1 }, WIDE);
+    // Y@1; X (was@1) pushed into the gap at 2; X2 (was@3) stays.
+    expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["Y", 1, 1],
+      ["X", 1, 2],
+      ["X2", 1, 3],
+    ]);
   });
 
-  it("moves a tile backward, landing before the hovered tile", () => {
-    const next = moveTile([tile("a", 0), tile("b", 1), tile("c", 2), tile("d", 3)], "d", 1);
-    expect(next.map((t) => t.id)).toEqual(["a", "d", "b", "c"]);
+  it("USER EXAMPLE 2: _XZ_ + Y placed in slot 2 → _YXZ (leading gap preserved)", () => {
+    // X@(1,2), Z@(1,3); Y dragged in from cell 5.
+    const placements: Placement[] = [
+      { id: "X", col: 1, row: 2, colSpan: 1, rowSpan: 1 },
+      { id: "Z", col: 1, row: 3, colSpan: 1, rowSpan: 1 },
+      { id: "Y", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
+    ];
+    const next = displacePlace(placements, "Y", { col: 1, row: 2 }, WIDE);
+    expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["Y", 1, 2],
+      ["X", 1, 3],
+      ["Z", 1, 4],
+    ]);
   });
 
-  it("renumbers orders densely", () => {
-    const next = moveTile([tile("a", 0), tile("b", 3), tile("c", 9)], "c", 0);
-    expect(next.map((t) => t.order)).toEqual([0, 1, 2]);
+  it("dragging a tile OUT opens a gap at its old anchor (nothing slides back)", () => {
+    const placements: Placement[] = [
+      { id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "b", col: 1, row: 2, colSpan: 1, rowSpan: 1 },
+    ];
+    // Drag a (cell 1) to cell 3 — b stays at 2; a lands at 3.
+    const next = displacePlace(placements, "a", { col: 1, row: 3 }, WIDE);
+    expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["b", 1, 2],
+      ["a", 1, 3],
+    ]);
   });
 
-  it("is a no-op for the same index or an unknown id", () => {
+  it("internal move rightward over a full run pushes the tail forward", () => {
+    // a,b,c in cells 1-3; drag a to cell 2: b→3 pushes c→4.
+    const placements: Placement[] = [
+      { id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "b", col: 1, row: 2, colSpan: 1, rowSpan: 1 },
+      { id: "c", col: 1, row: 3, colSpan: 1, rowSpan: 1 },
+    ];
+    const next = displacePlace(placements, "a", { col: 1, row: 2 }, WIDE);
+    expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["a", 1, 2],
+      ["b", 1, 3],
+      ["c", 1, 4],
+    ]);
+  });
+
+  it("an unknown dragged id changes nothing (a copy of the input)", () => {
+    const placements: Placement[] = [{ id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 }];
+    const next = displacePlace(placements, "nope", { col: 1, row: 2 }, WIDE);
+    expect(next).toEqual(placements);
+  });
+
+  it("a spanned displaced tile keeps its spans and re-anchors forward as a rect", () => {
+    // big (2-tall) at rows 1-2; tail (2-tall) at rows 3-4. Drag big to (1,2):
+    // its own old body is free-ish but (1,2)+(1,3) collides with tail's
+    // (1,3)+(1,4) → tail re-anchors FORWARD: no 2-tall slot fits in column 1
+    // anymore → column 2.
+    const placements: Placement[] = [
+      { id: "big", col: 1, row: 1, colSpan: 1, rowSpan: 2 },
+      { id: "tail", col: 1, row: 3, colSpan: 1, rowSpan: 2 },
+    ];
+    const next = displacePlace(placements, "big", { col: 1, row: 2 }, WIDE);
+    expect(next.map((p) => [p.id, p.col, p.row, p.rowSpan])).toEqual([
+      ["big", 1, 2, 2],
+      ["tail", 2, 1, 2],
+    ]);
+  });
+
+  it("displacing into the NEXT COLUMN when the column is full", () => {
+    // 4 tiles fill column 1; drag the first to the LAST cell of column 1.
+    const placements: Placement[] = [
+      { id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "b", col: 1, row: 2, colSpan: 1, rowSpan: 1 },
+      { id: "c", col: 1, row: 3, colSpan: 1, rowSpan: 1 },
+      { id: "d", col: 1, row: 4, colSpan: 1, rowSpan: 1 },
+    ];
+    const next = displacePlace(placements, "a", { col: 1, row: 4 }, WIDE);
+    // d is pushed past the column's end → column 2 row 1. Stream order:
+    // b(1) c(2) a(3) d(4).
+    expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["b", 1, 2],
+      ["c", 1, 3],
+      ["a", 1, 4],
+      ["d", 2, 1],
+    ]);
+  });
+
+  it("works in TALL mode along the row-major stream", () => {
+    // Tall: 2 columns, row-major. a@(1,1), b@(2,1); drag a to cell (2,1).
+    const placements: Placement[] = [
+      { id: "a", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "b", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
+    ];
+    const next = displacePlace(placements, "a", { col: 2, row: 1 }, TALL);
+    // b pushed forward past the row's end → next row. Stream order: a(1) b(2).
+    expect(next.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["a", 2, 1],
+      ["b", 1, 2],
+    ]);
+  });
+
+  it("the stream helper renders the documented examples (sanity)", () => {
+    const placements: Placement[] = [
+      { id: "X", col: 1, row: 1, colSpan: 1, rowSpan: 1 },
+      { id: "X2", col: 1, row: 3, colSpan: 1, rowSpan: 1 },
+      { id: "Y", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
+    ];
+    const next = displacePlace(placements, "Y", { col: 1, row: 1 }, WIDE);
+    expect(stream(next, WIDE)).toBe("YXX");
+    const placements2: Placement[] = [
+      { id: "X", col: 1, row: 2, colSpan: 1, rowSpan: 1 },
+      { id: "Z", col: 1, row: 3, colSpan: 1, rowSpan: 1 },
+      { id: "Y", col: 2, row: 1, colSpan: 1, rowSpan: 1 },
+    ];
+    const next2 = displacePlace(placements2, "Y", { col: 1, row: 2 }, WIDE);
+    expect(stream(next2, WIDE)).toBe("_YXZ");
+  });
+});
+
+describe("placeAtCell", () => {
+  it("pins every tile at its displaced anchor in the universal frame", () => {
+    // Wide: a@(1,1), b@(1,2); drag a to (2,1) — a pins there, b KEEPS its
+    // cell (the gap at (1,1) opens and stays).
     const tiles = [tile("a", 0), tile("b", 1)];
-    expect(moveTile(tiles, "a", 0)).toEqual(tiles);
-    expect(moveTile(tiles, "x", 1)).toEqual(tiles);
+    const next = placeAtCell(tiles, "a", { col: 2, row: 1 }, WIDE);
+    expect(next.find((t) => t.id === "a")).toMatchObject({ col: 2, row: 1 });
+    expect(next.find((t) => t.id === "b")).toMatchObject({ col: 1, row: 2 });
+    // And the pinned layout packs exactly as placed (b first — stream order).
+    expect(pack(next, WIDE).map((p) => [p.id, p.col, p.row])).toEqual([
+      ["b", 1, 2],
+      ["a", 2, 1],
+    ]);
   });
 
-  it("clamps out-of-range indices", () => {
-    const next = moveTile([tile("a", 0), tile("b", 1)], "a", 99);
-    expect(next.map((t) => t.id)).toEqual(["b", "a"]);
+  it("keeps persisted spans raw (never clamped) through the commit", () => {
+    // A 4-wide desktop tile dropped in TALL commits the tall cell but keeps
+    // its raw 4-wide span.
+    const tiles = [{ ...tile("big", 0, 4, 1) }, tile("b", 1)];
+    const next = placeAtCell(tiles, "big", { col: 1, row: 3 }, TALL);
+    expect(next.find((t) => t.id === "big")).toMatchObject({
+      colSpan: 4,
+      rowSpan: 1,
+      col: 1,
+      row: 5,
+    });
+  });
+
+  it("renumbers orders densely in stream order", () => {
+    const tiles = [tile("a", 0), tile("b", 5), tile("c", 9)];
+    const next = placeAtCell(tiles, "c", { col: 1, row: 1 }, WIDE);
+    expect(next.every((t, i) => t.order === i)).toBe(true);
+  });
+
+  it("maps tall commits to the universal frame", () => {
+    // Tall (col 2, row 1) → universal (col 1, row 2).
+    const tiles = [tile("a", 0)];
+    const next = placeAtCell(tiles, "a", { col: 2, row: 1 }, TALL);
+    expect(next.find((t) => t.id === "a")).toMatchObject({ col: 1, row: 2 });
+  });
+
+  it("an unknown id changes nothing (no-op)", () => {
+    const tiles = [tile("a", 0)];
+    expect(placeAtCell(tiles, "nope", { col: 1, row: 1 }, WIDE)).toEqual(tiles);
   });
 });
 
@@ -353,6 +542,26 @@ describe("sortByRecentActivity", () => {
     expect(next.map((t) => [t.id, t.order])).toEqual([
       ["a", 0],
       ["b", 1],
+    ]);
+  });
+
+  it("CLEARs every pin (an explicit arrangement reset — gaps gone)", () => {
+    const tiles: TileLayoutEntry[] = [
+      { ...tile("a", 0), col: 1, row: 1 },
+      { ...tile("b", 1), col: 2, row: 3 },
+    ];
+    const next = sortByRecentActivity(
+      tiles,
+      new Map([
+        ["a", 100],
+        ["b", 300],
+      ]),
+    );
+    expect(next.every((t) => t.col === undefined && t.row === undefined)).toBe(true);
+    // And the now-unpinned layout packs compactly.
+    expect(pack(next, WIDE).map((p) => [p.id, p.col, p.row])).toEqual([
+      ["b", 1, 1],
+      ["a", 1, 2],
     ]);
   });
 });
@@ -411,20 +620,32 @@ describe("mergeLayout", () => {
 });
 
 describe("sanitizeLayout", () => {
-  it("accepts a valid document", () => {
+  it("accepts a valid v2 document (anchors kept)", () => {
+    expect(
+      sanitizeLayout({
+        version: 2,
+        tiles: [{ id: "a", colSpan: 2, rowSpan: 1, order: 0, col: 3, row: 2 }],
+      }),
+    ).toEqual({
+      version: 2,
+      tiles: [{ id: "a", colSpan: 2, rowSpan: 1, order: 0, col: 3, row: 2 }],
+    });
+  });
+
+  it("MIGRATES a v1 document to v2 in memory (all tiles unpinned)", () => {
     expect(
       sanitizeLayout({ version: 1, tiles: [{ id: "a", colSpan: 2, rowSpan: 1, order: 0 }] }),
     ).toEqual({
-      version: 1,
+      version: 2,
       tiles: [{ id: "a", colSpan: 2, rowSpan: 1, order: 0 }],
     });
   });
 
   it("rejects foreign versions and malformed documents", () => {
-    expect(sanitizeLayout(null)).toEqual({ version: 1, tiles: [] });
-    expect(sanitizeLayout("nope")).toEqual({ version: 1, tiles: [] });
-    expect(sanitizeLayout({ version: 2, tiles: [] })).toEqual({ version: 1, tiles: [] });
-    expect(sanitizeLayout({ version: 1, tiles: "x" })).toEqual({ version: 1, tiles: [] });
+    expect(sanitizeLayout(null)).toEqual({ version: 2, tiles: [] });
+    expect(sanitizeLayout("nope")).toEqual({ version: 2, tiles: [] });
+    expect(sanitizeLayout({ version: 3, tiles: [] })).toEqual({ version: 2, tiles: [] });
+    expect(sanitizeLayout({ version: 1, tiles: "x" })).toEqual({ version: 2, tiles: [] });
   });
 
   it("coerces malformed entries and drops anonymous/duplicate ones", () => {
@@ -443,10 +664,30 @@ describe("sanitizeLayout", () => {
       { id: "b", colSpan: 3, rowSpan: 1, order: 2 },
     ]);
   });
+
+  it("drops garbage anchors (non-positive / fractional / half a pair)", () => {
+    const data = sanitizeLayout({
+      version: 2,
+      tiles: [
+        { id: "ok", colSpan: 1, rowSpan: 1, order: 0, col: 2, row: 3 },
+        { id: "frac", colSpan: 1, rowSpan: 1, order: 1, col: 2.5, row: 3 },
+        { id: "zero", colSpan: 1, rowSpan: 1, order: 2, col: 0, row: 1 },
+        { id: "lone", colSpan: 1, rowSpan: 1, order: 3, col: 2 },
+        { id: "neg", colSpan: 1, rowSpan: 1, order: 4, col: -1, row: -1 },
+      ],
+    });
+    expect(data.tiles).toEqual([
+      { id: "ok", colSpan: 1, rowSpan: 1, order: 0, col: 2, row: 3 },
+      { id: "frac", colSpan: 1, rowSpan: 1, order: 1, col: 2, row: 3 },
+      { id: "zero", colSpan: 1, rowSpan: 1, order: 2 },
+      { id: "lone", colSpan: 1, rowSpan: 1, order: 3 },
+      { id: "neg", colSpan: 1, rowSpan: 1, order: 4 },
+    ]);
+  });
 });
 
 describe("geometry-agnostic persistence", () => {
-  it("the SAME persisted data renders in either geometry (positions re-derived, never stored)", () => {
+  it("the SAME persisted data renders in either geometry (unpinned flow re-derives)", () => {
     const tiles: TileLayoutEntry[] = [
       tile("a", 0, 4, 2),
       tile("b", 1),
@@ -460,8 +701,109 @@ describe("geometry-agnostic persistence", () => {
     expect(widePlacements[0]).toMatchObject({ id: "a", col: 1, row: 1, colSpan: 4, rowSpan: 2 });
     expect(widePlacements.at(-1)).toMatchObject({ id: "e" });
     expect(tallPlacements[0]).toMatchObject({ id: "a", col: 1, row: 1, colSpan: 2, rowSpan: 2 });
-    // The document carries NO orientation/position field — only id/spans/order.
+    // An unpinned entry carries NO anchor — only id/spans/order.
     expect(Object.keys(tiles[0] ?? {}).sort()).toEqual(["colSpan", "id", "order", "rowSpan"]);
+  });
+});
+
+describe("pinned pack (v2)", () => {
+  it("pinned tiles land at their anchors; unpinned flow into the remaining free cells", () => {
+    const tiles: TileLayoutEntry[] = [
+      { ...tile("a", 0), col: 1, row: 3 },
+      { ...tile("b", 1), col: 1, row: 1 },
+      tile("c", 2), // unpinned → first free = (1,2)
+      tile("d", 3), // unpinned → next free = (1,4)
+    ];
+    // pack returns ENTRY order (a, b, c, d); positions are what matters.
+    const placements = pack(tiles, WIDE);
+    expect(placements.map((p) => [p.id, p.col, p.row])).toEqual([
+      ["a", 1, 3],
+      ["b", 1, 1],
+      ["c", 1, 2],
+      ["d", 1, 4],
+    ]);
+  });
+
+  it("keeps the GAP between two pins (flow does not compact it away)", () => {
+    const tiles: TileLayoutEntry[] = [
+      { ...tile("a", 0), col: 1, row: 1 },
+      { ...tile("z", 1), col: 1, row: 4 },
+    ];
+    expect(pack(tiles, WIDE).map((p) => [p.id, p.row])).toEqual([
+      ["a", 1],
+      ["z", 4],
+    ]);
+  });
+
+  it("a pin whose span no longer fits its anchor reads as UNPINNED (flows)", () => {
+    // A 2-tall tile pinned at row 4 cannot fit the 4-row cross-axis at that
+    // anchor → it flows to the first fitting slot instead: (1,2).
+    const tiles: TileLayoutEntry[] = [
+      { ...tile("big", 0, 1, 2), col: 1, row: 4 },
+      { ...tile("a", 1), col: 1, row: 1 },
+    ];
+    const placements = pack(tiles, WIDE);
+    expect(placements.find((p) => p.id === "big")).toMatchObject({ col: 1, row: 2 });
+  });
+
+  it("overlapping pins resolve first-wins by entry order (the loser flows)", () => {
+    const tiles: TileLayoutEntry[] = [
+      { ...tile("a", 0), col: 1, row: 2 },
+      { ...tile("b", 1), col: 1, row: 2 },
+    ];
+    const placements = pack(tiles, WIDE);
+    expect(placements.find((p) => p.id === "a")).toMatchObject({ col: 1, row: 2 });
+    expect(placements.find((p) => p.id === "b")).toMatchObject({ col: 1, row: 1 });
+  });
+
+  it("a wide pin at col > 1 reads as UNPINNED in tall (documented lossy case)", () => {
+    const tiles: TileLayoutEntry[] = [{ ...tile("a", 0), col: 3, row: 1 }];
+    expect(pack(tiles, TALL).find((p) => p.id === "a")).toMatchObject({ col: 1, row: 1 });
+  });
+
+  it("tall pins map through the universal frame in both directions", () => {
+    // Universal column 1 folds onto tall's 2 columns in reading order:
+    // u1→(1,1) u2→(2,1) u3→(1,2) u4→(2,2).
+    expect(toRenderCell({ col: 1, row: 1 }, TALL)).toEqual({ col: 1, row: 1 });
+    expect(toRenderCell({ col: 1, row: 2 }, TALL)).toEqual({ col: 2, row: 1 });
+    expect(toRenderCell({ col: 1, row: 3 }, TALL)).toEqual({ col: 1, row: 2 });
+    expect(toRenderCell({ col: 1, row: 4 }, TALL)).toEqual({ col: 2, row: 2 });
+    expect(toUniversalCell({ col: 2, row: 2 }, TALL)).toEqual({ col: 1, row: 4 });
+    // Wide is the identity.
+    expect(toRenderCell({ col: 2, row: 2 }, WIDE)).toEqual({ col: 2, row: 2 });
+    expect(toUniversalCell({ col: 2, row: 2 }, WIDE)).toEqual({ col: 2, row: 2 });
+    expect(UNIVERSAL_ROWS).toBe(4);
+  });
+
+  it("a layout dragged in TALL renders its pins when back in WIDE", () => {
+    // Committed in tall: a at tall (1,1) → universal (1,1); b at tall (2,1) →
+    // universal (1,2). Back in wide they render exactly there (col 1).
+    const tiles: TileLayoutEntry[] = [
+      { ...tile("a", 0), col: 1, row: 1 },
+      { ...tile("b", 1), col: 1, row: 2 },
+    ];
+    expect(pack(tiles, WIDE).map((p) => [p.id, p.col, p.row])).toEqual([
+      ["a", 1, 1],
+      ["b", 1, 2],
+    ]);
+  });
+
+  it("deleting a workspace leaves its cells EMPTY (mergeLayout keeps other pins)", () => {
+    const persisted = {
+      version: 2 as const,
+      tiles: [
+        { ...tile("a", 0), col: 1, row: 1 },
+        { ...tile("gone", 1), col: 1, row: 2 },
+        { ...tile("b", 2), col: 1, row: 3 },
+      ] as TileLayoutEntry[],
+    };
+    const merged = mergeLayout(persisted, ["a", "b"]);
+    expect(merged.map((t) => [t.id, t.col, t.row])).toEqual([
+      ["a", 1, 1],
+      ["b", 1, 3],
+    ]);
+    // The gap at (1,2) stays: a new workspace flows/pins INTO it.
+    expect(firstEmptySlot(merged, { colSpan: 1, rowSpan: 1 }, WIDE)).toEqual({ col: 1, row: 2 });
   });
 });
 

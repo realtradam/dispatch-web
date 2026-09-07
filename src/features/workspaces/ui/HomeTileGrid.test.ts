@@ -41,7 +41,7 @@ function baseProps() {
     store: fakeStore(),
     onOpen: vi.fn(),
     onSelect: vi.fn(),
-    onReorder: vi.fn(),
+    onPlace: vi.fn(),
     onRenameEnd: vi.fn(),
   };
 }
@@ -98,30 +98,49 @@ describe("HomeTileGrid", () => {
     expect(props.onOpen).not.toHaveBeenCalled();
   });
 
-  it("dragging shows the transient ghost, and dropping reorders (when over a target)", async () => {
+  it("dragging shows the ghost + follow transform, and dropping PLACES at the hovered cell", async () => {
     const props = baseProps();
     const { container } = render(HomeTileGrid, {
       props: { ...props, placements: [placement("a", 1, 1), placement("b", 2, 1)] },
     });
 
     const wrapper = screen.getByRole("button", { name: "Open workspace Workspace A" });
-    // jsdom has no elementFromPoint hit-testing → targetIndex stays -1 (no-op),
-    // but the GHOST must appear while dragging and disappear on drop.
-    Object.defineProperty(document, "elementFromPoint", {
-      configurable: true,
-      value: () => null,
-    });
+    // The cell math resolves against the grid element's rect (jsdom: 0s).
     fireEvent.pointerDown(wrapper, { button: 0, clientX: 10, clientY: 10, pointerType: "mouse" });
     fireEvent.pointerMove(wrapper, { clientX: 80, clientY: 40 });
 
-    expect(container.querySelector(".pointer-events-none.fixed")).not.toBeNull();
+    // The dashed landing ghost appears…
+    const ghost = container.querySelector("[aria-hidden='true'].border-dashed");
+    expect(ghost).not.toBeNull();
+    // …and the dragged tile itself follows the pointer (transform on the tile).
+    const tile = container.querySelector("[data-tile-id='a']");
+    expect(tile?.getAttribute("style")).toContain("translate(");
 
     fireEvent.pointerUp(wrapper);
-    expect(container.querySelector(".pointer-events-none.fixed")).toBeNull();
-    // No hit target → no reorder call.
-    expect(props.onReorder).not.toHaveBeenCalled();
+    // The ghost + follow disappear on drop…
+    expect(container.querySelector("[aria-hidden='true'].border-dashed")).toBeNull();
+    // …and the drop committed a PLACE at the hovered cell (a lands where it
+    // already was — the pointer hovered its own slot; a no-move drop).
+    expect(props.onPlace).toHaveBeenCalledWith("a", { col: 1, row: 1 });
     // And no navigation either (a drag is not a tap).
     expect(props.onOpen).not.toHaveBeenCalled();
+  });
+
+  it("Escape mid-drag CANCELS: no place commits and the tile un-lifts", async () => {
+    const props = baseProps();
+    const { container } = render(HomeTileGrid, {
+      props: { ...props, placements: [placement("a", 1, 1)] },
+    });
+
+    const wrapper = screen.getByRole("button", { name: "Open workspace Workspace A" });
+    fireEvent.pointerDown(wrapper, { button: 0, clientX: 10, clientY: 10, pointerType: "mouse" });
+    fireEvent.pointerMove(wrapper, { clientX: 80, clientY: 40 });
+
+    fireEvent.keyDown(window, { key: "Escape" });
+
+    expect(props.onPlace).not.toHaveBeenCalled();
+    // The drag visuals are gone (the tile is no longer lifted).
+    expect(container.querySelector("[aria-hidden='true'].border-dashed")).toBeNull();
   });
 
   it("a touch long-press lifts the tile and selects it (never opens)", async () => {

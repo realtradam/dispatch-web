@@ -1,9 +1,10 @@
 import type { LocalStore } from "../../adapters/local-storage";
 import {
+  type Cell,
   type GridGeometry,
-  insertAtFirstEmptySlot,
   mergeLayout,
-  moveTile,
+  pinAtFirstEmpty,
+  placeAtCell,
   resizeTile,
   sanitizeLayout,
   sortByRecentActivity,
@@ -12,41 +13,43 @@ import {
 } from "./logic/tile-layout";
 
 /**
- * The localStorage key for the home tile layout (order + spans only — never
- * positions; positions re-derive from the geometry on every render).
+ * The localStorage key for the home tile layout (spans + optional pinned
+ * anchors in the universal 4-row frame — v2 documents; v1 loads migrate).
  */
 export const TILE_LAYOUT_STORAGE_KEY = "dispatch.workspaces.tiles";
 
 /**
- * Tile-layout store — a thin reactive wrapper over the persisted
- * orientation-independent layout document, persisted through the INJECTED
- * `LocalStore` adapter (the repo's local-storage effect). All mutations go
- * through the pure `logic/tile-layout` ops and write through to persistence.
- * No ambient state: one instance per home page, created by the page entry
- * (or injected in tests).
+ * Tile-layout store — a thin reactive wrapper over the persisted tile layout
+ * document, persisted through the INJECTED `LocalStore` adapter (the repo's
+ * local-storage effect). All mutations go through the pure `logic/tile-layout`
+ * ops and write through to persistence. No ambient state: one instance per
+ * home page, created by the page entry (or injected in tests).
  */
 export interface TileLayoutStore {
-  /** The persisted entries, order-sorted (raw spans — NOT geometry-clamped). */
+  /** The persisted entries, order-sorted (raw spans + universal-frame anchors). */
   readonly entries: readonly TileLayoutEntry[];
   /**
    * Merge the live workspace ids into the layout: workspaces unknown to the
-   * layout append at the end, entries for deleted workspaces drop. A no-op
-   * (no write) when the merge changes nothing — so an effect that tracks both
-   * the workspace list and this store settles instead of looping.
+   * layout append (unpinned — they flow to the first free cells), entries for
+   * deleted workspaces drop (their cells become gaps). A no-op (no write) when
+   * the merge changes nothing — so an effect that tracks both the workspace
+   * list and this store settles instead of looping.
    */
   sync(workspaceIds: readonly string[]): void;
   /** Resize a tile (persisted spans; render-time clamping is separate). */
   resize(id: string, colSpan: number, rowSpan: number): void;
-  /** Move a tile to a position in the manual order (drag reorder). */
-  move(id: string, toIndex: number): void;
   /**
-   * Place (or move an already-present) tile into the FIRST EMPTY SLOT in the
-   * grid's fill order — the header-create flow. Idempotent (see
-   * `insertAtFirstEmptySlot`), closing the refresh race where `sync` appended
-   * the id first.
+   * Drop a tile at a specific CELL (the drag commit): the contiguous filled
+   * run pushes forward from that cell (gaps absorb it), every resulting
+   * position pins. See `placeAtCell`.
+   */
+  placeAtCell(id: string, cell: Cell, geometry: GridGeometry): void;
+  /**
+   * Pin (or re-pin) the tile at the FIRST EMPTY slot — the header-create
+   * flow. Idempotent (see `pinAtFirstEmpty`).
    */
   placeFirstEmpty(id: string, geometry: GridGeometry): void;
-  /** Re-apply the recent-activity order (the header overflow "Sort" action). */
+  /** Re-apply the recent-activity order AND clear all pins (the reset). */
   sortByRecentActivity(lastActivityById: ReadonlyMap<string, number>): void;
 }
 
@@ -55,7 +58,9 @@ export function createTileLayoutStore(persistence: LocalStore<TileLayoutData>): 
   let data = $state<TileLayoutData>(sanitizeLayout(persistence.load()));
 
   function commit(tiles: readonly TileLayoutEntry[]): void {
-    data = { version: 1, tiles };
+    // A pure op that changed nothing (e.g. a no-op place) doesn't write.
+    if (sameEntries(tiles, data.tiles)) return;
+    data = { version: 2, tiles };
     persistence.save(data);
   }
 
@@ -73,12 +78,12 @@ export function createTileLayoutStore(persistence: LocalStore<TileLayoutData>): 
       commit(resizeTile(data.tiles, id, colSpan, rowSpan));
     },
 
-    move(id, toIndex): void {
-      commit(moveTile(data.tiles, id, toIndex));
+    placeAtCell(id, cell, geometry): void {
+      commit(placeAtCell(data.tiles, id, cell, geometry));
     },
 
     placeFirstEmpty(id, geometry): void {
-      commit(insertAtFirstEmptySlot(data.tiles, id, geometry));
+      commit(pinAtFirstEmpty(data.tiles, id, geometry));
     },
 
     sortByRecentActivity(lastActivityById): void {
@@ -87,7 +92,7 @@ export function createTileLayoutStore(persistence: LocalStore<TileLayoutData>): 
   };
 }
 
-/** Structural equality over entries (ids, spans, orders). */
+/** Structural equality over entries (ids, spans, orders, anchors). */
 function sameEntries(a: readonly TileLayoutEntry[], b: readonly TileLayoutEntry[]): boolean {
   if (a.length !== b.length) return false;
   return a.every((entry, index) => {
@@ -97,7 +102,9 @@ function sameEntries(a: readonly TileLayoutEntry[], b: readonly TileLayoutEntry[
       entry.id === other.id &&
       entry.colSpan === other.colSpan &&
       entry.rowSpan === other.rowSpan &&
-      entry.order === other.order
+      entry.order === other.order &&
+      entry.col === other.col &&
+      entry.row === other.row
     );
   });
 }

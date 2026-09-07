@@ -114,7 +114,7 @@
         </button>
         <ul class="dropdown-content menu z-50 w-52 rounded-box border border-base-content/15 bg-base-100 p-2 shadow-xl">
           <li>
-            <button type="button" onclick={onSort}>Sort by recent activity</button>
+            <button type="button" onclick={onSort}>Reset arrangement by recent activity</button>
           </li>
         </ul>
       </div>

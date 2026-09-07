@@ -23,17 +23,20 @@ export type {
 } from "./logic/tile-layout";
 export {
   clampSpan,
+  displacePlace,
   fillOrderKey,
   firstEmptySlot,
   geometryFor,
-  insertAtFirstEmptySlot,
   mergeLayout,
-  moveTile,
   pack,
+  pinAtFirstEmpty,
+  placeAtCell,
   resizeTile,
   sanitizeLayout,
   sortByRecentActivity,
   sortTiles,
+  toRenderCell,
+  toUniversalCell,
 } from "./logic/tile-layout";
 export { applyStarred, pageTitle, relativeTime, sortWorkspaces } from "./logic/view-model";
 export type { WorkspaceStore } from "./store.svelte";

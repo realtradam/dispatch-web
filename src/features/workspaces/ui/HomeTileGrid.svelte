@@ -1,25 +1,21 @@
 <script lang="ts">
   import type { WorkspaceEntry } from "@dispatch/wire";
+  import { gsap } from "gsap";
+  import { Flip } from "gsap/Flip";
+  import { tick } from "svelte";
   import { nextDragPhase, type DragEvent, type DragPhase } from "../logic/drag-controller";
-  import type { GridGeometry, Placement, Span } from "../logic/tile-layout";
+  import {
+    displacePlace,
+    type Cell,
+    type GridGeometry,
+    type Placement,
+    type Span,
+  } from "../logic/tile-layout";
   import { tileTone, type TileTone } from "../logic/view-model";
   import type { WorkspaceStore } from "../store.svelte";
   import WorkspaceTile from "./WorkspaceTile.svelte";
 
-  /**
-   * The Start-screen tile tones (static classes — Tailwind/DaisyUI must see
-   * the literal `bg-*`/`text-*-content` names to emit them). A tile is its
-   * tone's SATURATED color with the tone's `-content` text, like Win8's
-   * colored tiles on the dark Start canvas.
-   */
-  const TONE_CLASSES: Record<TileTone, string> = {
-    primary: "bg-primary text-primary-content border-primary",
-    secondary: "bg-secondary text-secondary-content border-secondary",
-    accent: "bg-accent text-accent-content border-accent",
-    info: "bg-info text-info-content border-info",
-    success: "bg-success text-success-content border-success",
-    warning: "bg-warning text-warning-content border-warning",
-  };
+  gsap.registerPlugin(Flip);
 
   let {
     geometry,
@@ -32,11 +28,11 @@
     hasActive,
     onOpen,
     onSelect,
-    onReorder,
+    onPlace,
     onRenameEnd,
   }: {
     geometry: GridGeometry;
-    /** Packed placements (in pack order — the manual tile order). */
+    /** Packed placements of the COMMITTED layout (the drag preview derives). */
     placements: readonly Placement[];
     workspacesById: ReadonlyMap<string, WorkspaceEntry>;
     /** Forwarded to tiles for the inline rename (semantics preserved). */
@@ -49,8 +45,8 @@
     hasActive?: (workspaceId: string) => boolean;
     onOpen: (id: string) => void;
     onSelect: (id: string) => void;
-    /** The drag dropped `id` at `toIndex` in the manual order (-1 = nowhere). */
-    onReorder: (id: string, toIndex: number) => void;
+    /** The drag dropped `id` at `cell` (null = the pointer never resolved to a cell). */
+    onPlace: (id: string, cell: Cell | null) => void;
     onRenameEnd: () => void;
   } = $props();
 
@@ -59,6 +55,10 @@
   const LONG_PRESS_MS = 500;
   let phase = $state<DragPhase>({ kind: "idle" });
   let longPressTimer: ReturnType<typeof setTimeout> | undefined;
+  /** Pointer position where the current press began (the follow transform base). */
+  let pressOrigin = $state<{ x: number; y: number } | null>(null);
+  /** The tile mid-settle after a drop (excluded from FLIP until it lands). */
+  let settling = $state<string | null>(null);
 
   function armLongPress(): void {
     disarmLongPress();
@@ -76,25 +76,64 @@
   }
 
   function dispatch(event: DragEvent): void {
+    const wasDragging = phase.kind === "dragging" ? phase.id : null;
     const transition = nextDragPhase(phase, event, { dragThresholdPx: DRAG_THRESHOLD_PX });
     phase = transition.phase;
     const emit = transition.emit;
     if (emit) {
       if (emit.kind === "tap") onOpen(emit.id);
       else if (emit.kind === "lift") onSelect(emit.id);
-      else if (emit.kind === "drop" && emit.targetIndex >= 0) onReorder(emit.id, emit.targetIndex);
+      else if (emit.kind === "drop") drop(emit.id, emit.targetCell);
+    }
+    if (phase.kind === "idle") {
+      // The gesture ended (tap/drop/cancel). A DROP settles via `drop` above;
+      // a CANCEL mid-drag flies the tile back to its committed slot.
+      if (wasDragging && emit?.kind !== "drop") flyBack(wasDragging);
+      pressOrigin = null;
     }
     // Keep the long-press armed exactly while a TOUCH press is undecided.
     if (phase.kind === "pressing" && phase.touch) armLongPress();
     else disarmLongPress();
   }
 
-  /** The hovered tile's index in the manual order (-1 = not over a tile). */
-  function hoveredIndex(x: number, y: number): number {
-    const hit = document.elementFromPoint(x, y)?.closest("[data-tile-id]");
-    const id = hit?.getAttribute("data-tile-id");
-    if (id === null || id === undefined) return -1;
-    return placements.findIndex((placement) => placement.id === id);
+  /** The tile being dragged (or settling after a drop) follows no FLIP. */
+  const excludedFromFlip = $derived(
+    new Set(
+      [phase.kind === "dragging" ? phase.id : null, settling].filter(
+        (id): id is string => id !== null,
+      ),
+    ),
+  );
+
+  /** Commit the drop, then settle the tile from the pointer onto its new cell. */
+  function drop(id: string, cell: Cell | null): void {
+    if (cell !== null) onPlace(id, cell);
+    flyBack(id);
+  }
+
+  /**
+   * Animate the tile's follow transform to identity at its (possibly new)
+   * committed slot — the drop settle AND the cancel/Escape fly-back. The tile
+   * is excluded from Flip until the animation completes so the two never
+   * fight over the same transform.
+   */
+  function flyBack(id: string): void {
+    const el = tileEls.get(id);
+    if (!el) return;
+    settling = id;
+    void tick().then(() => {
+      gsap.to(el, {
+        x: 0,
+        y: 0,
+        scale: 1,
+        duration: 0.2,
+        ease: "power2.out",
+        onComplete: () => {
+          gsap.set(el, { clearProps: "transform" });
+          settling = null;
+        },
+      });
+    });
   }
 
   /** Interactive targets inside a tile (the rename input) own their gestures. */
@@ -107,6 +146,7 @@
     if (e.button !== 0 || insideInteractive(e.target)) return;
     // Capture so fast drags keep the pointer events on this element.
     (e.currentTarget as HTMLElement)?.setPointerCapture?.(e.pointerId);
+    pressOrigin = { x: e.clientX, y: e.clientY };
     dispatch({
       type: "pointer-down",
       id,
@@ -122,7 +162,7 @@
       type: "pointer-move",
       x: e.clientX,
       y: e.clientY,
-      targetIndex: hoveredIndex(e.clientX, e.clientY),
+      targetCell: cellAt(e.clientX, e.clientY),
     });
   }
 
@@ -131,9 +171,72 @@
     dispatch({ type: "pointer-up" });
   }
 
-  // ── Tile element registry (for the FLIP reflow animation) ─────────────────
+  // Escape mid-drag: cancel BEFORE the page-level Escape unwinds the
+  // selection — the committed layout is untouched and the tile flies home.
+  function windowKeydown(e: KeyboardEvent): void {
+    if (e.key !== "Escape" || phase.kind === "idle") return;
+    e.stopPropagation();
+    dispatch({ type: "cancel" });
+  }
+
+  // ── Cell hit math (pointer → grid cell; empty cells are drop targets) ─────
+  let gridEl = $state<HTMLDivElement | undefined>();
+
+  const pitchX = $derived(geometry.unit.width + geometry.unit.gap);
+  const pitchY = $derived(geometry.unit.height + geometry.unit.gap);
+
+  function cellAt(clientX: number, clientY: number): Cell | null {
+    const el = gridEl;
+    if (!el) return null;
+    const rect = el.getBoundingClientRect();
+    const wide = geometry.mode === "wide";
+    // Wide: fixed-width columns at the pitch. Tall: fluid 1fr columns.
+    const cellW = wide ? pitchX : rect.width / geometry.flowCols;
+    const col = Math.max(1, Math.floor((clientX - rect.left) / cellW) + 1);
+    const row = Math.max(1, Math.floor((clientY - rect.top) / pitchY) + 1);
+    return {
+      col: wide ? col : Math.min(col, geometry.flowCols),
+      row: wide ? Math.min(row, geometry.flowRows) : row,
+    };
+  }
+
+  // ── The drag preview: COMMITTED placements + displacement, fresh per cell ─
+  /** The dragged tile's id while a drag is in flight (else null). */
+  const draggedId = $derived<string | null>(
+    phase.kind === "dragging" ? phase.id : null,
+  );
+  const draggedPlacement = $derived(
+    draggedId !== null
+      ? (placements.find((placement) => placement.id === draggedId) ?? null)
+      : null,
+  );
+
+  /** The pointer's hovered cell while dragging (else null). */
+  const hoveredCell = $derived<Cell | null>(
+    phase.kind === "dragging" ? phase.targetCell : null,
+  );
+
+  /** The landing cell: where the pointer is, else the tile's committed slot. */
+  const targetCell = $derived<Cell | null>(
+    hoveredCell ??
+      (draggedPlacement ? { col: draggedPlacement.col, row: draggedPlacement.row } : null),
+  );
+
+  /**
+   * What to render: while dragging, the displacement of the COMMITTED layout
+   * at the target cell — recomputed from committed on EVERY hover change (as
+   * if the user moved straight from the original to here); the FLIP below
+   * animates from wherever the tiles currently are. Otherwise the committed
+   * placements.
+   */
+  const rendered = $derived(
+    draggedPlacement && targetCell && draggedId !== null
+      ? displacePlace(placements, draggedId, targetCell, geometry)
+      : placements,
+  );
+
+  // ── FLIP reflow (GSAP Flip — re-entrant: captures mid-flight positions) ───
   let tileEls = new Map<string, HTMLElement>();
-  let lastRects = new Map<string, { x: number; y: number }>();
 
   function trackTile(el: HTMLElement, id: string): { destroy: () => void } {
     tileEls.set(id, el);
@@ -144,32 +247,31 @@
     };
   }
 
-  // FLIP: measure after a placements/geometry change and play the inverted
-  // delta — reordering edits the ORDER, the reflow is always derived.
-  $effect(() => {
-    // Track the layout inputs (the DOM reads below are untracked).
-    const ids = new Set(placements.map((placement) => placement.id));
+  let flipState: ReturnType<typeof Flip.getState> | null = null;
+
+  $effect.pre(() => {
+    // Track the layout inputs; the DOM read below is intentionally untracked.
+    void rendered
+      .map((p) => `${p.id}:${p.col},${p.row},${p.colSpan}x${p.rowSpan}`)
+      .join("|");
     void geometry.mode;
-    const rects = new Map<string, { x: number; y: number }>();
-    for (const [id, el] of tileEls) {
-      if (!ids.has(id)) continue;
-      const rect = el.getBoundingClientRect();
-      rects.set(id, { x: rect.left, y: rect.top });
-    }
-    for (const [id, prev] of lastRects) {
-      const next = rects.get(id);
-      const el = tileEls.get(id);
-      if (!next || !el) continue;
-      const dx = prev.x - next.x;
-      const dy = prev.y - next.y;
-      if ((dx !== 0 || dy !== 0) && typeof el.animate === "function") {
-        el.animate(
-          [{ transform: `translate(${dx}px, ${dy}px)` }, { transform: "translate(0, 0)" }],
-          { duration: 200, easing: "ease-out" },
-        );
-      }
-    }
-    lastRects = rects;
+    flipState = Flip.getState(
+      [...tileEls].filter(([id]) => !excludedFromFlip.has(id)).map(([, el]) => el),
+    );
+  });
+
+  $effect(() => {
+    void rendered;
+    void geometry.mode;
+    const state = flipState;
+    flipState = null;
+    if (!state) return;
+    Flip.from(state, {
+      duration: 0.25,
+      ease: "power2.inOut",
+      nested: true,
+      onEnter: (elements) => gsap.fromTo(elements, { opacity: 0 }, { opacity: 1, duration: 0.2 }),
+    });
   });
 
   // ── Wide-mode horizontal panning: wheel + pan arrow + scroll indicator ────
@@ -209,15 +311,34 @@
   }
 
   // ── Grid + tile styles (the geometry decides; no breakpoint classes) ──────
-  const gridStyle = $derived(
-    geometry.mode === "wide"
-      ? `grid-template-rows: repeat(${geometry.flowRows}, ${geometry.unit.height}px);` +
+  const dragging = $derived(phase.kind === "dragging");
+
+  const gridStyle = $derived.by(() => {
+    const base =
+      geometry.mode === "wide"
+        ? `grid-template-rows: repeat(${geometry.flowRows}, ${geometry.unit.height}px);` +
           ` grid-auto-flow: column; grid-auto-columns: ${geometry.unit.width}px;` +
           ` gap: ${geometry.unit.gap}px; width: max-content;`
-      : `grid-template-columns: repeat(${geometry.flowCols}, minmax(0, 1fr));` +
+        : `grid-template-columns: repeat(${geometry.flowCols}, minmax(0, 1fr));` +
           ` grid-auto-flow: row; grid-auto-rows: ${geometry.unit.height}px;` +
-          ` gap: ${geometry.unit.gap}px;`,
-  );
+          ` gap: ${geometry.unit.gap}px;`;
+    if (!dragging) return base;
+    // The drop-target dots: one faint dot at each unit cell's CENTER, painted
+    // as a background whose tile is the cell pitch. One extra pitch of padding
+    // past the content end gives the append-slot a dot too.
+    const dotSize =
+      geometry.mode === "wide" ? `${pitchX}px` : `calc(100% / ${geometry.flowCols})`;
+    const dotX = geometry.mode === "wide" ? geometry.unit.width / 2 : 0;
+    const dot =
+      ` background-image: radial-gradient(circle 2.5px,` +
+      ` color-mix(in oklab, var(--color-base-content) 22%, transparent) 98%, transparent 100%);` +
+      ` background-size: ${dotSize} ${pitchY}px;` +
+      ` background-position: ${dotX}px ${geometry.unit.height / 2}px;` +
+      (geometry.mode === "wide"
+        ? ` padding-right: ${pitchX}px;`
+        : ` padding-bottom: ${pitchY}px;`);
+    return base + dot;
+  });
 
   function spanFor(placement: Placement): Span {
     if (preview && preview.id === placement.id) {
@@ -230,7 +351,47 @@
     const span = spanFor(placement);
     return `grid-column: ${placement.col} / span ${span.colSpan}; grid-row: ${placement.row} / span ${span.rowSpan};`;
   }
+
+  /** The dragged tile's follow transform (it keeps its committed slot). */
+  function followStyle(placement: Placement): string {
+    if (draggedId !== placement.id || !pressOrigin || phase.kind !== "dragging") return "";
+    const dx = phase.x - pressOrigin.x;
+    const dy = phase.y - pressOrigin.y;
+    return `transform: translate(${dx}px, ${dy}px) scale(1.05);`;
+  }
+
+  // ── The drop ghost: a dashed footprint at the target anchor ───────────────
+  const ghostStyle = $derived.by(() => {
+    if (!dragging || !targetCell || !draggedPlacement) return null;
+    const span = spanFor(draggedPlacement);
+    const wide = geometry.mode === "wide";
+    const h = span.rowSpan * pitchY - geometry.unit.gap;
+    const x = wide
+      ? `${(targetCell.col - 1) * pitchX}px`
+      : `calc(${((targetCell.col - 1) / geometry.flowCols) * 100}%)`;
+    const width = wide
+      ? `${span.colSpan * pitchX - geometry.unit.gap}px`
+      : `calc(${(span.colSpan / geometry.flowCols) * 100}% - ${(geometry.unit.gap * (geometry.flowCols - span.colSpan)) / geometry.flowCols}px)`;
+    return `left: ${x}; top: ${(targetCell.row - 1) * pitchY}px; width: ${width}; height: ${h}px;`;
+  });
+
+  /**
+   * The Start-screen tile tones (static classes — Tailwind/DaisyUI must see
+   * the literal `bg-*`/`text-*-content` names to emit them). A tile is its
+   * tone's SATURATED color with the tone's `-content` text, like Win8's
+   * colored tiles on the dark Start canvas.
+   */
+  const TONE_CLASSES: Record<TileTone, string> = {
+    primary: "bg-primary text-primary-content border-primary",
+    secondary: "bg-secondary text-secondary-content border-secondary",
+    accent: "bg-accent text-accent-content border-accent",
+    info: "bg-info text-info-content border-info",
+    success: "bg-success text-success-content border-success",
+    warning: "bg-warning text-warning-content border-warning",
+  };
 </script>
+
+<svelte:window onkeydowncapture={windowKeydown} />
 
 <div class="relative min-h-0 flex-1">
   <div
@@ -242,21 +403,40 @@
     onscroll={updateScroll}
     onwheel={handleWheel}
   >
-    <div class="grid" style={gridStyle}>
-      {#each placements as placement (placement.id)}
+    <div bind:this={gridEl} class="relative grid" style={gridStyle}>
+      {#if ghostStyle && draggedPlacement}
+        <!-- The landing footprint (the dragged tile's tone, dashed). -->
+        <div
+          aria-hidden="true"
+          class="pointer-events-none absolute z-0 rounded-box border-2 border-dashed opacity-70"
+          class:border-primary={tileTone(draggedPlacement.id) === "primary"}
+          class:border-secondary={tileTone(draggedPlacement.id) === "secondary"}
+          class:border-accent={tileTone(draggedPlacement.id) === "accent"}
+          class:border-info={tileTone(draggedPlacement.id) === "info"}
+          class:border-success={tileTone(draggedPlacement.id) === "success"}
+          class:border-warning={tileTone(draggedPlacement.id) === "warning"}
+          style={ghostStyle}
+        ></div>
+      {/if}
+      {#each rendered as placement (placement.id)}
         {@const ws = workspacesById.get(placement.id)}
         {#if ws}
+          {@const isDragged = draggedId === placement.id}
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
           <div
             data-tile-id={placement.id}
-            class={`flex select-none flex-col overflow-hidden rounded-box border shadow-md transition-[transform,box-shadow] duration-150 hover:-translate-y-0.5 hover:shadow-xl ${
+            class={`flex select-none flex-col overflow-hidden rounded-box border transition-[box-shadow] duration-150 ${
               TONE_CLASSES[tileTone(placement.id)]
             } ${
               selectedId === placement.id
                 ? "ring-4 ring-base-content/80 ring-offset-2 ring-offset-base-100"
                 : "border-transparent"
-            } ${phase.kind === "dragging" && phase.id === placement.id ? "opacity-40" : ""}`}
-            style={`${wrapperStyle(placement)} scroll-snap-align: start;`}
+            } ${
+              isDragged
+                ? "pointer-events-none relative z-40 shadow-2xl"
+                : "shadow-md hover:-translate-y-0.5 hover:shadow-xl"
+            }`}
+            style={`${wrapperStyle(placement)} ${isDragged ? followStyle(placement) : ""} scroll-snap-align: start;`}
             role="button"
             tabindex="0"
             aria-label={`Open workspace ${ws.title}`}
@@ -316,13 +496,3 @@
     </div>
   {/if}
 </div>
-
-{#if phase.kind === "dragging"}
-  <!-- The drag ghost follows the pointer (transient; never a data change). -->
-  <div
-    class="pointer-events-none fixed z-50 rounded-box border border-base-content/25 bg-base-100/95 px-3 py-2 text-sm font-bold shadow-2xl"
-    style={`left: ${phase.x + 10}px; top: ${phase.y + 10}px;`}
-  >
-    {workspacesById.get(phase.id)?.title ?? phase.id}
-  </div>
-{/if}

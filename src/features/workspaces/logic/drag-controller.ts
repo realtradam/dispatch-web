@@ -12,8 +12,10 @@
  *   so the two gestures never fight. Release while lifted = DROP.
  *
  * Pure: `(phase, event, options) → { phase, emit }`. The component owns the
- * reactive `$state` and performs the emits (navigate / select / reorder).
+ * reactive `$state` and performs the emits (navigate / select / place).
  */
+
+import type { Cell } from "./tile-layout";
 
 /** Where the interaction currently stands. */
 export type DragPhase =
@@ -32,7 +34,8 @@ export type DragPhase =
       readonly id: string;
       readonly x: number;
       readonly y: number;
-      readonly targetIndex: number;
+      /** The grid CELL under the pointer (null = not over the canvas yet). */
+      readonly targetCell: Cell | null;
       readonly touch: boolean;
     };
 
@@ -40,7 +43,7 @@ export type DragPhase =
 export type DragEmit =
   | { readonly kind: "tap"; readonly id: string }
   | { readonly kind: "lift"; readonly id: string }
-  | { readonly kind: "drop"; readonly id: string; readonly targetIndex: number };
+  | { readonly kind: "drop"; readonly id: string; readonly targetCell: Cell | null };
 
 /** Events the component dispatches (DOM events + the long-press timer firing). */
 export type DragEvent =
@@ -55,7 +58,7 @@ export type DragEvent =
       readonly type: "pointer-move";
       readonly x: number;
       readonly y: number;
-      readonly targetIndex: number;
+      readonly targetCell: Cell | null;
     }
   | { readonly type: "pointer-up" }
   | { readonly type: "long-press" }
@@ -105,7 +108,7 @@ export function nextDragPhase(
             id: phase.id,
             x: event.x,
             y: event.y,
-            targetIndex: event.targetIndex,
+            targetCell: event.targetCell,
             touch: phase.touch,
           },
         };
@@ -116,7 +119,7 @@ export function nextDragPhase(
             ...phase,
             x: event.x,
             y: event.y,
-            targetIndex: event.targetIndex,
+            targetCell: event.targetCell,
           },
         };
       }
@@ -130,7 +133,7 @@ export function nextDragPhase(
       if (phase.kind === "dragging") {
         return {
           phase: IDLE,
-          emit: { kind: "drop", id: phase.id, targetIndex: phase.targetIndex },
+          emit: { kind: "drop", id: phase.id, targetCell: phase.targetCell },
         };
       }
       return { phase };
@@ -145,7 +148,7 @@ export function nextDragPhase(
             id: phase.id,
             x: phase.x,
             y: phase.y,
-            targetIndex: -1,
+            targetCell: null,
             touch: true,
           },
           emit: { kind: "lift", id: phase.id },

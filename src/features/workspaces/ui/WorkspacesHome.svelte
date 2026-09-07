@@ -276,7 +276,7 @@
         {...(hasActive ? { hasActive } : {})}
         onOpen={openWorkspace}
         onSelect={select}
-        onReorder={(id, toIndex) => tiles.move(id, toIndex)}
+        onPlace={(id, cell) => cell !== null && tiles.placeAtCell(id, cell, geometry)}
         onRenameEnd={() => (renamingId = null)}
       />
     {/if}

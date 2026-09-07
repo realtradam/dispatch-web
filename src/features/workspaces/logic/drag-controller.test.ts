@@ -26,7 +26,7 @@ describe("nextDragPhase — mouse", () => {
   it("movement past the threshold starts a drag", () => {
     const transition = nextDragPhase(
       press(),
-      { type: "pointer-move", x: 20, y: 12, targetIndex: 3 },
+      { type: "pointer-move", x: 20, y: 12, targetCell: { col: 4, row: 1 } },
       OPTS,
     );
     expect(transition.phase).toEqual({
@@ -34,7 +34,7 @@ describe("nextDragPhase — mouse", () => {
       id: "t1",
       x: 20,
       y: 12,
-      targetIndex: 3,
+      targetCell: { col: 4, row: 1 },
       touch: false,
     });
     expect(transition.emit).toBeUndefined();
@@ -43,7 +43,7 @@ describe("nextDragPhase — mouse", () => {
   it("movement within the threshold stays pressing", () => {
     const transition = nextDragPhase(
       press(),
-      { type: "pointer-move", x: 12, y: 14, targetIndex: 0 },
+      { type: "pointer-move", x: 12, y: 14, targetCell: { col: 1, row: 1 } },
       OPTS,
     );
     expect(transition.phase).toEqual({ kind: "pressing", id: "t1", x: 10, y: 10, touch: false });
@@ -58,16 +58,16 @@ describe("nextDragPhase — mouse", () => {
   it("release while dragging emits a drop with the last tracked index", () => {
     let transition: DragTransition = nextDragPhase(
       press(),
-      { type: "pointer-move", x: 30, y: 30, targetIndex: 2 },
+      { type: "pointer-move", x: 30, y: 30, targetCell: { col: 3, row: 1 } },
       OPTS,
     );
     transition = nextDragPhase(
       transition.phase,
-      { type: "pointer-move", x: 31, y: 31, targetIndex: 5 },
+      { type: "pointer-move", x: 31, y: 31, targetCell: { col: 6, row: 1 } },
       OPTS,
     );
     transition = nextDragPhase(transition.phase, { type: "pointer-up" }, OPTS);
-    expect(transition.emit).toEqual({ kind: "drop", id: "t1", targetIndex: 5 });
+    expect(transition.emit).toEqual({ kind: "drop", id: "t1", targetCell: { col: 6, row: 1 } });
     expect(transition.phase).toEqual({ kind: "idle" });
   });
 });
@@ -81,7 +81,7 @@ describe("nextDragPhase — touch", () => {
       id: "t1",
       x: 10,
       y: 10,
-      targetIndex: -1,
+      targetCell: null,
       touch: true,
     });
   });
@@ -89,7 +89,7 @@ describe("nextDragPhase — touch", () => {
   it("movement past the threshold BEFORE the lift cancels (vertical scrolling wins)", () => {
     const transition = nextDragPhase(
       press(true),
-      { type: "pointer-move", x: 10, y: 80, targetIndex: 0 },
+      { type: "pointer-move", x: 10, y: 80, targetCell: { col: 1, row: 1 } },
       OPTS,
     );
     expect(transition.phase).toEqual({ kind: "idle" });
@@ -99,7 +99,7 @@ describe("nextDragPhase — touch", () => {
   it("movement within the threshold before the lift keeps pressing", () => {
     const transition = nextDragPhase(
       press(true),
-      { type: "pointer-move", x: 13, y: 12, targetIndex: 0 },
+      { type: "pointer-move", x: 13, y: 12, targetCell: { col: 1, row: 1 } },
       OPTS,
     );
     expect(transition.phase?.kind).toBe("pressing");
@@ -109,7 +109,7 @@ describe("nextDragPhase — touch", () => {
     let transition = nextDragPhase(press(true), { type: "long-press" }, OPTS);
     transition = nextDragPhase(
       transition.phase,
-      { type: "pointer-move", x: 10, y: 90, targetIndex: 4 },
+      { type: "pointer-move", x: 10, y: 90, targetCell: { col: 5, row: 1 } },
       OPTS,
     );
     expect(transition.phase).toEqual({
@@ -117,7 +117,7 @@ describe("nextDragPhase — touch", () => {
       id: "t1",
       x: 10,
       y: 90,
-      targetIndex: 4,
+      targetCell: { col: 5, row: 1 },
       touch: true,
     });
   });
@@ -131,7 +131,7 @@ describe("nextDragPhase — touch", () => {
   it("release while lifted (no movement) drops at the lifted tile's own slot", () => {
     let transition = nextDragPhase(press(true), { type: "long-press" }, OPTS);
     transition = nextDragPhase(transition.phase, { type: "pointer-up" }, OPTS);
-    expect(transition.emit).toEqual({ kind: "drop", id: "t1", targetIndex: -1 });
+    expect(transition.emit).toEqual({ kind: "drop", id: "t1", targetCell: null });
   });
 });
 
@@ -140,7 +140,11 @@ describe("nextDragPhase — cancellations", () => {
     for (const phase of [
       { kind: "idle" as const },
       press(),
-      nextDragPhase(press(), { type: "pointer-move", x: 40, y: 40, targetIndex: 1 }, OPTS).phase,
+      nextDragPhase(
+        press(),
+        { type: "pointer-move", x: 40, y: 40, targetCell: { col: 2, row: 1 } },
+        OPTS,
+      ).phase,
     ]) {
       const transition = nextDragPhase(phase, { type: "cancel" }, OPTS);
       expect(transition.phase).toEqual({ kind: "idle" });
@@ -153,8 +157,11 @@ describe("nextDragPhase — cancellations", () => {
       kind: "idle",
     });
     expect(
-      nextDragPhase({ kind: "idle" }, { type: "pointer-move", x: 1, y: 1, targetIndex: 0 }, OPTS)
-        .phase,
+      nextDragPhase(
+        { kind: "idle" },
+        { type: "pointer-move", x: 1, y: 1, targetCell: { col: 1, row: 1 } },
+        OPTS,
+      ).phase,
     ).toEqual({ kind: "idle" });
     expect(nextDragPhase({ kind: "idle" }, { type: "long-press" }, OPTS).phase).toEqual({
       kind: "idle",
@@ -164,7 +171,7 @@ describe("nextDragPhase — cancellations", () => {
   it("a second pointer-down restarts the gesture with the new tile", () => {
     const dragging = nextDragPhase(
       press(),
-      { type: "pointer-move", x: 40, y: 40, targetIndex: 1 },
+      { type: "pointer-move", x: 40, y: 40, targetCell: { col: 2, row: 1 } },
       OPTS,
     ).phase;
     const transition = nextDragPhase(dragging, down({ id: "t2" }), OPTS);

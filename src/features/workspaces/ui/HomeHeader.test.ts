@@ -36,7 +36,7 @@ describe("HomeHeader", () => {
     render(HomeHeader, { props: { ...p, withSort: true } });
 
     await user.click(screen.getByRole("button", { name: "More actions" }));
-    await user.click(screen.getByRole("button", { name: "Sort by recent activity" }));
+    await user.click(screen.getByRole("button", { name: "Reset arrangement by recent activity" }));
     expect(p.onSort).toHaveBeenCalledTimes(1);
   });
 
