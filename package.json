@@ -19,6 +19,7 @@
     "@dispatch/ui-contract": "file:../backend/packages/ui-contract",
     "@dispatch/wire": "file:../backend/packages/wire",
     "dompurify": "^3.4.5",
+    "gsap": "^3.15.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
     "marked-highlight": "^2.2.4"
