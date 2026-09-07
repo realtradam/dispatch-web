@@ -286,7 +286,9 @@
     if (!state) return;
     Flip.from(state, {
       duration: 0.25,
-      ease: "power2.inOut",
+      // Fast start, decelerating arrival — the reflow sweeps out and settles
+      // into the destination (an inOut curve would ease INTO the motion too).
+      ease: "power3.out",
       nested: true,
       onEnter: (elements) => gsap.fromTo(elements, { opacity: 0 }, { opacity: 1, duration: 0.2 }),
     });
