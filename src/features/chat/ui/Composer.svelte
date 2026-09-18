@@ -1,5 +1,7 @@
 <script lang="ts">
   import type { ImageInput } from "@dispatch/wire";
+  import { convertToJpeg, type ConvertedJpeg, type ImageJpegEncoder } from "../adapter/image-encode";
+  import { MAX_IMAGE_EDGE_PX, shouldConvertImage } from "../logic/image-compress";
   import { computeContextUsage, formatCompactTokens } from "../../../core/metrics";
 
   const FALLBACK_CONTEXT_WINDOW = 1_000_000;
@@ -8,17 +10,52 @@
   const IMAGE_ACCEPT = "image/png,image/jpeg,image/gif,image/webp";
   /** Reject images larger than this before base64-encoding (keeps payloads sane). */
   const MAX_IMAGE_BYTES = 8 * 1024 * 1024;
+  /** Tooltip on the per-image compress toggle (PNG → JPEG + resize). */
+  const COMPRESS_TOOLTIP = `Re-encode PNG to JPEG and resize to ${MAX_IMAGE_EDGE_PX}px (smaller upload). Unchecked sends the original bytes.`;
 
-  /** A staged image awaiting send: a stable id + the `ImageInput` to forward. */
+  /**
+   * A staged image awaiting send: a stable id + everything needed to resolve
+   * the `ImageInput` that will actually be sent. The ORIGINAL `File` (and its
+   * data URL) is kept so the per-image compress toggle is reversible until
+   * send; the async conversion result is cached so flipping the toggle never
+   * re-encodes.
+   */
   interface StagedImage {
     readonly id: string;
-    readonly input: ImageInput;
+    /** The original untouched File — sent verbatim when compress is off. */
+    readonly file: File;
+    /** Data URL of the original (staged immediately — conversion is async). */
+    readonly originalUrl: string;
+    readonly originalMimeType: string | undefined;
+    /** Whether the converted (JPEG) variant is used for send. Default ON. */
+    compress: boolean;
+    /** Cached conversion (data URL of the JPEG); `null` = none/failed/n.a. */
+    converted: { url: string } | null;
+  }
+
+  /**
+   * The `ImageInput` this staged image will actually SEND: the converted JPEG
+   * (data URL + `image/jpeg`) when compress is on AND a conversion exists,
+   * otherwise the original untouched bytes.
+   */
+  function imageInput(img: StagedImage): ImageInput {
+    if (img.compress && img.converted !== null) {
+      return { url: img.converted.url, mimeType: "image/jpeg" };
+    }
+    const { originalUrl: url, originalMimeType: mimeType } = img;
+    return { url, ...(mimeType ? { mimeType } : {}) };
+  }
+
+  /** Whether the compress toggle is rendered for this image (convertible formats only). */
+  function compressible(img: StagedImage): boolean {
+    return shouldConvertImage(img.originalMimeType);
   }
 
   let {
     onSend,
     onQueue,
     onStop,
+    encodeJpeg = convertToJpeg,
     contextSize = undefined,
     contextWindow = undefined,
     status = "idle",
@@ -39,6 +76,11 @@
     onQueue?: (text: string) => void;
     /** Stop the in-flight generation (`POST /conversations/:id/stop`). */
     onStop?: () => void;
+    /**
+     * Injected compression edge (a `File` in, a maybe-smaller JPEG out).
+     * Defaults to the real canvas converter; tests stub this outermost edge.
+     */
+    encodeJpeg?: ImageJpegEncoder;
     // Current context occupancy — updated progressively during a turn (the
     // latest step's input+output) and finalized to the turn's `contextSize` on
     // seal, or `undefined` when unknown — the status bar then shows
@@ -120,8 +162,8 @@
     resize();
   });
 
-  /** Read a File into a base64 data URL (`data:image/…;base64,…`). */
-  function fileToDataUrl(file: File): Promise<string> {
+  /** Read a File/Blob into a base64 data URL (`data:image/…;base64,…`). */
+  function fileToDataUrl(file: Blob): Promise<string> {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
       reader.onload = () => {
@@ -142,8 +184,49 @@
     // Prefer the file's declared MIME; fall back to the data URL's prefix.
     const mimeType = file.type || undefined;
     const id = `img-${Date.now()}-${imgSeq++}`;
-    images = [...images, { id, input: { url, ...(mimeType ? { mimeType } : {}) } }];
+    images = [
+      ...images,
+      {
+        id,
+        file,
+        originalUrl: url,
+        originalMimeType: mimeType,
+        compress: true, // compress is ON by default for every staged image
+        converted: null,
+      },
+    ];
+    // Convert async in the background — staging is never blocked on it; the
+    // staged input stays the original until the converted URL arrives.
+    if (shouldConvertImage(mimeType)) {
+      void runConversion(id);
+    }
     return true;
+  }
+
+  /**
+   * Run the (injected) compression edge for a staged image and cache the
+   * result. ANY failure (rejecting encoder included) resolves to no
+   * conversion → the original is sent; compression never breaks staging. If
+   * the image was removed while converting, the result is dropped.
+   */
+  async function runConversion(id: string): Promise<void> {
+    const staged = images.find((img) => img.id === id);
+    if (staged === undefined) return;
+    let result: ConvertedJpeg | null = null;
+    try {
+      result = await encodeJpeg(staged.file);
+    } catch {
+      result = null; // fall back to the original — never block or break sending
+    }
+    const entry = images.find((img) => img.id === id);
+    if (entry === undefined) return; // removed mid-conversion
+    entry.converted = result === null ? null : { url: await fileToDataUrl(result.blob) };
+  }
+
+  /** Flip the per-image compress toggle (reversible until send). */
+  function setCompress(id: string, compress: boolean): void {
+    const entry = images.find((img) => img.id === id);
+    if (entry !== undefined) entry.compress = compress;
   }
 
   function removeImage(id: string): void {
@@ -205,7 +288,7 @@
       onQueue?.(trimmed);
     } else {
       const toSend: ImageInput[] | undefined = hasImages
-        ? images.map((img) => img.input)
+        ? images.map((img) => imageInput(img))
         : undefined;
       onSend(trimmed, toSend);
     }
@@ -310,9 +393,10 @@
     <div class="flex flex-wrap gap-2 px-4 pb-1">
       {#each images as img (img.id)}
         <div class="group relative h-20 w-20 shrink-0 overflow-hidden rounded border border-base-300">
+          <!-- Preview what will actually be sent (the converted JPEG when compress is on). -->
           <img
-            src={img.input.url}
-            alt={img.input.mimeType ?? "staged image"}
+            src={imageInput(img).url}
+            alt={imageInput(img).mimeType ?? "staged image"}
             class="h-full w-full object-cover"
           />
           <button
@@ -335,6 +419,22 @@
               <line x1="6" y1="6" x2="18" y2="18"></line>
             </svg>
           </button>
+          <!-- Per-image compress toggle (convertible formats only; reversible until send). -->
+          {#if compressible(img)}
+            <label
+              class="absolute bottom-0 left-0 flex items-center gap-1 bg-base-100/80 px-1 py-0.5 text-[10px] leading-none"
+              title={COMPRESS_TOOLTIP}
+            >
+              <input
+                type="checkbox"
+                class="checkbox checkbox-xs"
+                aria-label="Compress image"
+                checked={img.compress}
+                onchange={(e) => setCompress(img.id, e.currentTarget.checked)}
+              />
+              <span class="whitespace-nowrap">Compress</span>
+            </label>
+          {/if}
         </div>
       {/each}
     </div>

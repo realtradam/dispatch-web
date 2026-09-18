@@ -305,3 +305,26 @@ changes, NO contract changes — the wire types and every endpoint consumed are 
   `tile-layout.test.ts` order assertions — coordinates unchanged), biome clean on touched files,
   `build` succeeds. Browser-only (pointer capture) — needs a human at the page to confirm the
   three fixes live (see commit message checklist).
+
+## 2026-09-18 — feature/image-attach-compression (FE-only)
+
+- **Attach-time image compression** in the chat composer: every staged image now carries a
+  per-image `Compress` toggle (default ON, next to the remove button on the thumbnail,
+  tooltip "PNG → JPEG + resize to 2048px"). ON re-encodes LOSSLESS sources (PNG/BMP) to
+  JPEG q0.85, rescales to cap the longest edge at 2048px (never upscales, high-quality
+  smoothing, alpha flattened onto white), and uses the result only under a smaller-wins
+  rule. JPEG/WebP/GIF are sent verbatim (toggle hidden — recompressing lossy/animated
+  images degrades them and saves nothing). OFF sends the original untouched bytes; the
+  conversion is cached so flipping the toggle never re-encodes. Conversion is async at
+  staging (the original stages immediately) and ANY failure silently falls back to the
+  original — sending can never be blocked or broken by compression.
+- **NO wire-contract changes.** `ImageInput`/`ImageChunk` are untouched; only the bytes a
+  client chooses to put in `ChatRequest.images` change (still base64 data URLs, now
+  sometimes `data:image/jpeg;base64,…` for a source that was `image/png`). No backend ask.
+  This complements the backend's body-budget eviction safety net by shrinking images at
+  the source so that path rarely triggers.
+- Verification: `typecheck` 0 errors/0 warnings; vitest 1720/1720 (twice — incl. new pure
+  logic tests for format selection/dimension math/smaller-wins + component tests for the
+  toggle default/reversibility/caching/fallback/mimeType); biome clean; `build` succeeds.
+  Manual browser sanity (paste a ~3MB PNG → staged size drops; uncheck → original;
+  re-check → no visible re-encode; send works) still needs a human at the page.

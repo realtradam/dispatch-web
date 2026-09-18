@@ -4,6 +4,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RenderedChunk } from "../../core/chunks";
 import type { TurnMetricsEntry } from "../../core/metrics";
+import type { ConvertedJpeg } from "./adapter/image-encode";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
 import ModelSelector from "./ui/ModelSelector.svelte";
@@ -986,6 +987,127 @@ describe("Composer", () => {
     await user.click(screen.getByRole("button", { name: "Queue" }));
     expect(onQueue).toHaveBeenCalledWith("steer here");
     expect(onSend).not.toHaveBeenCalled();
+  });
+});
+
+describe("Composer image compression", () => {
+  /** Stage a PNG through the file picker and wait for the thumbnail. */
+  async function stagePng(container: HTMLElement, content = "PNGDATA"): Promise<void> {
+    const file = new File([content], "shot.png", { type: "image/png" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], writable: false });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    });
+  }
+
+  /** A fake converted JPEG (the outermost-edge stub — no canvas involved). */
+  function fakeJpeg(): ConvertedJpeg {
+    return { blob: new Blob(["SMALLJPEG"], { type: "image/jpeg" }), mimeType: "image/jpeg" };
+  }
+
+  it("shows the compress toggle CHECKED by default for a staged PNG", async () => {
+    const { container } = render(Composer, {
+      props: { onSend: vi.fn(), encodeJpeg: vi.fn(async () => null) },
+    });
+    await stagePng(container);
+
+    const toggle = screen.getByRole("checkbox", { name: "Compress image" });
+    expect(toggle).toBeChecked();
+  });
+
+  it("hides the compress toggle for already-lossy formats (JPEG)", async () => {
+    const { container } = render(Composer, {
+      props: { onSend: vi.fn(), encodeJpeg: vi.fn(async () => null) },
+    });
+    const file = new File(["JPG"], "photo.jpg", { type: "image/jpeg" });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", { value: [file], writable: false });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await vi.waitFor(() => {
+      expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    });
+
+    expect(screen.queryByRole("checkbox", { name: "Compress image" })).not.toBeInTheDocument();
+  });
+
+  it("sends the converted JPEG (image/jpeg) when compress is on, encoding exactly once", async () => {
+    const encodeJpeg = vi.fn(async () => fakeJpeg());
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend, encodeJpeg } });
+    await stagePng(container);
+
+    // The async conversion lands and the staged URL reflects what will be sent.
+    await vi.waitFor(() => {
+      expect(encodeJpeg).toHaveBeenCalledTimes(1);
+    });
+    await vi.waitFor(() => {
+      const thumb = container.querySelector("img[alt='image/jpeg']");
+      expect(thumb).not.toBeNull();
+      expect(thumb?.getAttribute("src")).toMatch(/^data:image\/jpeg;base64,/);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const [, images] = onSend.mock.calls[0] ?? [];
+    expect(images).toHaveLength(1);
+    expect(images[0]?.mimeType).toBe("image/jpeg");
+    expect(images[0]?.url).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
+  it("sends the ORIGINAL untouched bytes when the toggle is unchecked", async () => {
+    const encodeJpeg = vi.fn(async () => fakeJpeg());
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend, encodeJpeg } });
+    await stagePng(container);
+    await vi.waitFor(() => expect(encodeJpeg).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("checkbox", { name: "Compress image" }));
+    expect(screen.getByRole("checkbox", { name: "Compress image" })).not.toBeChecked();
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledTimes(1);
+    const [, images] = onSend.mock.calls[0] ?? [];
+    expect(images[0]?.mimeType).toBe("image/png");
+    expect(images[0]?.url).toMatch(/^data:image\/png;base64,/);
+  });
+
+  it("re-checking uses the CACHED conversion — no second encode", async () => {
+    const encodeJpeg = vi.fn(async () => fakeJpeg());
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend, encodeJpeg } });
+    await stagePng(container);
+    await vi.waitFor(() => expect(encodeJpeg).toHaveBeenCalledTimes(1));
+
+    const toggle = screen.getByRole("checkbox", { name: "Compress image" });
+    await user.click(toggle); // OFF → original
+    await user.click(toggle); // ON again → must reuse the cached JPEG
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(encodeJpeg).toHaveBeenCalledTimes(1); // still exactly one encode
+    const [, images] = onSend.mock.calls[0] ?? [];
+    expect(images[0]?.mimeType).toBe("image/jpeg");
+    expect(images[0]?.url).toMatch(/^data:image\/jpeg;base64,/);
+  });
+
+  it("falls back to the original image when conversion fails", async () => {
+    const encodeJpeg = vi.fn(async () => {
+      throw new Error("decode exploded");
+    });
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend, encodeJpeg } });
+    await stagePng(container);
+    await vi.waitFor(() => expect(encodeJpeg).toHaveBeenCalledTimes(1));
+
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const [, images] = onSend.mock.calls[0] ?? [];
+    expect(images[0]?.mimeType).toBe("image/png");
+    expect(images[0]?.url).toMatch(/^data:image\/png;base64,/);
   });
 });
 
