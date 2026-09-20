@@ -10,6 +10,7 @@ function entry(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
     defaultCwd: null,
     defaultComputerId: null,
     starred: false,
+    archived: false,
     createdAt: 1,
     lastActivityAt: 2,
     conversationCount: 0,
@@ -22,9 +23,14 @@ function fakeHttp(opts: {
   list?: readonly WorkspaceEntry[];
   star?: (id: string) => Promise<WorkspaceResult<Workspace>>;
   unstar?: (id: string) => Promise<WorkspaceResult<Workspace>>;
+  archive?: (id: string) => Promise<WorkspaceResult<Workspace>>;
+  unarchive?: (id: string) => Promise<WorkspaceResult<Workspace>>;
 }) {
   return {
-    list: vi.fn(async (): Promise<readonly WorkspaceEntry[]> => opts.list ?? []),
+    list: vi.fn(
+      async (_archived?: "true" | "false" | "all"): Promise<readonly WorkspaceEntry[]> =>
+        opts.list ?? [],
+    ),
     ensure: vi.fn(),
     get: vi.fn(),
     setTitle: vi.fn(),
@@ -44,6 +50,22 @@ function fakeHttp(opts: {
         async (id: string): Promise<WorkspaceResult<Workspace>> => ({
           ok: true,
           value: entry({ id, starred: false }),
+        }),
+      ),
+    archive:
+      opts.archive ??
+      vi.fn(
+        async (id: string): Promise<WorkspaceResult<Workspace>> => ({
+          ok: true,
+          value: entry({ id, archived: true }),
+        }),
+      ),
+    unarchive:
+      opts.unarchive ??
+      vi.fn(
+        async (id: string): Promise<WorkspaceResult<Workspace>> => ({
+          ok: true,
+          value: entry({ id, archived: false }),
         }),
       ),
     delete: vi.fn(),
@@ -141,5 +163,86 @@ describe("createWorkspaceStore — setStarred", () => {
     expect(http.star).toHaveBeenCalledWith("ghost");
     // The list is unchanged (the workspace wasn't loaded); a refresh reconciles.
     expect(store.list).toHaveLength(0);
+  });
+});
+
+describe("createWorkspaceStore — setArchived", () => {
+  it("optimistically flips archived to true before the request resolves", async () => {
+    const http = fakeHttp({ list: [entry({ id: "a", archived: false })] });
+    const store = createWorkspaceStore(http);
+    await store.refresh();
+
+    let observedDuringCall = false;
+    http.archive = vi.fn(async (_id: string): Promise<WorkspaceResult<Workspace>> => {
+      // While the request is in flight, the store already shows the new state.
+      observedDuringCall = store.list[0]?.archived === true;
+      return { ok: true, value: entry({ id: "a", archived: true }) };
+    });
+
+    await store.setArchived("a", true);
+
+    expect(observedDuringCall).toBe(true);
+    expect(http.archive).toHaveBeenCalledWith("a");
+  });
+
+  it("calls unarchive (DELETE) when archiving false", async () => {
+    const http = fakeHttp({ list: [entry({ id: "a", archived: true })] });
+    const store = createWorkspaceStore(http);
+    await store.refresh();
+
+    await store.setArchived("a", false);
+
+    expect(http.unarchive).toHaveBeenCalledWith("a");
+    expect(http.archive).not.toHaveBeenCalled();
+  });
+
+  it("reverts the optimistic flip on error", async () => {
+    const http = fakeHttp({ list: [entry({ id: "a", archived: false })] });
+    const store = createWorkspaceStore(http);
+    await store.refresh();
+
+    http.archive = vi.fn(
+      async (): Promise<WorkspaceResult<Workspace>> => ({ ok: false, error: "boom" }),
+    );
+
+    const result = await store.setArchived("a", true);
+
+    expect(result).toEqual({ ok: false, error: "boom" });
+    expect(store.list[0]?.archived).toBe(false);
+  });
+
+  it("refreshes the active list after a successful archive", async () => {
+    const http = fakeHttp({ list: [entry({ id: "a", archived: false })] });
+    const store = createWorkspaceStore(http);
+    await store.refresh();
+    const listCallsBefore = http.list.mock.calls.length;
+
+    await store.setArchived("a", true);
+
+    // setArchived triggers a refresh() to reconcile the active-only list.
+    expect(http.list.mock.calls.length).toBeGreaterThan(listCallsBefore);
+  });
+});
+
+describe("createWorkspaceStore — refreshArchived", () => {
+  it("loads the archived list via list('true') without touching the main list", async () => {
+    const http = fakeHttp({ list: [entry({ id: "active", archived: false })] });
+    const store = createWorkspaceStore(http);
+    await store.refresh();
+
+    // Point the archived call at a different payload.
+    http.list = vi.fn(
+      async (archived?: "true" | "false" | "all"): Promise<readonly WorkspaceEntry[]> =>
+        archived === "true"
+          ? [entry({ id: "done", archived: true })]
+          : [entry({ id: "active", archived: false })],
+    );
+
+    await store.refreshArchived();
+
+    expect(http.list).toHaveBeenCalledWith("true");
+    expect(store.archivedList.map((w) => w.id)).toEqual(["done"]);
+    // The main (active) list is untouched.
+    expect(store.list.map((w) => w.id)).toEqual(["active"]);
   });
 });

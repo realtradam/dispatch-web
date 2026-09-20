@@ -15,6 +15,7 @@ function ws(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
     defaultCwd: null,
     defaultComputerId: null,
     starred: false,
+    archived: false,
     createdAt: 1,
     lastActivityAt: 2,
     conversationCount: 1,

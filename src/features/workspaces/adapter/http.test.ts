@@ -186,4 +186,67 @@ describe("createWorkspaceHttp", () => {
     const result = await http.unstar("a");
     expect(result).toEqual({ ok: false, error: "Failed to unstar workspace" });
   });
+
+  it("list passes the archived filter as a query param", async () => {
+    const fetchImpl = fakeFetch([{ body: { workspaces: [] } }]);
+    const http = createWorkspaceHttp(BASE, fetchImpl);
+    await http.list("true");
+    expect(fetchImpl).toHaveBeenCalledWith(`${BASE}/workspaces?archived=true`);
+  });
+
+  it("list omits the query param when no filter is given", async () => {
+    const fetchImpl = fakeFetch([{ body: { workspaces: [] } }]);
+    const http = createWorkspaceHttp(BASE, fetchImpl);
+    await http.list();
+    expect(fetchImpl).toHaveBeenCalledWith(`${BASE}/workspaces`);
+  });
+
+  it("archive PUTs /archive with no body and returns the updated workspace", async () => {
+    const ws = {
+      id: "a",
+      title: "A",
+      defaultCwd: null,
+      defaultComputerId: null,
+      starred: false,
+      archived: true,
+      createdAt: 1,
+      lastActivityAt: 2,
+    };
+    const fetchImpl = fakeFetch([{ body: ws }]);
+    const http = createWorkspaceHttp(BASE, fetchImpl);
+    const result = await http.archive("a");
+    expect(result).toEqual({ ok: true, value: ws });
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call?.[0]).toBe(`${BASE}/workspaces/a/archive`);
+    expect(call?.[1]).toEqual({ method: "PUT" });
+  });
+
+  it("unarchive DELETEs /archive with no body and returns the updated workspace", async () => {
+    const ws = {
+      id: "a",
+      title: "A",
+      defaultCwd: null,
+      defaultComputerId: null,
+      starred: false,
+      archived: false,
+      createdAt: 1,
+      lastActivityAt: 2,
+    };
+    const fetchImpl = fakeFetch([{ body: ws }]);
+    const http = createWorkspaceHttp(BASE, fetchImpl);
+    const result = await http.unarchive("a");
+    expect(result).toEqual({ ok: true, value: ws });
+    const call = (fetchImpl as unknown as ReturnType<typeof vi.fn>).mock.calls[0];
+    expect(call?.[0]).toBe(`${BASE}/workspaces/a/archive`);
+    expect(call?.[1]).toEqual({ method: "DELETE" });
+  });
+
+  it("archive surfaces the backend error on a 409 (default workspace)", async () => {
+    const http = createWorkspaceHttp(
+      BASE,
+      fakeFetch([{ status: 409, body: { error: 'The "default" workspace cannot be archived' } }]),
+    );
+    const result = await http.archive("default");
+    expect(result).toEqual({ ok: false, error: 'The "default" workspace cannot be archived' });
+  });
 });

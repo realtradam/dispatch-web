@@ -1,7 +1,7 @@
 import type { EnsureWorkspaceRequest } from "@dispatch/transport-contract";
 import type { Workspace, WorkspaceEntry } from "@dispatch/wire";
 import type { WorkspaceHttp, WorkspaceResult } from "./adapter/http";
-import { applyStarred, sortWorkspaces } from "./logic/view-model";
+import { applyArchived, applyStarred, sortWorkspaces } from "./logic/view-model";
 
 /**
  * Workspace store — a thin reactive wrapper over the pure HTTP edge. Owns the
@@ -16,10 +16,15 @@ export interface WorkspaceStore {
    * backend's `lastActivityAt`-desc order; this getter re-sorts reactively.
    */
   readonly list: readonly WorkspaceEntry[];
+  /** Archived workspaces, for the archived view. Loaded via `refreshArchived()`. */
+  readonly archivedList: readonly WorkspaceEntry[];
   readonly loading: boolean;
+  readonly archivedLoading: boolean;
   readonly error: string | null;
   /** Refresh the list from the backend. */
   refresh(): Promise<void>;
+  /** Refresh the archived list (`GET /workspaces?archived=true`). */
+  refreshArchived(): Promise<void>;
   /** `PUT /workspaces/:id` (create-on-miss). Returns the workspace or an error. */
   ensure(id: string, body?: EnsureWorkspaceRequest): Promise<WorkspaceResult<Workspace>>;
   /** Rename a workspace (display only; id unchanged). */
@@ -34,24 +39,40 @@ export interface WorkspaceStore {
    * reverts to the prior value. No full refresh on success (avoids flicker).
    */
   setStarred(id: string, starred: boolean): Promise<WorkspaceResult<Workspace>>;
+  /**
+   * Archive or unarchive a workspace. Optimistic: the local `archived` flag
+   * flips immediately (archiving drops the tile from the home grid); on error
+   * it reverts to the prior value. A successful archive/unarchive is followed
+   * by a `refresh()` so the active list reflects the backend (the archived
+   * workspace leaves/enters the default-filtered list).
+   */
+  setArchived(id: string, archived: boolean): Promise<WorkspaceResult<Workspace>>;
   /** Delete a workspace (closes its conversations, reassigns to "default"). */
   remove(id: string): Promise<WorkspaceResult<{ closedCount: number }>>;
 }
 
 export function createWorkspaceStore(http: WorkspaceHttp): WorkspaceStore {
   let list = $state<readonly WorkspaceEntry[]>([]);
+  let archivedList = $state<readonly WorkspaceEntry[]>([]);
   // Sorted view (starred first, then most-recent) — derived so it recomputes
   // only when the backing list changes, not on every read.
   let sorted = $derived(sortWorkspaces(list));
   let loading = $state(false);
+  let archivedLoading = $state(false);
   let error = $state<string | null>(null);
 
   return {
     get list(): readonly WorkspaceEntry[] {
       return sorted;
     },
+    get archivedList(): readonly WorkspaceEntry[] {
+      return archivedList;
+    },
     get loading(): boolean {
       return loading;
+    },
+    get archivedLoading(): boolean {
+      return archivedLoading;
     },
     get error(): string | null {
       return error;
@@ -66,6 +87,18 @@ export function createWorkspaceStore(http: WorkspaceHttp): WorkspaceStore {
         error = err instanceof Error ? err.message : "Failed to load workspaces";
       } finally {
         loading = false;
+      }
+    },
+
+    async refreshArchived(): Promise<void> {
+      archivedLoading = true;
+      error = null;
+      try {
+        archivedList = await http.list("true");
+      } catch (err) {
+        error = err instanceof Error ? err.message : "Failed to load archived workspaces";
+      } finally {
+        archivedLoading = false;
       }
     },
 
@@ -102,6 +135,22 @@ export function createWorkspaceStore(http: WorkspaceHttp): WorkspaceStore {
         // Revert the optimistic flip on failure.
         list = applyStarred(list, id, prev);
       }
+      return result;
+    },
+
+    async setArchived(id, archived): Promise<WorkspaceResult<Workspace>> {
+      const prev = list.find((w) => w.id === id)?.archived ?? false;
+      // Optimistic: flip immediately so the tile leaves/enters the home grid.
+      list = applyArchived(list, id, archived);
+      const result = archived ? await http.archive(id) : await http.unarchive(id);
+      if (!result.ok) {
+        // Revert the optimistic flip on failure.
+        list = applyArchived(list, id, prev);
+        return result;
+      }
+      // Reconcile with the backend's default (active-only) filter so the
+      // archived tile is dropped / the unarchived tile is restored.
+      void this.refresh();
       return result;
     },
 

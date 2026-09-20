@@ -8,6 +8,7 @@ function props() {
     onCreate: vi.fn(async (_slug: string): Promise<{ ok: true }> => ({ ok: true })),
     onOpenPlugins: vi.fn(),
     onSort: vi.fn(),
+    onOpenArchived: vi.fn(),
   };
 }
 

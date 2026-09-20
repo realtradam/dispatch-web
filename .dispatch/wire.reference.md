@@ -6,6 +6,15 @@
 >
 > **Orchestrator:** SNAPSHOT of `wire@0.12.0` (workspaces + computers + provider-retry + concurrency-`queued` status). Regenerate whenever `@dispatch/wire` changes.
 >
+> **2026-09-20 delta (workspace archiving — ADDITIVE to `wire@0.12.0`, NO version bump):** `Workspace` gains a
+> required `archived: boolean` (defaults to `false` on creation; legacy rows normalize to `false`). An archived
+> workspace is HIDDEN from the home grid WITHOUT deleting its data (conversations/settings untouched) and can be
+> unarchived at any time. Toggled via dedicated `PUT`/`DELETE /workspaces/:id/archive` endpoints (no body; both
+> create-on-miss and return the updated `Workspace`; both reject `"default"` with 409). `GET /workspaces` takes an
+> optional `?archived=` query: `true` → archived only, `all` → every workspace, absent/other → non-archived only
+> (the home grid's default). `PUT /workspaces/:id` does NOT accept an `archived` field. Implemented in BOTH repos
+> of the `feature/archive-workspaces` worktree (see `backend-handoff.md`).
+>
 > **2026-08-25 delta (per-conversation model on ConversationMeta — ADDITIVE, no version bump):**
 > `ConversationMeta` gains an optional `model?: string` (`<credential>/<model>`, absENT = default
 > provider model). Surfaced on `GET /conversations` and the `conversation.open` WS broadcast so the
@@ -749,6 +758,14 @@ export interface Workspace {
 	 * Defaults to `false` on creation.
 	 */
 	readonly starred: boolean;
+	/**
+	 * Whether the workspace is archived by the user. Archived workspaces are
+	 * HIDDEN from the home grid (`GET /workspaces` excludes them by default;
+	 * `?archived=` opts back in) without deleting their data — the workspace,
+	 * its conversations, and its settings are untouched, and it can be
+	 * unarchived at any time. Defaults to `false` on creation.
+	 */
+	readonly archived: boolean;
 	/** Epoch-ms when the workspace was first created. */
 	readonly createdAt: number;
 	/** Epoch-ms of the most recent conversation activity in this workspace. */

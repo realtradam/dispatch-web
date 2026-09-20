@@ -22,6 +22,7 @@
   import TileActionBar from "./TileActionBar.svelte";
   import ResizePicker from "./ResizePicker.svelte";
   import WorkspaceDetails from "./WorkspaceDetails.svelte";
+  import ArchivedWorkspaces from "./ArchivedWorkspaces.svelte";
 
   let {
     store,
@@ -178,6 +179,9 @@
   // loads/unloads code (strict layering).
   let managerOpen = $state(false);
 
+  // ── Archived workspaces modal ──────────────────────────────────────────────
+  let archivedOpen = $state(false);
+
   // ── Actions (the action bar) ───────────────────────────────────────────────
   function openWorkspace(id: string): void {
     deselect();
@@ -201,6 +205,14 @@
   async function toggleStar(): Promise<void> {
     if (!selected) return;
     await store.setStarred(selected.id, !selected.starred);
+  }
+
+  async function archiveSelected(): Promise<void> {
+    if (!selected) return;
+    const ws = selected;
+    // Reversible without a confirm dialog — the workspace is hidden, not deleted.
+    const result = await store.setArchived(ws.id, true);
+    if (result.ok) deselect();
   }
 
   // ── Create (header popover): create on the backend — do NOT navigate —
@@ -245,6 +257,7 @@
     onCreate={createWorkspace}
     onOpenPlugins={() => (managerOpen = true)}
     onSort={() => void sortByRecent()}
+    onOpenArchived={() => (archivedOpen = true)}
   />
 
   <div bind:this={regionEl} class="min-h-0 w-full flex-1">
@@ -294,6 +307,7 @@
     onToggleStar={() => void toggleStar()}
     onDetails={() => (detailsForId = selected.id)}
     onPlugins={() => (pluginsModalId = selected.id)}
+    onArchive={() => void archiveSelected()}
     onDelete={() => void deleteSelected()}
     onClose={deselect}
   />
@@ -327,4 +341,12 @@
 
 {#if managerOpen && plugins}
   <PluginManager {plugins} onClose={() => (managerOpen = false)} />
+{/if}
+
+{#if archivedOpen}
+  <ArchivedWorkspaces
+    {store}
+    onOpen={(id) => openWorkspace(id)}
+    onClose={() => (archivedOpen = false)}
+  />
 {/if}

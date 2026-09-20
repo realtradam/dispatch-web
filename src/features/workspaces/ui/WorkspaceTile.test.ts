@@ -14,6 +14,7 @@ function fakeEntry(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
     defaultCwd: null,
     defaultComputerId: null,
     starred: false,
+    archived: false,
     createdAt: 1,
     lastActivityAt: Date.now() - 90_000, // "1m" relative time
     conversationCount: 3,

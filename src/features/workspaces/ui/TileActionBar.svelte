@@ -11,6 +11,7 @@
     onToggleStar,
     onDetails,
     onPlugins,
+    onArchive,
     onDelete,
     onClose,
   }: {
@@ -24,6 +25,8 @@
     /** The details flyout (default cwd + default computer). */
     onDetails: () => void;
     onPlugins: () => void;
+    /** Archive the workspace (hide from the home grid; reversible). */
+    onArchive: () => void;
     onDelete: () => void;
     onClose: () => void;
   } = $props();
@@ -53,6 +56,7 @@
     {#if withPlugins}
       <button type="button" class="btn btn-ghost btn-sm" onclick={onPlugins}>Plugins</button>
     {/if}
+    <button type="button" class="btn btn-ghost btn-sm" onclick={onArchive}>Archive</button>
     <button
       type="button"
       class="btn btn-ghost btn-sm text-error"

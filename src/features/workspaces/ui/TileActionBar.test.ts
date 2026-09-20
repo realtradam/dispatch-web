@@ -11,6 +11,7 @@ function ws(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
     defaultCwd: null,
     defaultComputerId: null,
     starred: false,
+    archived: false,
     createdAt: 1,
     lastActivityAt: 2,
     conversationCount: 0,
@@ -26,6 +27,7 @@ function handlers() {
     onToggleStar: vi.fn(),
     onDetails: vi.fn(),
     onPlugins: vi.fn(),
+    onArchive: vi.fn(),
     onDelete: vi.fn(),
     onClose: vi.fn(),
   };
@@ -40,6 +42,7 @@ describe("TileActionBar", () => {
     expect(screen.getByRole("button", { name: "Resize" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Star" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Details" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Archive" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Delete" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Close actions" })).toBeInTheDocument();
   });
@@ -74,6 +77,7 @@ describe("TileActionBar", () => {
     await user.click(screen.getByRole("button", { name: "Resize" }));
     await user.click(screen.getByRole("button", { name: "Star" }));
     await user.click(screen.getByRole("button", { name: "Details" }));
+    await user.click(screen.getByRole("button", { name: "Archive" }));
     await user.click(screen.getByRole("button", { name: "Delete" }));
     await user.click(screen.getByRole("button", { name: "Close actions" }));
 
@@ -82,6 +86,7 @@ describe("TileActionBar", () => {
     expect(h.onResize).toHaveBeenCalledTimes(1);
     expect(h.onToggleStar).toHaveBeenCalledTimes(1);
     expect(h.onDetails).toHaveBeenCalledTimes(1);
+    expect(h.onArchive).toHaveBeenCalledTimes(1);
     expect(h.onDelete).toHaveBeenCalledTimes(1);
     expect(h.onClose).toHaveBeenCalledTimes(1);
   });

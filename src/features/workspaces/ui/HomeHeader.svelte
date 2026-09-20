@@ -11,6 +11,7 @@
     onCreate,
     onOpenPlugins,
     onSort,
+    onOpenArchived,
   }: {
     /** Tall geometry: the controls collapse to compact icon buttons and the
      * new-workspace popover becomes a bottom sheet. */
@@ -24,6 +25,8 @@
     onCreate: (slug: string) => Promise<CreateResult>;
     onOpenPlugins: () => void;
     onSort: () => void;
+    /** Open the archived-workspaces view. */
+    onOpenArchived: () => void;
   } = $props();
 
   // ── New workspace popover (today's inline form logic, preserved) ──────────
@@ -119,6 +122,22 @@
         </ul>
       </div>
     {/if}
+
+    <!-- Archived workspaces -->
+    <button
+      type="button"
+      class="btn btn-ghost btn-sm"
+      class:btn-circle={compact}
+      aria-label="Archived workspaces"
+      title="View archived workspaces"
+      onclick={onOpenArchived}
+    >
+      {#if compact}
+        <span aria-hidden="true">🗄</span>
+      {:else}
+        Archived
+      {/if}
+    </button>
   </div>
 </header>
 

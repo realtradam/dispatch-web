@@ -1,6 +1,13 @@
 import type { WorkspaceEntry } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
-import { applyStarred, pageTitle, relativeTime, sortWorkspaces, tileTone } from "./view-model";
+import {
+  applyArchived,
+  applyStarred,
+  pageTitle,
+  relativeTime,
+  sortWorkspaces,
+  tileTone,
+} from "./view-model";
 
 describe("tileTone", () => {
   const TONES = ["primary", "secondary", "accent", "info", "success", "warning"];
@@ -69,6 +76,7 @@ describe("pageTitle", () => {
     defaultCwd: null,
     defaultComputerId: null,
     starred: false,
+    archived: false,
     createdAt: 0,
     lastActivityAt: 0,
     conversationCount: 0,
@@ -106,6 +114,7 @@ describe("sortWorkspaces", () => {
     defaultCwd: null,
     defaultComputerId: null,
     starred,
+    archived: false,
     createdAt: 0,
     lastActivityAt,
     conversationCount: 0,
@@ -164,6 +173,7 @@ describe("applyStarred", () => {
     defaultCwd: null,
     defaultComputerId: null,
     starred,
+    archived: false,
     createdAt: 0,
     lastActivityAt: 0,
     conversationCount: 0,
@@ -206,5 +216,52 @@ describe("applyStarred", () => {
     expect(optimistic[0]?.starred).toBe(true);
     const reverted = applyStarred(optimistic, "a", false);
     expect(reverted[0]?.starred).toBe(false);
+  });
+});
+
+describe("applyArchived", () => {
+  const entry = (id: string, archived: boolean): WorkspaceEntry => ({
+    id,
+    title: id,
+    defaultCwd: null,
+    defaultComputerId: null,
+    starred: false,
+    archived,
+    createdAt: 0,
+    lastActivityAt: 0,
+    conversationCount: 0,
+  });
+
+  it("sets the named workspace's archived flag", () => {
+    const list = [entry("a", false), entry("b", false)];
+    const next = applyArchived(list, "b", true);
+    expect(next.map((w) => [w.id, w.archived])).toEqual([
+      ["a", false],
+      ["b", true],
+    ]);
+  });
+
+  it("returns a new array (does not mutate the input)", () => {
+    const list = [entry("a", false)];
+    const next = applyArchived(list, "a", true);
+    expect(next).not.toBe(list);
+    expect(list[0]?.archived).toBe(false);
+    expect(next[0]?.archived).toBe(true);
+  });
+
+  it("leaves other entries referentially unchanged (only the target is replaced)", () => {
+    const a = entry("a", false);
+    const b = entry("b", false);
+    const next = applyArchived([a, b], "b", true);
+    expect(next[0]).toBe(a);
+    expect(next[1]).not.toBe(b);
+  });
+
+  it("can revert by re-applying the previous value (unarchive)", () => {
+    const list = [entry("a", false)];
+    const optimistic = applyArchived(list, "a", true);
+    expect(optimistic[0]?.archived).toBe(true);
+    const reverted = applyArchived(optimistic, "a", false);
+    expect(reverted[0]?.archived).toBe(false);
   });
 });

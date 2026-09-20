@@ -19,7 +19,7 @@ import type {
  * safe empty/null on failure (non-fatal — the UI falls back gracefully).
  *
  * Endpoints (transport-contract@0.16.0):
- * - `GET /workspaces` → list
+ * - `GET /workspaces` (optional `?archived=true|false|all`, default `false` = active only) → list
  * - `PUT /workspaces/:id` (create-on-miss, idempotent) → ensure
  * - `GET /workspaces/:id` (404 → null) → get
  * - `PUT /workspaces/:id/title` → rename
@@ -27,14 +27,19 @@ import type {
  * - `PUT /workspaces/:id/default-computer` → set/clear default computer (SSH handoff #2)
  * - `PUT /workspaces/:id/star` (create-on-miss) → star (concurrency priority)
  * - `DELETE /workspaces/:id/star` (create-on-miss) → unstar
+ * - `PUT /workspaces/:id/archive` (create-on-miss; 409 for "default") → archive (hide from home grid)
+ * - `DELETE /workspaces/:id/archive` (create-on-miss; 409 for "default") → unarchive
  * - `DELETE /workspaces/:id` (409 for "default") → delete
  */
 export type WorkspaceResult<T> =
   | { readonly ok: true; readonly value: T }
   | { readonly ok: false; readonly error: string };
 
+/** Which workspaces `GET /workspaces` returns: active-only (default), archived-only, or all. */
+export type WorkspaceArchivedFilter = "true" | "false" | "all";
+
 export interface WorkspaceHttp {
-  list(): Promise<readonly WorkspaceEntry[]>;
+  list(archived?: WorkspaceArchivedFilter): Promise<readonly WorkspaceEntry[]>;
   ensure(id: string, body?: EnsureWorkspaceRequest): Promise<WorkspaceResult<Workspace>>;
   get(id: string): Promise<Workspace | null>;
   setTitle(id: string, title: string): Promise<WorkspaceResult<Workspace>>;
@@ -44,6 +49,10 @@ export interface WorkspaceHttp {
   star(id: string): Promise<WorkspaceResult<Workspace>>;
   /** Unstar a workspace. Create-on-miss; no body. */
   unstar(id: string): Promise<WorkspaceResult<Workspace>>;
+  /** Archive a workspace (hide from the home grid; data untouched). Create-on-miss; no body. */
+  archive(id: string): Promise<WorkspaceResult<Workspace>>;
+  /** Unarchive a workspace (restore to the home grid). Create-on-miss; no body. */
+  unarchive(id: string): Promise<WorkspaceResult<Workspace>>;
   delete(id: string): Promise<WorkspaceResult<{ closedCount: number }>>;
 }
 
@@ -58,9 +67,10 @@ async function errText(res: Response): Promise<string> {
 
 export function createWorkspaceHttp(httpBase: string, fetchImpl: typeof fetch): WorkspaceHttp {
   return {
-    async list(): Promise<readonly WorkspaceEntry[]> {
+    async list(archived?: WorkspaceArchivedFilter): Promise<readonly WorkspaceEntry[]> {
       try {
-        const res = await fetchImpl(`${httpBase}/workspaces`);
+        const qs = archived !== undefined ? `?archived=${archived}` : "";
+        const res = await fetchImpl(`${httpBase}/workspaces${qs}`);
         if (!res.ok) return [];
         const data = (await res.json()) as WorkspaceListResponse;
         return data.workspaces;
@@ -168,6 +178,30 @@ export function createWorkspaceHttp(httpBase: string, fetchImpl: typeof fetch): 
         return { ok: true, value: (await res.json()) as WorkspaceResponse };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : "Unstar failed" };
+      }
+    },
+
+    async archive(id): Promise<WorkspaceResult<Workspace>> {
+      try {
+        const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(id)}/archive`, {
+          method: "PUT",
+        });
+        if (!res.ok) return { ok: false, error: await errText(res) };
+        return { ok: true, value: (await res.json()) as WorkspaceResponse };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : "Archive failed" };
+      }
+    },
+
+    async unarchive(id): Promise<WorkspaceResult<Workspace>> {
+      try {
+        const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(id)}/archive`, {
+          method: "DELETE",
+        });
+        if (!res.ok) return { ok: false, error: await errText(res) };
+        return { ok: true, value: (await res.json()) as WorkspaceResponse };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : "Unarchive failed" };
       }
     },
 

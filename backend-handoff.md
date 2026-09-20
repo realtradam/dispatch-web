@@ -11,6 +11,48 @@
 > "never edit the backend repo" rule is superseded by that task's scope — the backend contract
 > changes below were made in the same branch and the FE consumes them via the `file:` deps
 > (dists rebuilt). Listed here for the record.
+>
+> **NOTE (archive-workspaces worktree, 2026-09-20):** the archive-workspaces feature was likewise
+> implemented in BOTH repos of one worktree (branch `feature/archive-workspaces`), so the backend
+> contract change (`Workspace.archived`, `PUT/DELETE /workspaces/:id/archive`, `GET /workspaces
+> ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
+> rebuilt). Recorded below.
+
+## Milestone: Workspace archiving (`feature/archive-workspaces`)
+
+**Slice status:** COMPLETE + committed (both repos, `feature/archive-workspaces`).
+
+### The contract change (made in the backend worktree, same branch)
+- `@dispatch/wire` `Workspace.archived: boolean` (required; defaults `false`; legacy rows → `false`).
+- `PUT /workspaces/:id/archive` + `DELETE /workspaces/:id/archive` — no body, create-on-miss,
+  return the updated `Workspace`, **409 for `"default"`**.
+- `GET /workspaces?archived=` — `true` → archived only, `all` → every workspace, absent/other →
+  non-archived only (the home grid's default).
+- Mirror: `.dispatch/wire.reference.md` updated with the 2026-09-20 delta.
+
+### What the FE built
+- `adapter/http.ts` — `archive(id)`/`unarchive(id)`; `list(archived?: "true"|"false"|"all")` passes
+  the `?archived=` query.
+- `logic/view-model.ts` — pure `applyArchived(list, id, archived)` (mirrors `applyStarred`).
+- `store.svelte.ts` — `setArchived(id, archived)` (optimistic + revert-on-error + a reconciling
+  `refresh()` so the archived tile leaves / the unarchived tile re-enters the active list);
+  `archivedList` + `refreshArchived()` for the archived view.
+- `ui/TileActionBar.svelte` — new **Archive** action (the right-click→select action bar).
+- `ui/HomeHeader.svelte` — new **Archived** button opens the archived view.
+- `ui/ArchivedWorkspaces.svelte` (new) — a modal listing archived workspaces (title, id,
+  conversation count, last-activity) with **Unarchive** and **View** (navigates to `/<id>`).
+- `ui/WorkspacesHome.svelte` — wires the Archive action + the Archived modal.
+
+### Verification
+- Backend: `tsc -b` 0 errors; `vitest run` 3041 passed (16 new: store archived block + app archive
+  routes / `?archived=` filter); `biome check` clean.
+- Frontend: `svelte-check` 0 errors; `vitest run` 1734 passed; `biome check` clean; `vite build` ok.
+
+### Note for the user
+- Archiving is reversible and touches no conversations. The archived tile's layout slot is freed
+  (backend default filter excludes it → `tiles.sync` drops the entry); unarchiving re-appends it at
+  the first free cell.
+
 
 ## Milestone: Layout plan 02 — provider consumption + layout WS + localStorage migration
 

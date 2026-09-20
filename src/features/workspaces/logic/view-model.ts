@@ -84,6 +84,20 @@ export function applyStarred<T extends WorkspaceEntry>(
 }
 
 /**
+ * Return a NEW list with the one workspace's `archived` flag set (immutably —
+ * the entry is replaced, the rest keep their identity). Pure: the optimistic
+ * archive/unarchive transformation shared by the apply + the error revert. A
+ * missing `id` leaves the list unchanged; a subsequent refresh reconciles.
+ */
+export function applyArchived<T extends WorkspaceEntry>(
+  workspaces: readonly T[],
+  id: string,
+  archived: boolean,
+): T[] {
+  return workspaces.map((w) => (w.id === id ? { ...w, archived } : w));
+}
+
+/**
  * Format an epoch-ms timestamp as a short relative string ("now", "3m", "2h",
  * "5d", or a date). Pure: `now` + `then` in, string out. Future timestamps
  * (a workspace just created) read as "now".
