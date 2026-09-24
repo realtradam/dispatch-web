@@ -17,6 +17,7 @@
   import { manifest as markdownManifest } from "../../features/markdown";
   import { manifest as mcpManifest } from "../../features/mcp";
   import { manifest as namedAgentsManifest } from "../../features/named-agents";
+  import { manifest as searchSettingsManifest } from "../../features/search-settings";
   import { manifest as settingsManifest } from "../../features/settings";
   import { manifest as smartScrollManifest } from "../../features/smart-scroll";
   import { SurfaceView } from "../../features/surface-host";
@@ -60,6 +61,7 @@
     concurrencyManifest,
     visionManifest,
     namedAgentsManifest,
+    searchSettingsManifest,
   ].map((m) => [m.name, m.description] as const);
 </script>
 

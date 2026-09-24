@@ -822,3 +822,33 @@ export interface ComputerEntry extends Computer {
 	readonly usageCount: number;
 }
 ```
+
+---
+
+## 2026-09-24 delta (search-backend-selection — ADDITIVE)
+
+The global search-backend selection wire types (`GET/PUT /search/config`, GLOBAL — not
+workspace-scoped) shipped in `@dispatch/wire` (transport-contract re-exports them):
+
+```ts
+/** The selected backend id. `"none"` = search off (scrape/crawl keep working). */
+export type SearchBackendId = "firecrawl" | "umans" | "none";
+
+/** One dropdown entry; `configured` is the availability gate (umans: UMANS_API_KEY resolves; firecrawl: always). */
+export interface SearchBackendAvailability {
+	readonly id: string;
+	readonly label: string;
+	readonly configured: boolean;
+}
+
+/** Response of `GET /search/config` — the selection + every registered backend's availability. */
+export interface SearchBackendConfigResponse {
+	readonly backend: string;
+	readonly available: readonly SearchBackendAvailability[];
+}
+
+/** Body of `PUT /search/config` — select a backend by id (or `"none"`). */
+export interface UpdateSearchConfigRequest {
+	readonly backend: string;
+}
+```

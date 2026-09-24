@@ -102,6 +102,10 @@ import type {
 import { normalizeNamedAgentRecord, normalizeNamedAgents } from "../features/named-agents";
 import type { PluginsStore } from "../features/plugins";
 import { createPluginsHttp, createPluginsStore } from "../features/plugins";
+import {
+  normalizeSearchBackendConfig,
+  type SearchBackendConfigResult,
+} from "../features/search-settings";
 import type { Tab, TabsState } from "../features/tabs";
 import { createTabsStore, deriveTitle, type TabsStore } from "../features/tabs";
 import {
@@ -530,6 +534,20 @@ export interface AppStore {
    * an empty list when the extension isn't loaded (`{ providers: [] }`).
    */
   concurrencyStatus(): Promise<ConcurrencyStatusResult>;
+  /**
+   * Load the GLOBAL search-backend selection
+   * (`GET /search/config`): which engine backs the `web_search` tool's search
+   * mode. Not workspace-scoped — the selection is global. `unavailable: true`
+   * on the failure variant marks the 503 degrade (the backend's
+   * search-config service not loaded) so the UI can disable the field.
+   */
+  searchBackendConfig(): Promise<SearchBackendConfigResult>;
+  /**
+   * Persist a new search-backend selection
+   * (`PUT /search/config`, body `{ backend }`). `400` (unknown/unconfigured
+   * backend) and `503` (service not loaded) both surface as `ok: false`.
+   */
+  setSearchBackend(backend: string): Promise<SearchBackendConfigResult>;
   /**
    * Fetch the per-slot release cooldown (ms) for one provider
    * (`GET /concurrency/cooldown/:providerId`). `404` (no concurrency config at
@@ -2553,6 +2571,56 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         return {
           ok: false,
           error: err instanceof Error ? err.message : "Concurrency status request failed",
+        };
+      }
+    },
+
+    async searchBackendConfig(): Promise<SearchBackendConfigResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/search/config`);
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Search config failed (HTTP ${res.status})`,
+            // The 503 degrade = the backend's search-config service not loaded
+            // (the tool-web-search extension absent) — a distinct UI state.
+            ...(res.status === 503 ? { unavailable: true } : {}),
+          };
+        }
+        // Normalize the untyped JSON at this network seam (pure helper) so a
+        // malformed/partial response can never crash the renderer.
+        const config = normalizeSearchBackendConfig(await res.json());
+        return { ok: true, config };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Search config request failed",
+        };
+      }
+    },
+
+    async setSearchBackend(backend: string): Promise<SearchBackendConfigResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/search/config`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({ backend }),
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Set search backend failed (HTTP ${res.status})`,
+            ...(res.status === 503 ? { unavailable: true } : {}),
+          };
+        }
+        const config = normalizeSearchBackendConfig(await res.json());
+        return { ok: true, config };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Set search backend request failed",
         };
       }
     },

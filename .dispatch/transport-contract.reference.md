@@ -1236,3 +1236,20 @@ export interface SetConcurrencyCooldownRequest {
 }
 ```
 
+
+---
+
+## 2026-09-24 delta (search-backend-selection — ADDITIVE, no version bump)
+
+GLOBAL search-backend selection routes (the `web_search` tool's search-mode engine; scrape/crawl
+ALWAYS route to the self-hosted Firecrawl client; the tool's `map` mode is REMOVED entirely):
+
+- `GET /search/config` → `SearchBackendConfigResponse` (`{ backend, available: SearchBackendAvailability[] }`
+  — re-exported from `@dispatch/wire`, see the wire delta below). When the `tool-web-search` extension
+  is NOT loaded the route degrades like heartbeat: 200 with the defaults (`backend: "firecrawl"`,
+  firecrawl-only availability).
+- `PUT /search/config` body `UpdateSearchConfigRequest` (`{ backend: string }`) → 200
+  `SearchBackendConfigResponse` | 400 (`{ error }` — unknown or not-configured backend) | 503
+  (service not loaded). The umans entry appears in `available` only when the backend has
+  `UMANS_API_KEY`; an unconfigured backend is listed but `configured: false` — the UI disables it,
+  it is never an error.

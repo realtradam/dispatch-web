@@ -8,6 +8,7 @@
    */
   import { tick } from "svelte";
   import { ChatLimitField, type ChatLimitSaveResult } from "../../features/settings";
+  import { SearchBackendField } from "../../features/search-settings";
   import type { AppViewPorts } from "../view-ports";
 
   let { ports }: { ports: AppViewPorts } = $props();
@@ -31,4 +32,8 @@
 
 <div class="flex flex-col gap-3">
   <ChatLimitField chatLimit={store.chatLimit} save={saveChatLimit} />
+  <SearchBackendField
+    load={() => store.searchBackendConfig()}
+    save={(backend) => store.setSearchBackend(backend)}
+  />
 </div>
