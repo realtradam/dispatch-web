@@ -203,7 +203,6 @@ describe("createFrontendDriver — the load lifecycle", () => {
     await new Promise((r) => setTimeout(r, 10));
     releaseImport?.();
     await Promise.all([first, second]);
-    // biome-ignore lint/suspicious/noConsole: temporary debug
     // The second pass sees `a` already imported (the queued sync ran after)
     // and unloads it — exactly one sweep, no interleaving.
     expect(h.sweeps).toEqual(["a"]);

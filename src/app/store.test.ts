@@ -803,7 +803,7 @@ describe("createAppStore", () => {
     const ws = fakeSocket();
     const fetchImpl: typeof fetch = async (
       input: string | URL | Request,
-      init?: RequestInit,
+      _init?: RequestInit,
     ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (/\/models(\?.*)?$/.test(url)) {
