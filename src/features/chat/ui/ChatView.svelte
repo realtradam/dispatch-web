@@ -10,6 +10,7 @@
     type TurnMetricsEntry,
   } from "../../../core/metrics";
   import { Markdown } from "../../markdown";
+  import LazyCollapse from "./LazyCollapse.svelte";
 
   const badgeClass = {
     success: "badge-success",
@@ -102,6 +103,22 @@
   });
 </script>
 
+{#snippet wrench()}
+  <svg
+    class="h-4 w-4 opacity-60"
+    xmlns="http://www.w3.org/2000/svg"
+    viewBox="0 0 24 24"
+    fill="none"
+    stroke="currentColor"
+    stroke-width="2"
+    stroke-linecap="round"
+    stroke-linejoin="round"
+    ><path
+      d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
+    /></svg
+  >
+{/snippet}
+
 {#snippet chunkRow(rendered: RenderedChunk)}
   {#if rendered.role === "user"}
     <!-- User: a speech bubble, left-aligned. A user message may be multi-chunk
@@ -130,18 +147,15 @@
          while generating, then "Thoughts" with no dots once complete. -->
     <div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
       <div class="chat-bubble w-full bg-transparent">
-        <div class="collapse w-full rounded-box bg-base-200 text-sm">
-          <input type="checkbox" aria-label="Toggle thoughts" />
-          <div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
+        <LazyCollapse label="Toggle thoughts">
+          {#snippet title()}
             <span>{rendered.streaming ? "Thinking" : "Thoughts"}</span>
             {#if rendered.streaming}
               <span class="loading loading-dots loading-sm" aria-label="Generating"></span>
             {/if}
-          </div>
-          <div class="collapse-content">
-            <p class="whitespace-pre-wrap">{rendered.chunk.text}</p>
-          </div>
-        </div>
+          {/snippet}
+          <p class="whitespace-pre-wrap">{rendered.chunk.type === "thinking" ? rendered.chunk.text : ""}</p>
+        </LazyCollapse>
       </div>
     </div>
   {:else if rendered.chunk.type === "tool-call" || rendered.chunk.type === "tool-result"}
@@ -151,61 +165,26 @@
     <div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
       <div class="chat-bubble w-full bg-transparent">
         {#if rendered.chunk.type === "tool-call"}
-          <div class="collapse w-full rounded-box bg-base-200 text-sm">
-            <input type="checkbox" aria-label="Toggle tool call" />
-            <div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
-              <svg
-                class="h-4 w-4 opacity-60"
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-                /></svg
-              >
-              <span>{rendered.chunk.toolName}</span>
-            </div>
-            <div class="collapse-content">
-              <pre class="overflow-x-auto text-xs">{JSON.stringify(
-                  rendered.chunk.input,
-                  null,
-                  2,
-                )}</pre>
-            </div>
-          </div>
+          {@const call = rendered.chunk}
+          <LazyCollapse label="Toggle tool call">
+            {#snippet title()}
+              {@render wrench()}
+              <span>{call.toolName}</span>
+            {/snippet}
+            <pre class="overflow-x-auto text-xs">{JSON.stringify(call.input, null, 2)}</pre>
+          </LazyCollapse>
         {:else}
-          <div class="collapse w-full rounded-box bg-base-200 text-sm">
-            <input type="checkbox" aria-label="Toggle tool result" />
-            <div
-              class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium"
-              class:text-error={rendered.chunk.isError}
-            >
-              <svg
-                class="h-4 w-4 opacity-60"
-                xmlns="http://www.w3.org/2000/svg"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                stroke-width="2"
-                stroke-linecap="round"
-                stroke-linejoin="round"
-                ><path
-                  d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-                /></svg
-              >
-              <span>{rendered.chunk.toolName}</span>
-              {#if rendered.chunk.isError}
+          {@const res = rendered.chunk}
+          <LazyCollapse label="Toggle tool result" titleClass={res.isError ? "text-error" : ""}>
+            {#snippet title()}
+              {@render wrench()}
+              <span>{res.toolName}</span>
+              {#if res.isError}
                 <span class="badge badge-error badge-xs">error</span>
               {/if}
-            </div>
-            <div class="collapse-content">
-              <pre class="max-h-96 overflow-auto text-xs">{rendered.chunk.content}</pre>
-            </div>
-          </div>
+            {/snippet}
+            <pre class="max-h-96 overflow-auto text-xs">{res.content}</pre>
+          </LazyCollapse>
         {/if}
       </div>
     </div>
@@ -246,6 +225,9 @@
     </div>
   {/if}
   {#each keyedRows as { row, key } (key)}
+    <!-- `.chat-row`: content-visibility:auto — the browser skips layout/paint
+         for rows outside the viewport (see app.css). -->
+    <div class="chat-row">
     {#if row.kind === "step-metrics"}
       {@const sv = viewStepMetrics(row.step, row.index)}
       {@const stepCache = viewCacheRate(row.step.usage)}
@@ -311,47 +293,29 @@
         <div class="chat-bubble w-full bg-transparent">
           <div class="flex flex-col gap-1">
             {#each row.group.entries as entry, entryIndex (entryIndex)}
-              <div class="collapse w-full rounded-box bg-base-200 text-sm">
-                <input type="checkbox" aria-label="Toggle tool call" />
-                <div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium">
-                  <svg
-                    class="h-4 w-4 opacity-60"
-                    xmlns="http://www.w3.org/2000/svg"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    stroke-width="2"
-                    stroke-linecap="round"
-                    stroke-linejoin="round"
-                    ><path
-                      d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-                    /></svg
-                  >
+              <LazyCollapse label="Toggle tool call">
+                {#snippet title()}
+                  {@render wrench()}
                   <span>{entry.call.toolName}</span>
                   {#if entry.result?.isError}
                     <span class="badge badge-error badge-xs">error</span>
                   {:else if entry.result === null}
                     <span class="loading loading-spinner loading-xs" aria-label="Running"></span>
                   {/if}
-                </div>
-                <div class="collapse-content">
-                  <pre class="overflow-x-auto text-xs">{JSON.stringify(
-                      entry.call.input,
-                      null,
-                      2,
-                    )}</pre>
-                  {#if entry.result}
-                    <pre
-                      class="mt-1 max-h-96 overflow-auto text-xs"
-                      class:text-error={entry.result.isError}>{entry.result.content}</pre>
-                  {/if}
-                </div>
-              </div>
+                {/snippet}
+                <pre class="overflow-x-auto text-xs">{JSON.stringify(entry.call.input, null, 2)}</pre>
+                {#if entry.result}
+                  <pre
+                    class="mt-1 max-h-96 overflow-auto text-xs"
+                    class:text-error={entry.result.isError}>{entry.result.content}</pre>
+                {/if}
+              </LazyCollapse>
             {/each}
           </div>
         </div>
       </div>
     {/if}
+    </div>
   {/each}
   {#if providerRetry}
     {@const rv = viewProviderRetry(providerRetry)}

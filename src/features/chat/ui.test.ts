@@ -10,6 +10,14 @@ import Composer from "./ui/Composer.svelte";
 import ModelSelector from "./ui/ModelSelector.svelte";
 import ReasoningEffortSelector from "./ui/ReasoningEffortSelector.svelte";
 
+/** Collapsed card bodies render lazily — open every card so its body mounts. */
+async function openAllCollapses(container: HTMLElement): Promise<void> {
+  const boxes = container.querySelectorAll<HTMLInputElement>('.collapse > input[type="checkbox"]');
+  for (const box of boxes) {
+    if (!box.checked) await userEvent.click(box);
+  }
+}
+
 describe("ChatView", () => {
   it("renders a message's text chunk", () => {
     const chunks: RenderedChunk[] = [
@@ -82,7 +90,7 @@ describe("ChatView", () => {
     expect(screen.queryByRole("button", { name: /show earlier/i })).not.toBeInTheDocument();
   });
 
-  it("renders tool-call chunks", () => {
+  it("renders tool-call chunks", async () => {
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -97,7 +105,8 @@ describe("ChatView", () => {
       },
     ];
 
-    render(ChatView, { props: { chunks } });
+    const { container } = render(ChatView, { props: { chunks } });
+    await openAllCollapses(container);
 
     expect(screen.getByText("read_file")).toBeInTheDocument();
     const pre = screen.getByText((content, element) => {
@@ -106,7 +115,7 @@ describe("ChatView", () => {
     expect(pre).toBeInTheDocument();
   });
 
-  it("renders tool-result chunks", () => {
+  it("renders tool-result chunks", async () => {
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -122,7 +131,8 @@ describe("ChatView", () => {
       },
     ];
 
-    render(ChatView, { props: { chunks } });
+    const { container } = render(ChatView, { props: { chunks } });
+    await openAllCollapses(container);
 
     expect(screen.getByText("read_file")).toBeInTheDocument();
     expect(screen.getByText("file contents here")).toBeInTheDocument();
@@ -200,7 +210,7 @@ describe("ChatView", () => {
     expect(log.children).toHaveLength(0);
   });
 
-  it("groups batched tool calls (shared stepId) into one DaisyUI list", () => {
+  it("groups batched tool calls (shared stepId) into one DaisyUI list", async () => {
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -242,6 +252,7 @@ describe("ChatView", () => {
     ];
 
     const { container } = render(ChatView, { props: { chunks } });
+    await openAllCollapses(container);
 
     // Batched calls render as collapsible cards (one per call), not a list.
     const collapses = container.querySelectorAll(".collapse");
@@ -735,7 +746,7 @@ describe("ChatView", () => {
     expect(container.querySelector("img")?.getAttribute("src")).toBe(url);
   });
 
-  it("renders a consult_vision tool call/result like any other tool", () => {
+  it("renders a consult_vision tool call/result like any other tool", async () => {
     // read_image is GONE — replaced by consult_vision (opens a vision-model
     // conversation, attaches the image + question, returns the answer). It is
     // a normal tool call: rendered generically by toolName.
@@ -765,7 +776,8 @@ describe("ChatView", () => {
       },
     ];
 
-    render(ChatView, { props: { chunks } });
+    const { container } = render(ChatView, { props: { chunks } });
+    await openAllCollapses(container);
 
     expect(screen.getAllByText("consult_vision").length).toBeGreaterThan(0);
     expect(screen.getByText("a red square on a white background")).toBeInTheDocument();

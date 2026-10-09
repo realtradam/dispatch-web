@@ -509,6 +509,7 @@ describe("createAppStore", () => {
       socketFactory: () => ws,
       fetchImpl: fakeFetchImpl(),
       localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
     });
     ws.resolveOpen();
 
@@ -887,6 +888,7 @@ describe("createAppStore", () => {
       socketFactory: () => ws,
       fetchImpl: fakeFetchImpl(),
       localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
     });
     ws.resolveOpen();
 

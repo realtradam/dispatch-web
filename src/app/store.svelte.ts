@@ -648,6 +648,13 @@ export interface CreateAppStoreOptions {
   localStorage?: Storage;
   /** The workspace to scope to at boot (its URL slug); "default" if absent. */
   workspaceId?: string;
+  /**
+   * How live chat events are batched before folding into a chat store.
+   * Default: once per animation frame (with a timeout fallback for hidden
+   * tabs). `null` = fold every event synchronously (tests that assert on the
+   * transcript immediately after feeding a frame).
+   */
+  chatFlushScheduler?: ((flush: () => void) => void) | null;
 }
 
 function createHistorySync(httpBase: string, fetchImpl: typeof fetch): HistorySync {
@@ -871,6 +878,27 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // Deltas are routed here in addition to `chatStores`.
   const watchStores = new Map<string, ChatStore>();
 
+  /**
+   * Coalesce live chat events to at most one fold + render per animation
+   * frame (a late-join replay of a long turn arrives as a burst of WS frames;
+   * folding each separately re-derives the whole transcript per frame). A
+   * timeout backs up rAF, which browsers pause in hidden tabs — a backgrounded
+   * tab still applies its events (just less often).
+   */
+  function scheduleChatFlush(flush: () => void): void {
+    let ran = false;
+    const run = (): void => {
+      if (ran) return;
+      ran = true;
+      flush();
+    };
+    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
+    setTimeout(run, 250);
+  }
+
+  const chatFlushScheduler =
+    opts?.chatFlushScheduler === undefined ? scheduleChatFlush : opts.chatFlushScheduler;
+
   function createChatFor(conversationId: string, model: string, workspaceId: string): ChatStore {
     return createChatStore({
       conversationId,
@@ -890,6 +918,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // `setChatLimit`.
       chatLimit: normalizeChatLimit(chatLimitStore.load()),
       canUnload: () => (unloadGate === null ? true : unloadGate()),
+      ...(chatFlushScheduler !== null ? { scheduleFlush: chatFlushScheduler } : {}),
       onError: (context, err) => {
         reportError(`${context} (conversation: ${conversationId})`, err);
       },

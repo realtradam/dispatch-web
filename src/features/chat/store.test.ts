@@ -1706,3 +1706,86 @@ describe("createChatStore", () => {
     expect(metricsSync.calls).toHaveLength(0);
   });
 });
+
+describe("createChatStore — batched delta application (scheduleFlush)", () => {
+  function setup() {
+    const scheduled: (() => void)[] = [];
+    const historySync = createFakeHistorySync();
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: historySync.impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+      scheduleFlush: (flush) => scheduled.push(flush),
+    });
+    const runScheduled = (): void => {
+      for (const f of scheduled.splice(0)) f();
+    };
+    return { store, scheduled, runScheduled, historySync };
+  }
+  const text = (delta: string) =>
+    deltaEvent({ type: "text-delta", conversationId: CONV_ID, turnId: "t1", delta });
+
+  it("queues a burst and applies it in ONE scheduled flush", () => {
+    const { store, scheduled, runScheduled } = setup();
+    store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+    for (let i = 0; i < 500; i++) store.handleDelta(text("x"));
+
+    expect(scheduled).toHaveLength(1);
+    expect(store.chunks).toHaveLength(0);
+
+    runScheduled();
+    expect(store.chunks).toHaveLength(1);
+    expect((store.chunks[0]?.chunk as { text: string }).text).toBe("x".repeat(500));
+    expect(store.generating).toBe(true);
+    store.dispose();
+  });
+
+  it("schedules a new flush for events arriving after a flush", () => {
+    const { store, scheduled, runScheduled } = setup();
+    store.handleDelta(text("a"));
+    runScheduled();
+    store.handleDelta(text("b"));
+    expect(scheduled).toHaveLength(1);
+    runScheduled();
+    expect((store.chunks[0]?.chunk as { text: string }).text).toBe("ab");
+    store.dispose();
+  });
+
+  it("a sealed turn in the batch still triggers a history sync", async () => {
+    const { store, runScheduled, historySync } = setup();
+    store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+    store.handleDelta(text("done"));
+    store.handleDelta(deltaEvent({ type: "turn-sealed", conversationId: CONV_ID, turnId: "t1" }));
+    expect(historySync.calls).toHaveLength(0);
+    runScheduled();
+    await vi.waitFor(() => expect(historySync.calls.length).toBeGreaterThan(0));
+    store.dispose();
+  });
+
+  it("send() flushes queued events first so the user echo lands after them", () => {
+    const { store } = setup();
+    store.handleDelta(text("earlier reply"));
+    store.send("next question");
+    const roles = store.chunks.map((c) => c.role);
+    expect(roles).toEqual(["assistant", "user"]);
+    store.dispose();
+  });
+
+  it("chunks getter returns a stable array for an unchanged transcript", () => {
+    const { store, runScheduled } = setup();
+    store.handleDelta(text("a"));
+    runScheduled();
+    expect(store.chunks).toBe(store.chunks);
+    store.dispose();
+  });
+
+  it("a flush after dispose is a no-op", () => {
+    const { store, scheduled } = setup();
+    store.handleDelta(text("a"));
+    store.dispose();
+    for (const f of scheduled) f();
+    expect(store.chunks).toHaveLength(0);
+  });
+});

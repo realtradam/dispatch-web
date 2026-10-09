@@ -438,6 +438,7 @@ describe("App component interaction tests", () => {
       socketFactory: () => ws,
       fetchImpl: fakeFetchImpl(),
       localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
     });
     ws.resolveOpen();
 

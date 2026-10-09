@@ -69,6 +69,15 @@ export interface ChatStoreDependencies {
    * `reportError` → full-screen error modal. Absent → errors are logged only.
    */
   readonly onError?: (context: string, err: unknown) => void;
+  /**
+   * Schedules a deferred flush of buffered live events (e.g. once per animation
+   * frame). When provided, `handleDelta` QUEUES events and folds the whole batch
+   * in one pass on the scheduled callback — so a burst (the late-join replay on
+   * opening a conversation mid-turn, or a fast stream on a slow device) costs ONE
+   * derivation + render instead of one per WS frame. Absent → every event is
+   * folded synchronously (the original behavior; used by tests).
+   */
+  readonly scheduleFlush?: (flush: () => void) => void;
 }
 
 export interface ChatStore {
@@ -195,6 +204,63 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
   let chatLimit = normalizeChatLimit(deps.chatLimit);
 
+  // Memoized projections, keyed by state-object identity (the reducers are
+  // immutable, so identity == content). The getters are read several times per
+  // render (ChatPane + ChatView); returning the SAME array for an unchanged
+  // state keeps downstream `$derived`s (grouping, metrics placement) from
+  // recomputing on every read. Plain closures, not `$derived` — a store factory
+  // may run inside a component effect, which would own (and later destroy) it.
+  const memo = <S, R>(fn: (s: S) => R): ((s: S) => R) => {
+    let lastIn: S | undefined;
+    let lastOut: R | undefined;
+    return (s) => {
+      if (lastOut === undefined || s !== lastIn) {
+        lastIn = s;
+        lastOut = fn(s);
+      }
+      return lastOut;
+    };
+  };
+  const chunksOf = memo(selectChunks);
+  const turnMetricsOf = memo(selectOrderedTurnMetrics);
+
+  // Buffered live events awaiting a scheduled flush (see `scheduleFlush`).
+  let pendingEvents: ChatDeltaMessage["event"][] = [];
+  let flushScheduled = false;
+
+  /** Fold every buffered event in one pass, then trim + sync once. */
+  function flushEvents(): void {
+    flushScheduled = false;
+    if (disposed || pendingEvents.length === 0) return;
+    const batch = pendingEvents;
+    pendingEvents = [];
+    applyEvents(batch);
+  }
+
+  function applyEvents(events: readonly ChatDeltaMessage["event"][]): void {
+    let t = transcript;
+    let m = metrics;
+    let sealed = false;
+    let failed = false;
+    for (const event of events) {
+      t = foldEvent(t, event);
+      m = foldMetricsEvent(m, event);
+      if (t.sealedTurnId !== null) sealed = true;
+      else if (event.type === "error") failed = true;
+    }
+    transcript = t;
+    metrics = m;
+    maybeTrim();
+    if (sealed) {
+      void syncTail();
+      void syncMetrics();
+    } else if (failed) {
+      // A turn that FAILS never seals, but the backend still persists the
+      // metrics it accumulated — pull them so the turn gets its row.
+      void syncMetrics();
+    }
+  }
+
   /**
    * Enforce the chat limit after a transcript mutation — unless the injected
    * gate says the reader is scrolled up (then defer; the next mutation retries
@@ -295,10 +361,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       return selectMessages(transcript);
     },
     get chunks(): readonly RenderedChunk[] {
-      return selectChunks(transcript);
+      return chunksOf(transcript);
     },
     get turnMetrics(): readonly TurnMetricsEntry[] {
-      return selectOrderedTurnMetrics(metrics);
+      return turnMetricsOf(metrics);
     },
     get currentContextSize(): number | undefined {
       return selectCurrentContextSize(metrics);
@@ -336,20 +402,19 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       if (msg.event.conversationId !== deps.conversationId) {
         return;
       }
-      transcript = foldEvent(transcript, msg.event);
-      metrics = foldMetricsEvent(metrics, msg.event);
-      maybeTrim();
-      if (transcript.sealedTurnId !== null) {
-        void syncTail();
-        void syncMetrics();
-      } else if (msg.event.type === "error") {
-        // A turn that FAILS never seals, but the backend still persists the
-        // metrics it accumulated — pull them so the turn gets its row.
-        void syncMetrics();
+      if (deps.scheduleFlush === undefined) {
+        applyEvents([msg.event]);
+        return;
+      }
+      pendingEvents.push(msg.event);
+      if (!flushScheduled) {
+        flushScheduled = true;
+        deps.scheduleFlush(flushEvents);
       }
     },
 
     send(text: string, images?: readonly ImageInput[]): void {
+      flushEvents();
       transcript = appendUserMessage(transcript, text, images);
       maybeTrim();
       const msg: ChatSendMessage = {
@@ -444,6 +509,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       // A turn may have sealed while we were disconnected (missed `turn-sealed`):
       // clear the now-stale spinner BEFORE re-subscribing, so a finished turn
       // doesn't spin forever. A still-running turn's replay re-asserts it.
+      flushEvents();
       transcript = clearGenerating(transcript);
       void syncTail();
       void syncMetrics();
@@ -451,6 +517,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
     dispose(): void {
       disposed = true;
+      pendingEvents = [];
     },
   };
 }

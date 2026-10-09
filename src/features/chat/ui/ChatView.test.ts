@@ -1,8 +1,17 @@
 import type { StepId } from "@dispatch/wire";
 import { render, screen } from "@testing-library/svelte";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { RenderedChunk } from "../../../core/chunks";
 import ChatView from "./ChatView.svelte";
+
+/** Collapsed card bodies render lazily — open every card so its body mounts. */
+async function openAllCollapses(container: HTMLElement): Promise<void> {
+  const boxes = container.querySelectorAll<HTMLInputElement>('.collapse > input[type="checkbox"]');
+  for (const box of boxes) {
+    if (!box.checked) await userEvent.click(box);
+  }
+}
 
 // Defensive rendering: a conversation transcript can contain duplicate
 // `toolCallId`s (provider double-emission, persisted — e.g. PII_REDACTED_CONVERSATION_SHORT_01). The
@@ -10,7 +19,7 @@ import ChatView from "./ChatView.svelte";
 // Svelte `each_key_duplicate` (which aborts the reactive flush and makes the
 // tab appear dead). See fix-toolcall-duplicate-keys plan Part 1.
 describe("ChatView — duplicate toolCallIds", () => {
-  it("renders a tool batch with duplicated toolCallIds without throwing, showing one card per unique call", () => {
+  it("renders a tool batch with duplicated toolCallIds without throwing, showing one card per unique call", async () => {
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -117,6 +126,7 @@ describe("ChatView — duplicate toolCallIds", () => {
     ];
 
     const { container } = render(ChatView, { props: { chunks } });
+    await openAllCollapses(container);
 
     // No each_key_duplicate crash. Batched calls render as collapsible cards —
     // exactly ONE per unique toolCallId (deduped), not 4.
@@ -128,5 +138,35 @@ describe("ChatView — duplicate toolCallIds", () => {
     expect(screen.getByText("list_dir")).toBeInTheDocument();
     expect(screen.getByText("contents-of-a")).toBeInTheDocument();
     expect(screen.getByText("contents-of-b")).toBeInTheDocument();
+  });
+});
+
+describe("ChatView — lazy collapse bodies", () => {
+  it("does not mount a collapsed card's body until it is first opened, then keeps it", async () => {
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "tool",
+        chunk: {
+          type: "tool-result",
+          toolCallId: "x",
+          toolName: "run_shell",
+          content: "HUGE-OUTPUT",
+          isError: false,
+        },
+        provisional: false,
+      },
+    ];
+    const { container } = render(ChatView, { props: { chunks } });
+    expect(screen.getByText("run_shell")).toBeInTheDocument();
+    expect(screen.queryByText("HUGE-OUTPUT")).toBeNull();
+
+    const box = screen.getByRole("checkbox", { name: "Toggle tool result" });
+    await userEvent.click(box);
+    expect(screen.getByText("HUGE-OUTPUT")).toBeInTheDocument();
+
+    await userEvent.click(box); // close: body stays mounted (close animation)
+    expect(screen.getByText("HUGE-OUTPUT")).toBeInTheDocument();
+    expect(container.querySelectorAll(".chat-row")).toHaveLength(1);
   });
 });

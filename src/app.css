@@ -127,3 +127,13 @@ body,
 body {
   overflow: hidden;
 }
+
+/* Transcript rows: skip layout + paint for rows scrolled out of view. A long
+   turn has hundreds of rows; without this every one is laid out on first
+   paint (and on every resize). `contain-intrinsic-size: auto <h>` makes the
+   browser remember each row's last rendered height, so scrolling back up
+   doesn't jump; the 64px is only the estimate for never-rendered rows. */
+.chat-row {
+  content-visibility: auto;
+  contain-intrinsic-size: auto 64px;
+}
