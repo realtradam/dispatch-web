@@ -77,26 +77,31 @@ export function computeTps(outputTokens: number, elapsedMs: number | undefined):
   return outputTokens / (elapsedMs / 1000);
 }
 
-function totalTokens(u: Usage): number {
-  return u.inputTokens + u.outputTokens;
-}
-
 function formatBreakdown(u: Usage): string {
-  let s = `${formatTokens(u.inputTokens)} in / ${formatTokens(u.outputTokens)} out`;
+  let s = `${formatTokens(u.inputTokens)} in`;
   if (u.cacheReadTokens !== undefined && u.cacheReadTokens > 0) {
-    s += ` / ${formatTokens(u.cacheReadTokens)} cache`;
+    s += ` (${formatTokens(u.cacheReadTokens)} cached)`;
   }
   return s;
 }
 
+/**
+ * A step's tokens-per-second: `outputTokens / decodeMs`. Decode time is the
+ * model's generation window (first output token → stream end) with tool
+ * execution excluded by the backend. `genTotalMs` is deliberately NOT a
+ * fallback: it includes time-to-first-token (prompt processing / queueing),
+ * which would understate the rate by multiples. No decode time → no TPS.
+ */
+function stepTps(step: StepMetrics): number | null {
+  return computeTps(step.usage.outputTokens, step.decodeMs);
+}
+
 /** Build a formatted view of a single step's metrics. */
 export function viewStepMetrics(step: StepMetrics, index: number): StepMetricsView {
-  const total = totalTokens(step.usage);
-  const tps = computeTps(step.usage.outputTokens, step.decodeMs ?? step.genTotalMs);
   return {
     label: `step ${index + 1}`,
-    tokensLabel: `${formatTokens(total)} tok`,
-    tps: formatTps(tps),
+    tokensLabel: `${formatTokens(step.usage.inputTokens)} in / ${formatTokens(step.usage.outputTokens)} out`,
+    tps: formatTps(stepTps(step)),
     ttft: formatDuration(step.ttftMs),
     decode: formatDuration(step.decodeMs),
     genTotal: formatDuration(step.genTotalMs),
@@ -130,19 +135,25 @@ export function viewCacheRate(u: Usage): CacheRateView {
 }
 
 /**
- * Expected cache (retention): of the cache that existed going INTO this turn, how
- * much was read back — `clamp01(cacheRead_N / (cacheRead_{N-1} + cacheWrite_{N-1}))`.
- * The denominator is the PRIOR turn's cached prefix (what it read + what it wrote).
- * Ideally ~100% on every turn after the first; <100% = the cache busted/expired.
+ * Expected cache (retention): of the prompt the PREVIOUS turn last sent (its
+ * final step's input), how much this turn's FIRST step read back from cache —
+ * `clamp01(firstStep.cacheRead / prevLastStep.input)`. Everything in that
+ * prompt is a prefix of this turn's first prompt, so ~100% means the cache
+ * survived between turns; lower means it busted/expired. Step-level on both
+ * sides: comparing whole-turn sums is meaningless (a multi-step turn reads
+ * the same prefix once per step).
  *
- * Returns `null` when it cannot be derived: no prior turn (`prev === null`) or the
- * prior turn cached nothing (denominator <= 0) — distinct from a real 0%.
+ * Returns `null` when it cannot be derived: no earlier turn, no first step,
+ * or the previous prompt was empty — distinct from a real 0%.
  */
-export function computeExpectedCachePct(current: Usage, prev: Usage | null): number | null {
-  if (prev === null) return null;
-  const denom = (prev.cacheReadTokens ?? 0) + (prev.cacheWriteTokens ?? 0);
+export function computeExpectedCachePct(
+  firstStep: Usage | undefined,
+  prevLastStep: Usage | null,
+): number | null {
+  if (prevLastStep === null || firstStep === undefined) return null;
+  const denom = prevLastStep.inputTokens;
   if (denom <= 0) return null;
-  const read = current.cacheReadTokens ?? 0;
+  const read = firstStep.cacheReadTokens ?? 0;
   const rate = read / denom;
   const clamped = rate < 0 ? 0 : rate > 1 ? 1 : rate;
   return Math.round(clamped * 100);
@@ -152,28 +163,36 @@ export function computeExpectedCachePct(current: Usage, prev: Usage | null): num
  * Build a view of the cross-turn retention (percentage + colour level + hit flag),
  * or `null` when it can't be derived (see `computeExpectedCachePct`).
  */
-export function viewExpectedCache(current: Usage, prev: Usage | null): CacheRateView | null {
-  const pct = computeExpectedCachePct(current, prev);
+export function viewExpectedCache(
+  firstStep: Usage | undefined,
+  prevLastStep: Usage | null,
+): CacheRateView | null {
+  const pct = computeExpectedCachePct(firstStep, prevLastStep);
   if (pct === null) return null;
-  return { pct, level: cacheLevel(pct), isHit: (current.cacheReadTokens ?? 0) > 0 };
+  return { pct, level: cacheLevel(pct), isHit: (firstStep?.cacheReadTokens ?? 0) > 0 };
 }
 
-/** Build a formatted view of a turn's aggregate metrics. */
+/**
+ * Build a formatted view of a turn's aggregate metrics.
+ *
+ * Turn TPS = output tokens ÷ decode time, summed over ONLY the steps that
+ * report a decode time (both numerator and denominator), so a step without
+ * timing can neither inflate nor deflate it. Tool execution between steps is
+ * never part of any step's decode time.
+ */
 export function viewTurnMetrics(turn: TurnMetrics, turnNumber?: number): TurnMetricsView {
-  const total = totalTokens(turn.usage);
-  let totalGenMs: number | undefined;
+  let timedOut = 0;
+  let decodeMs: number | undefined;
   for (const step of turn.steps) {
-    const stepMs = step.decodeMs ?? step.genTotalMs;
-    if (stepMs !== undefined) {
-      totalGenMs = (totalGenMs ?? 0) + stepMs;
-    }
+    if (step.decodeMs === undefined || step.decodeMs <= 0) continue;
+    timedOut += step.usage.outputTokens;
+    decodeMs = (decodeMs ?? 0) + step.decodeMs;
   }
-  const tps = computeTps(turn.usage.outputTokens, totalGenMs);
   return {
     label: turnNumber !== undefined ? `turn ${turnNumber}` : "turn",
-    tokensLabel: `${formatTokens(total)} tok`,
+    tokensLabel: `${formatTokens(turn.usage.outputTokens)} tok out`,
     breakdown: formatBreakdown(turn.usage),
-    tps: formatTps(tps),
+    tps: formatTps(computeTps(timedOut, decodeMs)),
     duration: formatDuration(turn.durationMs),
   };
 }

@@ -4,12 +4,20 @@ import type { Chunk, Role, StoredChunk, TurnProviderRetryEvent, Usage } from "@d
 export interface AccumulatingChunk {
   readonly kind: "text" | "thinking";
   readonly text: string;
+  /** The turn generating this chunk (from the live event's `turnId`). */
+  readonly turnId?: string;
 }
 
 /** A provisional chunk that has no authoritative seq yet. */
 export interface ProvisionalChunk {
   readonly role: Role;
   readonly chunk: Chunk;
+  /**
+   * The turn this chunk belongs to (from the live event's `turnId`). Absent
+   * only on the sender's optimistic user echo until its `turn-start` arrives
+   * (which tags it).
+   */
+  readonly turnId?: string;
 }
 
 /** The transcript reducer state. Holds committed history + live in-flight turn. */
@@ -74,4 +82,11 @@ export interface RenderedChunk {
    * dots on streaming thinking) and drop it the moment generation moves on.
    */
   readonly streaming?: boolean;
+  /**
+   * The turn that produced this chunk — `StoredChunk.turnId` for committed
+   * chunks, the live event's `turnId` for provisional ones. The exact join key
+   * for placing per-turn metrics. Absent on legacy rows (persisted before the
+   * backend stamped it) and on the optimistic echo before `turn-start`.
+   */
+  readonly turnId?: string;
 }

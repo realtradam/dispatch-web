@@ -40,7 +40,33 @@ function flushAccumulating(
   if (acc === null) return provisional;
   const chunk: Chunk =
     acc.kind === "text" ? { type: "text", text: acc.text } : { type: "thinking", text: acc.text };
-  return [...provisional, { role: "assistant", chunk }];
+  return [...provisional, withTurn({ role: "assistant", chunk }, acc.turnId)];
+}
+
+/** Attach a `turnId` to a provisional chunk (omitted when unknown). */
+function withTurn(p: ProvisionalChunk, turnId: string | undefined): ProvisionalChunk {
+  return turnId !== undefined ? { ...p, turnId } : p;
+}
+
+/**
+ * Tag the trailing UNTAGGED user run (the sender's optimistic echo, appended
+ * before the server assigned a turn id) with the turn that just started.
+ */
+function tagTrailingUserEcho(
+  provisional: readonly ProvisionalChunk[],
+  turnId: string,
+): readonly ProvisionalChunk[] {
+  let start = provisional.length;
+  while (start > 0) {
+    const p = provisional[start - 1];
+    if (p === undefined || p.role !== "user" || p.turnId !== undefined) break;
+    start--;
+  }
+  if (start === provisional.length) return provisional;
+  return [
+    ...provisional.slice(0, start),
+    ...provisional.slice(start).map((p) => ({ ...p, turnId })),
+  ];
 }
 
 /**
@@ -199,7 +225,12 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       return state;
 
     case "turn-start":
-      return { ...state, currentTurnId: event.turnId, generating: true };
+      return {
+        ...state,
+        provisional: tagTrailingUserEcho(state.provisional, event.turnId),
+        currentTurnId: event.turnId,
+        generating: true,
+      };
 
     case "user-message": {
       // The turn's USER prompt, surfaced on the event stream (backend CR-3) so a
@@ -217,12 +248,19 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       const run = trailingRun(state.provisional, "user");
       const alreadyEchoed = run.some((p) => p.chunk.type === "text" && p.chunk.text === event.text);
       if (alreadyEchoed) {
-        return { ...state, generating: true };
+        return {
+          ...state,
+          provisional: tagTrailingUserEcho(state.provisional, event.turnId),
+          generating: true,
+        };
       }
       const provisional = flushAccumulating(state.provisional, state.accumulating);
       return {
         ...state,
-        provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
+        provisional: [
+          ...provisional,
+          { role: "user", chunk: { type: "text", text: event.text }, turnId: event.turnId },
+        ],
         accumulating: null,
         generating: true,
       };
@@ -233,7 +271,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       if (acc !== null && acc.kind === "text") {
         return {
           ...state,
-          accumulating: { kind: "text", text: acc.text + event.delta },
+          accumulating: { ...acc, text: acc.text + event.delta },
           generating: true,
         };
       }
@@ -241,7 +279,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       return {
         ...state,
         provisional,
-        accumulating: { kind: "text", text: event.delta },
+        accumulating: { kind: "text", text: event.delta, turnId: event.turnId },
         generating: true,
       };
     }
@@ -251,7 +289,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       if (acc !== null && acc.kind === "thinking") {
         return {
           ...state,
-          accumulating: { kind: "thinking", text: acc.text + event.delta },
+          accumulating: { ...acc, text: acc.text + event.delta },
           generating: true,
         };
       }
@@ -259,7 +297,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       return {
         ...state,
         provisional,
-        accumulating: { kind: "thinking", text: event.delta },
+        accumulating: { kind: "thinking", text: event.delta, turnId: event.turnId },
         generating: true,
       };
     }
@@ -275,7 +313,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       };
       return {
         ...state,
-        provisional: [...provisional, { role: "assistant", chunk }],
+        provisional: [...provisional, { role: "assistant", chunk, turnId: event.turnId }],
         accumulating: null,
         generating: true,
       };
@@ -293,7 +331,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       };
       return {
         ...state,
-        provisional: [...provisional, { role: "tool", chunk }],
+        provisional: [...provisional, { role: "tool", chunk, turnId: event.turnId }],
         accumulating: null,
         generating: true,
       };
@@ -307,7 +345,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
           : { type: "error", message: event.message };
       return {
         ...state,
-        provisional: [...provisional, { role: "assistant", chunk }],
+        provisional: [...provisional, { role: "assistant", chunk, turnId: event.turnId }],
         accumulating: null,
         generating: false,
       };
@@ -352,7 +390,10 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       const provisional = flushAccumulating(state.provisional, state.accumulating);
       return {
         ...state,
-        provisional: [...provisional, { role: "user", chunk: { type: "text", text: event.text } }],
+        provisional: [
+          ...provisional,
+          { role: "user", chunk: { type: "text", text: event.text }, turnId: event.turnId },
+        ],
         accumulating: null,
         generating: true,
       };

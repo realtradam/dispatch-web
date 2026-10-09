@@ -30,6 +30,16 @@ describe("createIdbChunkStore", () => {
     expect(loaded[0]?.chunk).toEqual(textChunk("a"));
   });
 
+  it("round-trips a chunk's turnId (and upserts it onto an older row)", async () => {
+    const store = createIdbChunkStore({ indexedDB: new IDBFactory() });
+    await store.append("conv1", [makeChunk(1, "a"), makeChunk(2, "b")]);
+    expect((await store.load("conv1")).map((c) => c.turnId)).toEqual([undefined, undefined]);
+    await store.append("conv1", [{ ...makeChunk(1, "a"), turnId: "t1" }]);
+    const loaded = await store.load("conv1");
+    expect(loaded.map((c) => c.turnId)).toEqual(["t1", undefined]);
+    expect("turnId" in (loaded[1] ?? {})).toBe(false);
+  });
+
   it("append out-of-order still loads seq-ordered", async () => {
     const store = createIdbChunkStore({ indexedDB: new IDBFactory() });
     const chunks = [makeChunk(3, "c"), makeChunk(1, "a"), makeChunk(2, "b")];

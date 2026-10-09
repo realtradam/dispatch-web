@@ -401,7 +401,12 @@ describe("interleaveTurnMetrics", () => {
         total: {
           turnId: "t1",
           usage: { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 500 },
-          steps: [],
+          steps: [
+            {
+              stepId: "t1#0" as StepId,
+              usage: { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 500 },
+            },
+          ],
         },
       },
       {
@@ -424,9 +429,9 @@ describe("interleaveTurnMetrics", () => {
     // Cumulative includes BOTH turns (t1 + t2): input 3000, cacheRead 2100.
     expect(tmRows[0]?.cumulativeUsage.inputTokens).toBe(3000);
     expect(tmRows[0]?.cumulativeUsage.cacheReadTokens).toBe(2100);
-    // Retention baseline is the prior finalized turn (t1, even though trimmed).
-    expect(tmRows[0]?.prevTurnUsage?.inputTokens).toBe(1000);
-    expect(tmRows[0]?.prevTurnUsage?.cacheReadTokens).toBe(500);
+    // Retention baseline is the prior finalized turn's LAST step (t1, even though trimmed).
+    expect(tmRows[0]?.prevLastStepUsage?.inputTokens).toBe(1000);
+    expect(tmRows[0]?.prevLastStepUsage?.cacheReadTokens).toBe(500);
   });
 
   it("in-flight turn (no durationMs) still produces turn row", () => {
@@ -606,16 +611,36 @@ describe("interleaveTurnMetrics — cumulative usage (cache total)", () => {
     expect(tm[0]?.cumulativeUsage.cacheReadTokens).toBe(500);
   });
 
-  it("carries the prior finalized turn's usage as the retention baseline", () => {
+  it("carries the prior finalized turn's LAST STEP usage as the retention baseline", () => {
+    const steps = (id: string): StepMetrics[] => [
+      { stepId: `${id}#0` as StepId, usage: { inputTokens: 1000, outputTokens: 5 } },
+      {
+        stepId: `${id}#1` as StepId,
+        usage: { inputTokens: 1669, outputTokens: 5, cacheReadTokens: 384 },
+      },
+    ];
+    const t1: TurnMetrics = {
+      turnId: "t1",
+      usage: { inputTokens: 2669, outputTokens: 10, cacheReadTokens: 384 },
+      steps: steps("t1"),
+    };
+    const t2: TurnMetrics = {
+      turnId: "t2",
+      usage: { inputTokens: 2737, outputTokens: 10, cacheReadTokens: 2560 },
+      steps: steps("t2"),
+    };
     const rows = interleaveTurnMetrics(
       [userGroup(1, "q1"), assistantGroup(2, "a1"), userGroup(3, "q2"), assistantGroup(4, "a2")],
-      [cacheEntry("t1", 2669, 10, 384), cacheEntry("t2", 2737, 10, 2560)],
+      [
+        { turnId: "t1", steps: t1.steps, total: t1 },
+        { turnId: "t2", steps: t2.steps, total: t2 },
+      ],
     );
     const tm = turnMetricsRows(rows);
     // first finalized turn has no earlier baseline
-    expect(tm[0]?.prevTurnUsage).toBeNull();
-    // second turn's baseline is the first turn's usage
-    expect(tm[1]?.prevTurnUsage?.inputTokens).toBe(2669);
-    expect(tm[1]?.prevTurnUsage?.cacheReadTokens).toBe(384);
+    expect(tm[0]?.prevLastStepUsage).toBeNull();
+    // second turn's baseline is the first turn's LAST step (not the turn sum)
+    expect(tm[1]?.prevLastStepUsage?.inputTokens).toBe(1669);
+    expect(tm[1]?.prevLastStepUsage?.cacheReadTokens).toBe(384);
   });
 });

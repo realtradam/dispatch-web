@@ -46,7 +46,7 @@ describe("viewStepMetrics", () => {
     };
     const view = viewStepMetrics(step, 0);
     expect(view.label).toBe("step 1");
-    expect(view.tokensLabel).toBe("1,801 tok");
+    expect(view.tokensLabel).toBe("1,234 in / 567 out");
     expect(view.tps).toBe("473 tok/s");
     expect(view.ttft).toBe("820ms");
     expect(view.decode).toBe("1.2s");
@@ -105,15 +105,14 @@ describe("viewStepMetrics", () => {
     expect(view.tps).toBe("100 tok/s");
   });
 
-  it("tps falls back to genTotalMs when decodeMs absent", () => {
+  it("tps is null when decodeMs is absent (never falls back to genTotalMs, which includes TTFT)", () => {
     const step: StepMetrics = {
       stepId: "s1" as StepId,
       usage: { inputTokens: 100, outputTokens: 50 },
       genTotalMs: 800,
     };
     const view = viewStepMetrics(step, 0);
-    // 50 / (800/1000) = 62.5 → rounds to 63
-    expect(view.tps).toBe("63 tok/s");
+    expect(view.tps).toBeNull();
   });
 });
 
@@ -133,8 +132,8 @@ describe("viewTurnMetrics", () => {
       ],
     };
     const view = viewTurnMetrics(turn);
-    expect(view.tokensLabel).toBe("1,234 tok");
-    expect(view.breakdown).toBe("1,000 in / 234 out");
+    expect(view.tokensLabel).toBe("234 tok out");
+    expect(view.breakdown).toBe("1,000 in");
     expect(view.tps).toBe("78 tok/s");
     expect(view.duration).toBe("5.0s");
   });
@@ -146,7 +145,7 @@ describe("viewTurnMetrics", () => {
       steps: [],
     };
     const view = viewTurnMetrics(turn);
-    expect(view.breakdown).toBe("1,000 in / 234 out / 500 cache");
+    expect(view.breakdown).toBe("1,000 in (500 cached)");
   });
 
   it("breakdown omits cache when not present", () => {
@@ -156,7 +155,7 @@ describe("viewTurnMetrics", () => {
       steps: [],
     };
     const view = viewTurnMetrics(turn);
-    expect(view.breakdown).toBe("100 in / 50 out");
+    expect(view.breakdown).toBe("100 in");
   });
 
   it("tps is null when no step has decodeMs or genTotalMs", () => {
@@ -184,7 +183,7 @@ describe("viewTurnMetrics", () => {
     expect(view.duration).toBeNull();
   });
 
-  it("sums decodeMs across steps (fallback genTotalMs per step) for tps", () => {
+  it("turn tps counts only steps that report decodeMs (both tokens and time)", () => {
     const turn: TurnMetrics = {
       turnId: "t1",
       usage: { inputTokens: 300, outputTokens: 150 },
@@ -203,9 +202,9 @@ describe("viewTurnMetrics", () => {
       ],
     };
     const view = viewTurnMetrics(turn);
-    // step1 uses decodeMs=800, step2 falls back to genTotalMs=2000 → total=2800ms
-    // 150 / (2800/1000) = 53.57 → rounds to 54
-    expect(view.tps).toBe("54 tok/s");
+    // only step1 is timed: 50 / (800/1000) = 62.5 → 63. step2 (no decodeMs)
+    // contributes neither tokens nor time — never its TTFT-inflated genTotalMs.
+    expect(view.tps).toBe("63 tok/s");
   });
 });
 
@@ -260,40 +259,47 @@ describe("computeExpectedCachePct", () => {
     expect(computeExpectedCachePct({ inputTokens: 100, outputTokens: 0 }, null)).toBeNull();
   });
 
-  it("null when the prior turn cached nothing (denominator 0)", () => {
-    const prev = { inputTokens: 100, outputTokens: 0 };
-    const current = { inputTokens: 200, outputTokens: 0, cacheReadTokens: 50 };
-    expect(computeExpectedCachePct(current, prev)).toBeNull();
+  it("null when this turn has no first step", () => {
+    expect(computeExpectedCachePct(undefined, { inputTokens: 100, outputTokens: 0 })).toBeNull();
   });
 
-  it("100% when the whole prior cached prefix was read back (backend worked example)", () => {
-    // turn 1: cacheRead 0, cacheWrite 5146 → prefix 5146; turn 2 reads 5146 back.
-    const prev = { inputTokens: 5149, outputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 5146 };
-    const current = {
-      inputTokens: 8462,
-      outputTokens: 0,
-      cacheReadTokens: 5146,
-      cacheWriteTokens: 3313,
-    };
-    expect(computeExpectedCachePct(current, prev)).toBe(100);
+  it("null when the prior prompt was empty (denominator 0)", () => {
+    const prev = { inputTokens: 0, outputTokens: 0 };
+    expect(computeExpectedCachePct({ inputTokens: 10, outputTokens: 0 }, prev)).toBeNull();
   });
 
-  it("drops below 100% when the cache busted (read < prior prefix)", () => {
-    const prev = {
-      inputTokens: 1000,
-      outputTokens: 0,
-      cacheReadTokens: 100,
-      cacheWriteTokens: 900,
-    };
-    const current = { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 500 };
-    // 500 / (100 + 900) = 50%
-    expect(computeExpectedCachePct(current, prev)).toBe(50);
+  it("100% when the first step reads back the whole prior final prompt", () => {
+    // prev turn's last step sent 5149 tokens; this turn's first step (a
+    // superset prompt) reads 5149 of them from cache.
+    const prevLast = { inputTokens: 5149, outputTokens: 40, cacheReadTokens: 3000 };
+    const first = { inputTokens: 8462, outputTokens: 0, cacheReadTokens: 5149 };
+    expect(computeExpectedCachePct(first, prevLast)).toBe(100);
   });
 
-  it("clamps to 100 if read somehow exceeds the prior prefix", () => {
-    const prev = { inputTokens: 100, outputTokens: 0, cacheWriteTokens: 100 };
-    const current = { inputTokens: 100, outputTokens: 0, cacheReadTokens: 250 };
-    expect(computeExpectedCachePct(current, prev)).toBe(100);
+  it("drops below 100% when the cache busted", () => {
+    const prevLast = { inputTokens: 1000, outputTokens: 0, cacheReadTokens: 900 };
+    const first = { inputTokens: 1200, outputTokens: 0, cacheReadTokens: 500 };
+    expect(computeExpectedCachePct(first, prevLast)).toBe(50);
+  });
+
+  it("0% (not null) on a full miss", () => {
+    const prevLast = { inputTokens: 1000, outputTokens: 0 };
+    const first = { inputTokens: 1200, outputTokens: 0 };
+    expect(computeExpectedCachePct(first, prevLast)).toBe(0);
+  });
+
+  it("is NOT inflated by multi-step turns (step-level, not turn sums)", () => {
+    // A 10-step turn reads the same prefix 10x; the old turn-sum ratio read
+    // ~10x the baseline and pinned at 100%. Step-level reflects the bust.
+    const prevLast = { inputTokens: 50_000, outputTokens: 0, cacheReadTokens: 49_000 };
+    const first = { inputTokens: 51_000, outputTokens: 0, cacheReadTokens: 10_000 };
+    expect(computeExpectedCachePct(first, prevLast)).toBe(20);
+  });
+
+  it("clamps to 100", () => {
+    const prevLast = { inputTokens: 100, outputTokens: 0 };
+    const first = { inputTokens: 300, outputTokens: 0, cacheReadTokens: 250 };
+    expect(computeExpectedCachePct(first, prevLast)).toBe(100);
   });
 });
 
@@ -303,9 +309,9 @@ describe("viewExpectedCache", () => {
   });
 
   it("success level + hit flag for full retention", () => {
-    const prev = { inputTokens: 5149, outputTokens: 0, cacheWriteTokens: 5146 };
-    const current = { inputTokens: 8462, outputTokens: 0, cacheReadTokens: 5146 };
-    const v = viewExpectedCache(current, prev);
+    const prevLast = { inputTokens: 5146, outputTokens: 0 };
+    const first = { inputTokens: 8462, outputTokens: 0, cacheReadTokens: 5146 };
+    const v = viewExpectedCache(first, prevLast);
     expect(v?.pct).toBe(100);
     expect(v?.level).toBe("success");
     expect(v?.isHit).toBe(true);

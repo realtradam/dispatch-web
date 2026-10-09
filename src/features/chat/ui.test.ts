@@ -373,8 +373,8 @@ describe("ChatView", () => {
     expect(screen.getByText("Hi")).toBeInTheDocument();
     expect(screen.getByText("Hello!")).toBeInTheDocument();
     expect(screen.getByText(/step 1/)).toBeInTheDocument();
-    expect(screen.getAllByText(/150 tok/)).toHaveLength(2);
-    expect(screen.getByText(/turn 1 · 150 tok \(100 in \/ 50 out\)/)).toBeInTheDocument();
+    expect(screen.getByText(/step 1 · 100 in \/ 50 out/)).toBeInTheDocument();
+    expect(screen.getByText(/turn 1 · 50 tok out · 100 in/)).toBeInTheDocument();
     expect(screen.getByText(/1\.2s/)).toBeInTheDocument();
   });
 
@@ -478,11 +478,11 @@ describe("ChatView", () => {
 
     // Both step-metrics and turn-metrics render
     expect(screen.getByText(/step 1/)).toBeInTheDocument();
-    expect(screen.getByText(/turn 1 · 100 tok/)).toBeInTheDocument();
+    expect(screen.getByText(/turn 1 · 20 tok out/)).toBeInTheDocument();
 
     // They are in separate elements (different rows)
-    const stepEl = screen.getByText(/step 1 · 100 tok/).closest("div");
-    const turnEl = screen.getByText(/turn 1 · 100 tok/).closest("div");
+    const stepEl = screen.getByText(/step 1 · 80 in \/ 20 out/).closest("div");
+    const turnEl = screen.getByText(/turn 1 · 20 tok out/).closest("div");
     expect(stepEl).not.toBe(turnEl);
   });
 
@@ -554,9 +554,9 @@ describe("ChatView", () => {
 
     // Step metrics rendered
     expect(screen.getByText(/step 1/)).toBeInTheDocument();
-    expect(screen.getAllByText(/15 tok/)).toHaveLength(2);
+    expect(screen.getByText(/step 1 · 10 in \/ 5 out/)).toBeInTheDocument();
     // Turn metrics rendered
-    expect(screen.getByText(/turn 1 · 15 tok \(10 in \/ 5 out\)/)).toBeInTheDocument();
+    expect(screen.getByText(/turn 1 · 5 tok out · 10 in/)).toBeInTheDocument();
     // No "null" or "undefined" in the DOM
     expect(screen.queryByText("null")).toBeNull();
     expect(screen.queryByText("undefined")).toBeNull();
@@ -602,8 +602,7 @@ describe("ChatView", () => {
     render(ChatView, { props: { chunks, turnMetrics } });
 
     // Step metrics should render
-    expect(screen.getByText(/step 1/)).toBeInTheDocument();
-    expect(screen.getByText(/150 tok/)).toBeInTheDocument();
+    expect(screen.getByText(/step 1 · 100 in \/ 50 out/)).toBeInTheDocument();
 
     // Turn total should NOT render (total is null — turn still in progress)
     expect(screen.queryByText(/^turn/)).toBeNull();

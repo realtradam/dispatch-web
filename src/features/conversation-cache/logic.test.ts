@@ -138,3 +138,26 @@ describe("selectEvictions", () => {
     expect(result).toEqual(["b"]);
   });
 });
+
+describe("reconcileCache — turnId provenance upgrade", () => {
+  it("upgrades a cached row lacking turnId when the incoming copy carries it", () => {
+    const cached: StoredChunk[] = [{ seq: 1, role: "user", chunk: { type: "text", text: "hi" } }];
+    const incoming: StoredChunk[] = [
+      { seq: 1, role: "user", chunk: { type: "text", text: "hi" }, turnId: "t1" },
+      { seq: 2, role: "assistant", chunk: { type: "text", text: "yo" }, turnId: "t1" },
+    ];
+    const { merged, toAppend } = reconcileCache(cached, incoming);
+    expect(merged.map((c) => c.turnId)).toEqual(["t1", "t1"]);
+    expect(toAppend.map((c) => c.seq)).toEqual([1, 2]);
+  });
+
+  it("does not rewrite a cached row that already has a turnId", () => {
+    const cached: StoredChunk[] = [
+      { seq: 1, role: "user", chunk: { type: "text", text: "hi" }, turnId: "t1" },
+    ];
+    const { toAppend } = reconcileCache(cached, [
+      { seq: 1, role: "user", chunk: { type: "text", text: "hi" }, turnId: "t1" },
+    ]);
+    expect(toAppend).toEqual([]);
+  });
+});

@@ -254,8 +254,8 @@
             {sv.label} · {sv.tokensLabel}
             {#if sv.tps}
               · {sv.tps}{/if}
-            {#if sv.genTotal}
-              · {sv.genTotal}{/if}
+            {#if sv.ttft}
+              · {sv.ttft} to first token{/if}
           </div>
         </div>
       </div>
@@ -263,12 +263,12 @@
       {@const turnView = viewTurnMetrics(row.turn, row.turnNumber)}
       {@const lastCache = viewCacheRate(row.turn.usage)}
       {@const chatCache = viewCacheRate(row.cumulativeUsage)}
-      {@const retention = viewExpectedCache(row.turn.usage, row.prevTurnUsage)}
+      {@const retention = viewExpectedCache(row.turn.steps[0]?.usage, row.prevLastStepUsage)}
       <div class="chat chat-start">
         <div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
           <div class="flex flex-col gap-1 text-xs">
             <div class="opacity-70">
-              {turnView.label} · {turnView.tokensLabel} ({turnView.breakdown})
+              {turnView.label} · {turnView.tokensLabel} · {turnView.breakdown}
               {#if turnView.tps}
                 · {turnView.tps}{/if}
               {#if turnView.duration}

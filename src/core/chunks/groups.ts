@@ -22,6 +22,8 @@ export type RenderGroup =
       readonly stepId: string;
       readonly entries: readonly ToolBatchEntry[];
       readonly provisional: boolean;
+      /** The producing turn (from the batch's first call chunk), when known. */
+      readonly turnId?: string;
     };
 
 /**
@@ -79,6 +81,7 @@ export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonl
       // (Svelte `each_key_duplicate` aborts the reactive flush — tab appears dead).
       const seenCallIds = new Set<string>();
       let provisional = false;
+      let turnId: string | undefined;
       for (const inner of rendered) {
         if (inner.chunk.type === "tool-call" && inner.chunk.stepId === stepId) {
           if (seenCallIds.has(inner.chunk.toolCallId)) continue;
@@ -86,9 +89,14 @@ export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonl
           const result = resultByCallId.get(inner.chunk.toolCallId) ?? null;
           entries.push({ call: inner.chunk, result });
           if (inner.provisional) provisional = true;
+          turnId ??= inner.turnId;
         }
       }
-      groups.push({ kind: "tool-batch", stepId, entries, provisional });
+      groups.push(
+        turnId !== undefined
+          ? { kind: "tool-batch", stepId, entries, provisional, turnId }
+          : { kind: "tool-batch", stepId, entries, provisional },
+      );
       continue;
     }
 

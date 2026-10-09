@@ -342,6 +342,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       if (transcript.sealedTurnId !== null) {
         void syncTail();
         void syncMetrics();
+      } else if (msg.event.type === "error") {
+        // A turn that FAILS never seals, but the backend still persists the
+        // metrics it accumulated — pull them so the turn gets its row.
+        void syncMetrics();
       }
     },
 

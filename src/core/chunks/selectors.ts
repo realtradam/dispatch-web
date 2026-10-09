@@ -8,17 +8,31 @@ import type { RenderedChunk, TranscriptState } from "./types";
 export function selectChunks(state: TranscriptState): readonly RenderedChunk[] {
   const result: RenderedChunk[] = [];
   for (const c of state.committed) {
-    result.push({ seq: c.seq, role: c.role, chunk: c.chunk, provisional: false });
+    result.push(
+      c.turnId !== undefined
+        ? { seq: c.seq, role: c.role, chunk: c.chunk, provisional: false, turnId: c.turnId }
+        : { seq: c.seq, role: c.role, chunk: c.chunk, provisional: false },
+    );
   }
   for (const p of state.provisional) {
-    result.push({ seq: null, role: p.role, chunk: p.chunk, provisional: true });
+    result.push(
+      p.turnId !== undefined
+        ? { seq: null, role: p.role, chunk: p.chunk, provisional: true, turnId: p.turnId }
+        : { seq: null, role: p.role, chunk: p.chunk, provisional: true },
+    );
   }
-  if (state.accumulating !== null) {
+  const acc = state.accumulating;
+  if (acc !== null) {
     const chunk: Chunk =
-      state.accumulating.kind === "text"
-        ? { type: "text", text: state.accumulating.text }
-        : { type: "thinking", text: state.accumulating.text };
-    result.push({ seq: null, role: "assistant", chunk, provisional: true, streaming: true });
+      acc.kind === "text" ? { type: "text", text: acc.text } : { type: "thinking", text: acc.text };
+    result.push({
+      seq: null,
+      role: "assistant",
+      chunk,
+      provisional: true,
+      streaming: true,
+      ...(acc.turnId !== undefined ? { turnId: acc.turnId } : {}),
+    });
   }
   return result;
 }

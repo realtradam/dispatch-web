@@ -61,10 +61,11 @@ export type MetricsRow =
       /** Cumulative usage across all finalized turns up to and including this one. */
       readonly cumulativeUsage: Usage;
       /**
-       * Usage of the most recent EARLIER finalized turn, or `null` when this is the
-       * first finalized turn. The baseline for cross-turn retention (expected cache).
+       * Usage of the LAST step of the most recent EARLIER finalized turn, or
+       * `null` when there is none. The baseline for cross-turn retention: that
+       * step's prompt is what this turn's first step should find in cache.
        */
-      readonly prevTurnUsage: Usage | null;
+      readonly prevLastStepUsage: Usage | null;
     };
 
 /** Formatted cache hit-rate view: percentage + colour severity + hit flag. */
@@ -80,6 +81,7 @@ export interface CacheRateView {
 /** Formatted per-step view for display. */
 export interface StepMetricsView {
   readonly label: string;
+  /** `"<in> in / <out> out"` — this step's prompt and generated tokens. */
   readonly tokensLabel: string;
   readonly tps: string | null;
   readonly ttft: string | null;
@@ -90,7 +92,13 @@ export interface StepMetricsView {
 /** Formatted per-turn view for display. */
 export interface TurnMetricsView {
   readonly label: string;
+  /** `"<out> tok out"` — tokens the model generated this turn. */
   readonly tokensLabel: string;
+  /**
+   * Prompt-side breakdown: input tokens processed (summed over the turn's
+   * steps — each step re-sends the whole prompt, so this is NOT the context
+   * size) and how many of them were cache reads.
+   */
   readonly breakdown: string;
   readonly tps: string | null;
   readonly duration: string | null;

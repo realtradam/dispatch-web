@@ -14,6 +14,7 @@ interface ChunkRecord {
   seq: number;
   role: StoredChunk["role"];
   chunk: StoredChunk["chunk"];
+  turnId?: string;
 }
 
 interface MetaRecord {
@@ -70,7 +71,11 @@ function keyRangeFor(conversationId: string): IDBKeyRange {
 }
 
 function chunksToStoredChunks(records: ChunkRecord[]): StoredChunk[] {
-  return records.map((r) => ({ seq: r.seq, role: r.role, chunk: r.chunk }));
+  return records.map((r) =>
+    typeof r.turnId === "string"
+      ? { seq: r.seq, role: r.role, chunk: r.chunk, turnId: r.turnId }
+      : { seq: r.seq, role: r.role, chunk: r.chunk },
+  );
 }
 
 export function createIdbChunkStore(opts?: CreateIdbChunkStoreOptions): ConversationChunkStore {
@@ -113,6 +118,7 @@ export function createIdbChunkStore(opts?: CreateIdbChunkStoreOptions): Conversa
           seq: c.seq,
           role: c.role,
           chunk: c.chunk,
+          ...(c.turnId !== undefined ? { turnId: c.turnId } : {}),
         } satisfies ChunkRecord);
       }
 

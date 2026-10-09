@@ -226,7 +226,7 @@ describe("clearGenerating", () => {
     s = foldEvent(s, textDelta("t1", "partial"));
     const cleared = clearGenerating(s);
     expect(cleared.generating).toBe(false);
-    expect(cleared.accumulating).toEqual({ kind: "text", text: "partial" });
+    expect(cleared.accumulating).toEqual({ kind: "text", text: "partial", turnId: "t1" });
     expect(cleared.currentTurnId).toBe("t1");
   });
 });
@@ -236,7 +236,7 @@ describe("foldEvent — text-delta", () => {
     let s = initialState();
     s = foldEvent(s, turnStart("t1"));
     s = foldEvent(s, textDelta("t1", "hello"));
-    expect(s.accumulating).toEqual({ kind: "text", text: "hello" });
+    expect(s.accumulating).toEqual({ kind: "text", text: "hello", turnId: "t1" });
     expect(s.provisional).toEqual([]);
   });
 
@@ -245,7 +245,7 @@ describe("foldEvent — text-delta", () => {
     s = foldEvent(s, turnStart("t1"));
     s = foldEvent(s, textDelta("t1", "hello "));
     s = foldEvent(s, textDelta("t1", "world"));
-    expect(s.accumulating).toEqual({ kind: "text", text: "hello world" });
+    expect(s.accumulating).toEqual({ kind: "text", text: "hello world", turnId: "t1" });
     expect(s.provisional).toEqual([]);
   });
 
@@ -254,7 +254,7 @@ describe("foldEvent — text-delta", () => {
     s = foldEvent(s, turnStart("t1"));
     s = foldEvent(s, reasoningDelta("t1", "thinking..."));
     s = foldEvent(s, textDelta("t1", "answer"));
-    expect(s.accumulating).toEqual({ kind: "text", text: "answer" });
+    expect(s.accumulating).toEqual({ kind: "text", text: "answer", turnId: "t1" });
     expect(s.provisional).toHaveLength(1);
     expect(s.provisional[0]?.chunk).toEqual({ type: "thinking", text: "thinking..." });
     expect(s.provisional[0]?.role).toBe("assistant");
@@ -266,7 +266,7 @@ describe("foldEvent — reasoning-delta", () => {
     let s = initialState();
     s = foldEvent(s, turnStart("t1"));
     s = foldEvent(s, reasoningDelta("t1", "hmm"));
-    expect(s.accumulating).toEqual({ kind: "thinking", text: "hmm" });
+    expect(s.accumulating).toEqual({ kind: "thinking", text: "hmm", turnId: "t1" });
   });
 
   it("successive reasoning-deltas extend the same chunk", () => {
@@ -274,7 +274,7 @@ describe("foldEvent — reasoning-delta", () => {
     s = foldEvent(s, turnStart("t1"));
     s = foldEvent(s, reasoningDelta("t1", "hmm "));
     s = foldEvent(s, reasoningDelta("t1", "ok"));
-    expect(s.accumulating).toEqual({ kind: "thinking", text: "hmm ok" });
+    expect(s.accumulating).toEqual({ kind: "thinking", text: "hmm ok", turnId: "t1" });
   });
 });
 
@@ -531,7 +531,7 @@ describe("clearGenerating also clears a stale provider-retry banner (reconnect)"
     s = foldEvent(s, textDelta("t1", "partial"));
     s = foldEvent(s, providerRetry("t1", 0, 5000));
     const cleared = clearGenerating(s);
-    expect(cleared.accumulating).toEqual({ kind: "text", text: "partial" });
+    expect(cleared.accumulating).toEqual({ kind: "text", text: "partial", turnId: "t1" });
     expect(selectProviderRetry(cleared)).toBeNull();
   });
 });
@@ -859,7 +859,7 @@ describe("appendUserMessage", () => {
     let s = initialState();
     s = foldEvent(s, turnStart("t1"));
     s = foldEvent(s, textDelta("t1", "partial"));
-    expect(s.accumulating).toEqual({ kind: "text", text: "partial" });
+    expect(s.accumulating).toEqual({ kind: "text", text: "partial", turnId: "t1" });
 
     s = appendUserMessage(s, "user msg");
     expect(s.accumulating).toBeNull();
@@ -1020,5 +1020,34 @@ describe("applyHistory — multi-chunk image echo is superseded by committed", (
     expect(msgs[0]?.role).toBe("user");
     expect(msgs[0]?.chunks).toHaveLength(3);
     expect(msgs[0]?.chunks[1]).toEqual({ type: "image", url: PNG, mimeType: "image/png" });
+  });
+});
+
+describe("turnId provenance on live chunks", () => {
+  it("tags every live chunk with its event's turnId, and the optimistic echo on turn-start", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "q", [{ url: "data:image/png;base64,AA", mimeType: "image/png" }]);
+    expect(selectChunks(s).map((c) => c.turnId)).toEqual([undefined, undefined]);
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, textDelta("t1", "a"));
+    const chunks = selectChunks(s);
+    expect(chunks.map((c) => c.turnId)).toEqual(["t1", "t1", "t1"]);
+  });
+
+  it("turn-start does not re-tag an echo already owned by an earlier turn", () => {
+    let s = initialState();
+    s = appendUserMessage(s, "q1");
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, textDelta("t1", "a1"));
+    s = foldEvent(s, turnStart("t2"));
+    expect(selectChunks(s).map((c) => c.turnId)).toEqual(["t1", "t1"]);
+  });
+
+  it("committed chunks expose StoredChunk.turnId", () => {
+    const s = applyHistory(initialState(), [
+      { seq: 1, role: "user", chunk: { type: "text", text: "q" }, turnId: "t9" },
+      { seq: 2, role: "assistant", chunk: { type: "text", text: "a" } },
+    ]);
+    expect(selectChunks(s).map((c) => c.turnId)).toEqual(["t9", undefined]);
   });
 });
