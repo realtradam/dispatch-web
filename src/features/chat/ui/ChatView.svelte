@@ -248,14 +248,23 @@
   {#each keyedRows as { row, key } (key)}
     {#if row.kind === "step-metrics"}
       {@const sv = viewStepMetrics(row.step, row.index)}
+      {@const stepCache = viewCacheRate(row.step.usage)}
       <div class="chat chat-start">
         <div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
-          <div class="text-xs opacity-70">
-            {sv.label} · {sv.tokensLabel}
-            {#if sv.tps}
-              · {sv.tps}{/if}
-            {#if sv.ttft}
-              · {sv.ttft} to first token{/if}
+          <div class="flex flex-wrap items-center gap-x-1 text-xs">
+            <span class="opacity-70">
+              {sv.label} · {sv.tokensLabel}
+              {#if sv.tps}
+                · {sv.tps}{/if}
+              {#if sv.ttft}
+                · {sv.ttft} to first token{/if}
+              ·
+            </span>
+            <span class="opacity-70">cache:</span>
+            <span
+              class="badge badge-xs {badgeClass[stepCache.level]}"
+              data-testid="step-cache-badge">{stepCache.pct}%</span
+            >
           </div>
         </div>
       </div>

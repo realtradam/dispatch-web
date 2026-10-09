@@ -378,6 +378,34 @@ describe("ChatView", () => {
     expect(screen.getByText(/1\.2s/)).toBeInTheDocument();
   });
 
+  it("renders a per-step cache hit badge coloured by level", () => {
+    const step = {
+      stepId: "t1#0" as StepId,
+      usage: { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 750 },
+      decodeMs: 100,
+    };
+    const chunks: RenderedChunk[] = [
+      { seq: 1, role: "user", chunk: { type: "text", text: "Hi" }, provisional: false },
+      {
+        seq: 2,
+        role: "assistant",
+        chunk: {
+          type: "tool-call",
+          toolCallId: "tc1",
+          toolName: "t",
+          input: {},
+          stepId: step.stepId,
+        },
+        provisional: false,
+      },
+    ];
+    const turnMetrics: TurnMetricsEntry[] = [{ turnId: "t1", steps: [step], total: null }];
+    render(ChatView, { props: { chunks, turnMetrics } });
+    const badge = screen.getByTestId("step-cache-badge");
+    expect(badge).toHaveTextContent("75%");
+    expect(badge).toHaveClass("badge-success");
+  });
+
   it("renders cache hit-rate badges (Last turn + Chat Total) coloured by level", () => {
     const chunks: RenderedChunk[] = [
       { seq: 1, role: "user", chunk: { type: "text", text: "Hi" }, provisional: false },
