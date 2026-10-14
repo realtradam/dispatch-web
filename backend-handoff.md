@@ -33,8 +33,8 @@ repos of one worktree like archive-workspaces).
   window's elapsed fraction (`(now − (resetsAt − durationMs)) / durationMs`) — the usage level
   that is "on track" to use the allowance exactly by the reset. Spend meters (no window) show no
   marker. Polls every 60 s (backend cache hit); Refresh button sends `?refresh=1`.
-- Open asks: none. (Backend-side: inference-header ingestion is implemented in the service but not
-  wired into the external claude/codex providers.)
+- Open asks: none. Backend-side, inference responses from the claude/codex providers also update
+  the cached windows between polls (kernel `providerResponseHeaders` event) — no FE change needed.
 
 ## Milestone: Workspace archiving (`feature/archive-workspaces`)
 
