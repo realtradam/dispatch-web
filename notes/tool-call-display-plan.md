@@ -1,6 +1,18 @@
 # Tool-call display cleanup — plan
 
-Branch: `feature/tool-call-display` (frontend-only; no backend change required).
+Branch: `feature/tool-call-cards` (frontend-only; no backend change required).
+
+## ✅ DECISIONS (user, final — these OVERRIDE anything below that disagrees)
+1. **Every tool call is its own bubble.** No batch grouping anymore — parallel calls in one step
+   render as consecutive independent bubbles, each one a single card (call + result).
+2. **Add a status icon** to the header: spinner while pending, ✓ (success tint) on ok, ✗ (error
+   tint) on `isError`. Keep the wrench as the tool icon; the status icon is added alongside it.
+3. **Default collapsed** (all cards, including errors).
+4. **Output preview = 12 lines: the first 6 and the last 6**, with a `⋯ N more lines` toggle
+   between them that expands to the full output (and collapses back). Outputs with ≤ 12 lines
+   render in full with no toggle.
+5. Per-tool summaries for Dispatch's built-in tools + a generic fallback (§2.4) — proceed with
+   the recommendation.
 
 ## Goal (from the user)
 1. A tool call and its response render as **one dropdown** — not a call card plus a separate
@@ -80,17 +92,15 @@ Every tool call renders as exactly one collapse containing both call and respons
 never rendered on its own, except as an orphan (its call is unloaded) — then it renders as the same
 card with the call side unknown.
 
-Batches (≥2 calls in one step) keep their visual grouping (one bubble, stacked cards) but each entry
-is the **same** tool card component as a single call. A single call is simply a 1-entry tool group —
-one code path.
+**Decision: no batch grouping.** Calls a model emitted together in one step render as consecutive
+independent bubbles (one card each), in stream order. One code path for every tool call.
 
 ### 2.2 Collapsed header = call summary → result summary
 ```
 [status] tool_name   <call summary, truncated…>   → <result summary>   [chevron]
 ```
 - **status**: spinner while the result is pending; ✓ (success tint) on ok; ✗ (error tint) on
-  `isError`. Replaces the generic wrench (or keep the wrench as the name's icon — visual nit, see
-  open questions).
+  `isError`. Added alongside the existing wrench (decision 2).
 - **call summary**: the most meaningful argument, single-line, whitespace-collapsed, truncated
   (CSS `truncate` + a char cap).
 - **result summary**: a short fact about the response (`128 lines`, `no output`, `1 replacement`,
@@ -113,9 +123,10 @@ Examples:
 1. **Call**: a tool-appropriate view of the input — `$ <command>` for shell, path line for
    file tools, old/new for edit (as a simple −/+ block), otherwise a key/value list of scalar args with
    pretty JSON for nested values (fallback = current `JSON.stringify(input, null, 2)`).
-2. **Response**: the `content` in a `<pre>`, error-tinted when `isError`; first ~12 lines shown
-   with a `⋯ N more lines` toggle (avoids today's big `max-h-96` scroll boxes for long outputs;
-   still lazily mounted by `LazyCollapse`).
+2. **Response**: the `content` in a `<pre>`, error-tinted when `isError`. If it has > 12 lines,
+   show the **first 6 lines, a `⋯ N more lines` toggle, then the last 6 lines** (N = total − 12);
+   the toggle expands to the full output and collapses back. ≤ 12 lines → full output, no toggle.
+   (Replaces today's `max-h-96` scroll boxes; still lazily mounted by `LazyCollapse`.)
 3. Pending → "running…" placeholder instead of the response.
 
 ### 2.4 Where the per-tool knowledge lives
@@ -137,30 +148,36 @@ tool without an entry).
 ## 3. Implementation steps (dependency-ordered)
 
 ### Step 1 — Grouping: pair every call with its result (`src/core/chunks/groups.ts`)
-- Replace the `single`-tool path + `tool-batch` (≥2) with one tool group kind for **all** tool calls:
+- Replace the `single`-tool path AND the `tool-batch` group (decision 1: no batching) with ONE
+  group kind per tool call:
   ```ts
   export interface ToolEntry {
     readonly toolCallId: string;
-    readonly toolName: string;          // from call, or from the orphan result
-    readonly call: ToolCallChunk | null; // null = orphan result (call unloaded by chat limit)
+    readonly toolName: string;               // from the call, or from an orphan result
+    readonly call: ToolCallChunk | null;     // null = orphan result (call unloaded by chat limit)
     readonly result: ToolResultChunk | null; // null = pending
   }
-  | { kind: "tool-batch"; key: string; stepId?: string; entries: readonly ToolEntry[];
-      provisional: boolean; turnId?: string }
+  export type RenderGroup =
+    | { kind: "single"; chunk: RenderedChunk }   // non-tool chunks only
+    | { kind: "tool"; entry: ToolEntry; provisional: boolean; stepId?: string; turnId?: string };
   ```
-  (Name check vs GLOSSARY before coining — keep `tool-batch` / `ToolBatchEntry` if possible to avoid
-  vocab churn; `entries.length === 1` is a single call.)
-- Group key: calls with a `stepId` group by step; calls without a `stepId` (legacy rows) form their
-  own 1-entry group. Results are always absorbed into their call's entry (match by `toolCallId`).
-- Orphan results (no call in the rendered window) → a 1-entry group at the result's position with
+  (Name check vs GLOSSARY before coining; `ToolBatchEntry` / `tool-batch` go away — remove them
+  from `core/chunks/index.ts` and `features/chat/index.ts` exports.)
+- Each `tool-call` chunk emits one `tool` group at its position; its `tool-result` (matched by
+  `toolCallId`, regardless of `stepId` — legacy rows without `stepId` pair too) is absorbed and
+  never emitted on its own. `provisional` = call OR result provisional; `stepId`/`turnId` from the
+  call (fall back to the result).
+- Orphan results (no call in the rendered window) → a `tool` group at the result's position with
   `call: null`.
-- Keep the existing duplicate-`toolCallId` dedupe.
-- Stable render key: `b<stepId>` when present, else `t<toolCallId>` — survives the
-  provisional→committed seal (fixes the lost-open-state bug for single tool cards).
-- Update `src/core/metrics/place.ts` `groupStepId` / `groupTurnId` for the new shape (stepId now
-  optional on the group).
-- Tests: rewrite `groups.test.ts` cases (single call now grouped + paired; legacy no-stepId pairing;
-  orphan result; pending result; dedupe), re-run `place.test.ts` / `placement-scenarios.test.ts`.
+- Keep the existing duplicate-`toolCallId` dedupe (first call occurrence wins; never emit two
+  groups with the same `toolCallId` — duplicate keys abort Svelte's keyed each).
+- Stable render key `t<toolCallId>` — survives the provisional→committed seal (fixes the
+  lost-open-state bug for single tool cards).
+- Update `src/core/metrics/place.ts` `groupStepId` / `groupTurnId` for the new shape (step-metrics
+  rows must still land after the LAST tool card of their step).
+- Tests: rewrite `groups.test.ts` (every call → its own paired group; parallel calls → consecutive
+  groups; legacy no-stepId pairing; orphan result; pending result; dedupe), keep
+  `place.test.ts` / `placement-scenarios.test.ts` green (update fixtures for the new shape).
 
 ### Step 2 — Pure summary view-model (new `src/features/chat/logic/tool-summary.ts`)
 ```ts
@@ -174,8 +191,13 @@ export interface ToolCardView {
     | { kind: "command"; text: string }
     | { kind: "edit"; path: string; oldText: string; newText: string }
     | { kind: "fields"; fields: readonly { key: string; value: string; multiline: boolean }[] };
-  readonly output: { lines: readonly string[]; previewCount: number } | null;
+  readonly output: ToolOutputView | null; // null while pending
 }
+/** Decision 4: > 12 lines → head (first 6) + hiddenCount + tail (last 6); else full. */
+export type ToolOutputView =
+  | { kind: "full"; lines: readonly string[]; isError: boolean }
+  | { kind: "elided"; head: readonly string[]; hiddenCount: number; tail: readonly string[];
+      all: readonly string[]; isError: boolean };
 export function viewToolEntry(entry: ToolEntry): ToolCardView;
 ```
 - Input normalization: `input` is `unknown` — accept objects; if a string, try `JSON.parse`; never
@@ -188,28 +210,34 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView;
   `N replacement(s)` (+ `diagnostics` badge when diagnostics are appended), write `(N bytes)` →
   `created/overwrote · size`.
 - Exhaustive vitest coverage (pure, no mocks): each tool + fallback, malformed input, error,
-  pending, orphan.
+  pending, orphan, and the output elision boundaries (12 lines → full; 13 → 6 + 1 hidden + 6;
+  trailing newline handling).
 
 ### Step 3 — Component (`src/features/chat/ui/ToolCard.svelte`, thin)
-- Props: `entry: ToolEntry`. Calls `viewToolEntry`, renders `LazyCollapse` with the header
-  (status glyph · name · `truncate` call summary · badges · `→ result summary`) and the lazily-mounted
-  body (call detail + output with "⋯ N more lines" toggle).
+- Props: `entry: ToolEntry`. Calls `viewToolEntry`, renders `LazyCollapse` (collapsed by default)
+  with the header (status icon · wrench · name · `truncate` call summary · badges · `→ result
+  summary`) and the lazily-mounted body (call detail + output: first 6 lines, `⋯ N more lines`
+  toggle, last 6 lines; toggle expands to full output and back).
 - Header layout must stay one line: `min-w-0 truncate` on the summary, `shrink-0` on name/status/
   result summary. `LazyCollapse` may need a `min-w-0` on its title flex row.
 - Accessible label: `Toggle tool call <name>`.
 
 ### Step 4 — Wire into `ChatView.svelte`
 - Delete the `tool-call` / `tool-result` branches of `chunkRow` (they can no longer reach it).
-- The tool-group branch renders `{#each entries as entry (entry.toolCallId)}<ToolCard {entry}/>`.
-- Key update in `keyedRows` per Step 1.
-- Update `ui.test.ts` / `ChatView.test.ts`: one card per call; header contains call + result
-  summary; no standalone result card; pending spinner; error tint; orphan result card.
+- Delete the batched-tool branch. A `tool` group renders ONE bubble (same
+  `chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0` shim) containing one
+  `<ToolCard {entry}/>`.
+- Key update in `keyedRows`: `t<toolCallId>` per Step 1.
+- Update `ui.test.ts` / `ChatView.test.ts`: one bubble + one card per call (parallel calls →
+  separate bubbles); header contains call + result summary; no standalone result card; pending
+  spinner; ✓/✗ status icon; error tint; orphan result card; collapsed by default.
 
 ### Step 5 — Verify + live check
 `bun install`, `bun run typecheck`, `bun run test` (×2), `bun run check`, `bun run build`. Then a
-human visual pass via `bin/up` from `worktrees/tool-call-display/` (stop the main `bin/up` first —
-same ports): a turn with a single shell call, a parallel batch, an error, an edit, a long output, a
-streaming (pending) call, and a reload mid-turn (seal keeps open state).
+human visual pass via `bin/up` from `worktrees/tool-call-cards/` (stop the main `bin/up` first —
+same ports): a turn with a single shell call, parallel calls (separate bubbles), an error, an edit,
+a long output (6 + toggle + 6), a streaming (pending) call, and a reload mid-turn (seal keeps open
+state).
 
 No wire/contract change → no `backend-handoff.md` ask. Update `GLOSSARY.md` only if a new term is
 coined.
@@ -222,11 +250,5 @@ match counts, diff stats), the backend could add an optional structured `details
 `ToolResultChunk` (as oh-my-pi does). That would be a wire change via `backend-handoff.md` — out of
 scope for this feature.
 
-## 5. Open questions for the user
-1. **Per-tool summaries vs. generic only?** Plan: a small per-tool table for Dispatch's built-in
-   tools + a generic fallback. Alternative: generic heuristics only (less code, less precise).
-2. **Batches**: keep the stacked-cards-in-one-bubble grouping for parallel calls (plan), or render
-   every call as an independent card with no batch grouping?
-3. **Icon**: status glyph (spinner/✓/✗) replacing the wrench, or keep the wrench + a status glyph?
-4. **Default state**: all collapsed (today's behavior), or auto-expand errors?
-5. **Output preview length** in the expanded body (plan: 12 lines then "⋯ N more lines").
+## 5. Open questions
+All resolved — see **DECISIONS** at the top.
