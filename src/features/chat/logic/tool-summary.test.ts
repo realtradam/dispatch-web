@@ -85,6 +85,18 @@ describe("tool summaries", () => {
     ]);
     expect(view("edit_file", { path: "a" }).callBadges).toEqual([]);
   });
+  it("omits edit diffstats after failure while retaining attempted edits in call details", () => {
+    const input = { path: "src/missing.ts", oldString: "foo", newString: "bar" };
+    const card = view("edit_file", input, "Error: oldString not found", true);
+    expect(card.callBadges).toEqual([]);
+    expect(card.callDetail).toEqual({
+      kind: "edit",
+      path: input.path,
+      oldText: "foo",
+      newText: "bar",
+    });
+    expect(card.resultSummary).toBe("failed");
+  });
   it("preserves exact shell commands in the expanded detail", () => {
     expect(view("run_shell", { command: "ls\n pwd" }).callDetail).toEqual({
       kind: "command",
@@ -228,7 +240,7 @@ describe("tool summaries", () => {
     });
     expect(viewToolEntry(e).callDetail).toEqual({
       kind: "unavailable",
-      text: "The call is in earlier, unloaded history. Its response is shown below.",
+      text: "This call is earlier in the conversation. Show earlier messages to see it.",
     });
   });
 });

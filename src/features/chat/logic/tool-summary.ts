@@ -251,7 +251,7 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
       ? "Call in earlier history"
       : oneLine(builtInSummary || generic || serialize(input));
   const callBadges: ToolCardView["callBadges"][number][] = [];
-  if (entry.toolName === "edit_file" && entry.call !== null) {
+  if (entry.toolName === "edit_file" && entry.call !== null && !entry.result?.isError) {
     if (typeof args.oldString === "string" && typeof args.newString === "string") {
       callBadges.push(
         { label: `+${lineCount(args.newString)}`, tone: "success" },
@@ -272,7 +272,7 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
       entry.call === null
         ? {
             kind: "unavailable",
-            text: "The call is in earlier, unloaded history. Its response is shown below.",
+            text: "This call is earlier in the conversation. Show earlier messages to see it.",
           }
         : detail(entry.toolName, input, args),
     resultSummary,

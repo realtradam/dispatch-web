@@ -67,27 +67,48 @@
               <span class="result-compact">→ {card.compactResultSummary}</span>
             {/if}
           </span>
+        {:else}
+          <span class="tool-result text-xs text-base-content/60">→ running…</span>
         {/if}
       </div>
     {/snippet}
     <div class="min-w-0 space-y-4 text-xs">
       <section aria-label="Call">
-        <h3 class="mb-2 border-b border-base-content/20 pb-1 font-semibold text-base-content">
-          Call
-        </h3>
         {#if card.callDetail.kind === "unavailable"}
-          <p class="text-base-content/75">{card.callDetail.text}</p>
-        {:else if card.callDetail.kind === "command"}
+          <aside
+            role="note"
+            class="border-l-2 border-base-content/20 pl-3 italic text-base-content/60"
+          >
+            {card.callDetail.text}
+          </aside>
+        {:else}
+          <h3 class="mb-2 border-b border-base-content/20 pb-1 font-semibold text-base-content">
+            Call
+          </h3>
+        {/if}
+        {#if card.callDetail.kind === "command"}
           <pre class="overflow-x-auto">$ {card.callDetail.text}</pre>
         {:else if card.callDetail.kind === "edit"}
           <div class="mb-2 break-all font-mono">{card.callDetail.path}</div>
-          <div class="space-y-1">
-            <div class="font-medium text-error">− old</div>
-            <pre class="overflow-x-auto text-error">{card.callDetail.oldText}</pre>
-            <div class="font-medium text-success">+ new</div>
-            <pre class="overflow-x-auto text-success">{card.callDetail.newText}</pre>
+          <!-- Unified-diff style: every removed/added line carries its own −/+ gutter
+               marker and a tinted row, so multi-line edits read as one diff block. -->
+          <div class="edit-diff overflow-x-auto rounded font-mono" role="group" aria-label="Edit diff">
+            {#if card.callDetail.oldText !== ""}
+              {#each card.callDetail.oldText.split("\n") as line, i (i)}
+                <div class="edit-diff-row edit-diff-del">
+                  <span class="edit-diff-sign" aria-label="removed">−</span><span>{line}</span>
+                </div>
+              {/each}
+            {/if}
+            {#if card.callDetail.newText !== ""}
+              {#each card.callDetail.newText.split("\n") as line, i (i)}
+                <div class="edit-diff-row edit-diff-add">
+                  <span class="edit-diff-sign" aria-label="added">+</span><span>{line}</span>
+                </div>
+              {/each}
+            {/if}
           </div>
-        {:else}
+        {:else if card.callDetail.kind === "fields"}
           <dl class="call-fields">
             {#each card.callDetail.fields as field}
               <dt class="font-semibold text-base-content/85">{field.key}</dt>
@@ -117,13 +138,13 @@
               {/if}
               <div class="output-controls" class:sticky-controls={showAll}>
                 <button
-                  class="btn btn-primary btn-sm focus-visible:outline-primary"
+                  class="btn btn-soft btn-xs focus-visible:outline-primary"
                   aria-expanded={showAll}
                   onclick={() => {
                     showAll = !showAll;
                   }}
                 >
-                  <span aria-hidden="true">{showAll ? "↑" : "↕"}</span>
+                  {#if showAll}<span aria-hidden="true">↑</span>{/if}
                   {showAll ? "Show fewer lines" : `⋯ ${card.output.hiddenCount} more lines`}
                 </button>
               </div>
@@ -187,6 +208,30 @@
   .call-fields dt {
     max-width: 10rem;
     overflow-wrap: anywhere;
+  }
+  .edit-diff {
+    background: var(--color-base-300);
+    padding-block: 0.25rem;
+  }
+  .edit-diff-row {
+    display: flex;
+    min-width: max-content;
+    white-space: pre;
+    padding-inline-end: 0.75rem;
+  }
+  .edit-diff-sign {
+    flex-shrink: 0;
+    width: 1.75rem;
+    text-align: center;
+    user-select: none;
+  }
+  .edit-diff-del {
+    color: var(--color-error);
+    background: color-mix(in oklab, var(--color-error) 12%, transparent);
+  }
+  .edit-diff-add {
+    color: var(--color-success);
+    background: color-mix(in oklab, var(--color-success) 12%, transparent);
   }
   .output-controls {
     padding-block: 0.5rem;

@@ -18,6 +18,28 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Tool-call cards final visual follow-up (`feature/tool-call-cards`, 2026-10-14)
+
+**Slice status:** COMPLETE (frontend-only).
+
+- Failed `edit_file` entries no longer carry header diffstats; attempted old/new content remains
+  available in the expanded Call section. Regression covers pending edit → failed result.
+- Orphan explanation is a muted italic note, without a Call heading: “This call is earlier in the
+  conversation. Show earlier messages to see it.” No storage jargon in the user-facing copy.
+- Pending headers now show muted `→ running…` on the right; it is replaced by the result on arrival.
+- `edit_file` call detail is now a unified diff: one tinted row per line with its own −/+ gutter
+  marker (classes `edit-diff*` — NOT `.diff`, which collides with DaisyUI 5's `diff` component).
+  The output toggle is a neutral `btn-soft btn-xs`; the ↑ glyph shows only on "Show fewer lines".
+- Reverted the `!scratch` / `!reports` Biome exclusions at the user's request. Moved only our
+  generated TS/JSON probe artifacts from gitignored reports to `/tmp/tool-call-polish-artifacts`;
+  the temporary harness has since been deleted.
+- Verification: typecheck **0 errors/0 warnings**; full tests **1,931 passed ×2** (111 files);
+  build succeeds (existing warnings only). `bun run check` reports ONLY `scratch/harness.ts`
+  formatting/non-null assertions, (harness since deleted; check is now fully clean apart from the two existing config infos).
+  Separate Biome check of all `src` and root source/config files passes with no errors/warnings.
+- Screenshots at 1280px and 420px confirm the failed edit, orphan note, and pending header.
+- Backend, contracts, mirrors and open asks: unchanged; no backend asks.
+
 ## Milestone: Tool-call card visual polish (`feature/tool-call-cards`, 2026-10-14)
 
 **Slice status:** COMPLETE (frontend-only follow-up to the user's headless-browser visual pass).

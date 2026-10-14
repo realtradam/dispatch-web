@@ -220,14 +220,15 @@ describe("ChatView — tool cards", () => {
     expect(screen.queryByRole("checkbox", { name: /tool result/ })).toBeNull();
   });
   it("transitions pending → result → sealed without losing open state", async () => {
-    const { container, rerender } = render(ChatView, { props: { chunks: shellChunks(null) } });
+    const { rerender } = render(ChatView, { props: { chunks: shellChunks(null) } });
     expect(screen.getByLabelText("Running")).toHaveClass("loading-spinner");
-    expect(container.querySelector(".collapse-title")).not.toHaveTextContent("→");
+    expect(screen.getByText("→ running…")).toHaveClass("tool-result", "text-base-content/60");
     const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
     await userEvent.click(box);
     expect(screen.getByText("running…")).toBeInTheDocument();
     await rerender({ chunks: shellChunks("done") });
     expect(screen.queryByLabelText("Running")).toBeNull();
+    expect(screen.queryByText("→ running…")).toBeNull();
     expect(screen.getByLabelText("Succeeded")).toBeInTheDocument();
     expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
     expect(box).toBeChecked();
@@ -258,7 +259,11 @@ describe("ChatView — tool cards", () => {
     expect(screen.getByLabelText("Succeeded")).toHaveClass("opacity-60");
     const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
     await userEvent.click(box);
-    expect(screen.getByText(/The call is in earlier, unloaded history/)).toBeInTheDocument();
+    expect(screen.getByRole("note")).toHaveTextContent(
+      "This call is earlier in the conversation. Show earlier messages to see it.",
+    );
+    expect(screen.getByRole("note")).toHaveClass("italic", "text-base-content/60");
+    expect(screen.queryByRole("heading", { name: "Call" })).toBeNull();
     expect(screen.getByText("contents")).toBeInTheDocument();
     await rerender({ chunks });
     expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
@@ -283,7 +288,7 @@ describe("ChatView — tool cards", () => {
     expect(response.querySelectorAll("pre")).toHaveLength(1);
     expect(response.querySelector("pre")?.textContent).toBe(output);
     const fewer = screen.getByRole("button", { name: "Show fewer lines" });
-    expect(fewer).toHaveClass("btn-primary", "btn-sm");
+    expect(fewer).toHaveClass("btn-soft", "btn-xs");
     expect(fewer.parentElement).toHaveClass("sticky-controls");
     const fullOutput = response.querySelector("pre");
     if (fullOutput === null) throw new Error("expected full output");
@@ -345,8 +350,12 @@ describe("ChatView — tool cards", () => {
     expect(screen.getByText("−1")).toHaveClass("text-error");
     expect(screen.getByText("→ 1 replacement · diagnostics")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call edit_file" }));
-    expect(screen.getByText("before")).toHaveClass("text-error");
-    expect(screen.getByText("after second")).toHaveClass("text-success");
+    // Unified diff: one tinted row per line, each with its own −/+ gutter marker.
+    const diff = screen.getByRole("group", { name: "Edit diff" });
+    const removed = diff.querySelectorAll(".edit-diff-del");
+    const added = diff.querySelectorAll(".edit-diff-add");
+    expect(Array.from(removed, (r) => r.textContent?.trim())).toEqual(["−before"]);
+    expect(Array.from(added, (r) => r.textContent?.trim())).toEqual(["+after", "+second"]);
     expect(container.querySelector("script")).toBeNull();
     expect(container).toHaveTextContent("<script>alert(1)</script>");
   });
@@ -388,4 +397,44 @@ it("renders compact, aligned generic fields with legible headings and inline sca
   expect(container.querySelectorAll("dt")).toHaveLength(5);
   expect(container.querySelectorAll("dd")).toHaveLength(5);
   expect(screen.getByText("options").nextElementSibling).toHaveTextContent('"nested": true');
+});
+
+it("removes a pending edit's diffstat when it fails, without hiding the attempted edit", async () => {
+  const call: RenderedChunk = {
+    seq: null,
+    role: "assistant",
+    provisional: true,
+    chunk: {
+      type: "tool-call",
+      toolCallId: "failed-edit",
+      toolName: "edit_file",
+      input: { path: "src/missing.ts", oldString: "foo", newString: "bar" },
+    },
+  };
+  const result: RenderedChunk = {
+    seq: null,
+    role: "tool",
+    provisional: true,
+    chunk: {
+      type: "tool-result",
+      toolCallId: "failed-edit",
+      toolName: "edit_file",
+      content: "Error: oldString not found",
+      isError: true,
+    },
+  };
+  const { container, rerender } = render(ChatView, { props: { chunks: [call] } });
+  expect(screen.getByText("+1")).toBeInTheDocument();
+  expect(screen.getByText("−1")).toBeInTheDocument();
+  expect(screen.getByText("→ running…")).toBeInTheDocument();
+  await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call edit_file" }));
+  await rerender({ chunks: [call, result] });
+  expect(screen.queryByText("+1")).toBeNull();
+  expect(screen.queryByText("−1")).toBeNull();
+  expect(screen.queryByText("→ running…")).toBeNull();
+  expect(container.querySelector(".tool-header")).toHaveTextContent("src/missing.ts");
+  expect(container.querySelector(".tool-header")).toHaveTextContent("→ failed");
+  expect(screen.getByText("foo")).toBeInTheDocument();
+  expect(screen.getByText("bar")).toBeInTheDocument();
+  expect(screen.getByText("Error: oldString not found")).toBeInTheDocument();
 });
