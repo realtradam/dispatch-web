@@ -1,15 +1,24 @@
 <script lang="ts">
   import { untrack } from "svelte";
-  import type { AccountUsageResponse, LoadAccountUsage } from "../logic/types";
+  import type {
+    AccountUsageReport,
+    AccountUsageResponse,
+    LoadAccountUsage,
+    SaveAccountUsageSettings,
+  } from "../logic/types";
   import { viewProviderCards } from "../logic/view-model";
+  import DailyCreditsSettings from "./DailyCreditsSettings.svelte";
   import UsageBar from "./UsageBar.svelte";
 
   let {
     load,
+    saveSettings,
     now = () => Date.now(),
     pollMs = 60_000,
   }: {
     load: LoadAccountUsage;
+    /** Save per-provider settings (Hyper allowance + reset time). */
+    saveSettings: SaveAccountUsageSettings;
     /** Injected clock (tests). */
     now?: () => number;
     /** How often to re-read `GET /usage` (served from the backend cache). */
@@ -41,6 +50,16 @@
         ? "Account usage is unavailable (backend extension not loaded)."
         : result.error;
     }
+  }
+
+  /** Splice a provider's refreshed report (from a settings save) into the view. */
+  function replaceReport(report: AccountUsageReport): void {
+    clock = now();
+    if (!usage) return;
+    usage = {
+      ...usage,
+      providers: usage.providers.map((p) => (p.provider === report.provider ? report : p)),
+    };
   }
 
   $effect(() => {
@@ -115,6 +134,15 @@
       {#each card.bars as bar (bar.id)}
         <UsageBar {bar} />
       {/each}
+
+      {#if card.daily}
+        <DailyCreditsSettings
+          daily={card.daily}
+          save={saveSettings}
+          onSaved={replaceReport}
+          {now}
+        />
+      {/if}
     </section>
   {/each}
 

@@ -56,8 +56,13 @@ import {
   subscribe as protocolSubscribe,
   unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
-import type { AccountUsageResult } from "../features/account-usage";
-import { normalizeAccountUsage } from "../features/account-usage";
+import type {
+  AccountUsageProviderId,
+  AccountUsageResult,
+  AccountUsageSettingsResult,
+  UpdateAccountUsageSettingsRequest,
+} from "../features/account-usage";
+import { normalizeAccountUsage, normalizeAccountUsageReport } from "../features/account-usage";
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore, migrateLegacyModelName } from "../features/chat";
 import type { SetThinkingRequest, ThinkingResponse } from "../features/chat/reasoning-effort";
@@ -543,6 +548,15 @@ export interface AppStore {
    * `account-usage` extension isn't loaded) returns `unavailable: true`.
    */
   accountUsage(opts?: { readonly refresh?: boolean }): Promise<AccountUsageResult>;
+  /**
+   * Update a provider's usage settings (`PUT /usage/:provider/settings`; today
+   * only `hyper`: `dailyAllowance` + `resetAnchor` epoch-ms or null). Returns
+   * the provider's refreshed report.
+   */
+  setAccountUsageSettings(
+    provider: AccountUsageProviderId,
+    settings: UpdateAccountUsageSettingsRequest,
+  ): Promise<AccountUsageSettingsResult>;
   /**
    * Load the GLOBAL search-backend selection
    * (`GET /search/config`): which engine backs the `web_search` tool's search
@@ -2609,6 +2623,35 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         return {
           ok: false,
           error: err instanceof Error ? err.message : "Account usage request failed",
+        };
+      }
+    },
+
+    async setAccountUsageSettings(
+      provider: AccountUsageProviderId,
+      settings: UpdateAccountUsageSettingsRequest,
+    ): Promise<AccountUsageSettingsResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/usage/${encodeURIComponent(provider)}/settings`, {
+          method: "PUT",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(settings),
+        });
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Save usage settings failed (HTTP ${res.status})`,
+          };
+        }
+        const report = normalizeAccountUsageReport(await res.json());
+        return report
+          ? { ok: true, report }
+          : { ok: false, error: "Malformed usage settings response" };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Save usage settings request failed",
         };
       }
     },

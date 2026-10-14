@@ -33,6 +33,9 @@ repos of one worktree like archive-workspaces).
   window's elapsed fraction (`(now − (resetsAt − durationMs)) / durationMs`) — the usage level
   that is "on track" to use the allowance exactly by the reset. Spend meters (no window) show no
   marker. Polls every 60 s (backend cache hit); Refresh button sends `?refresh=1`.
+- Hyper (`transport-contract@0.26.0`): a third card with a `hyper:daily` credits bar (default 250/day)
+  and an inline editor (allowance + local reset time → `PUT /usage/hyper/settings`). Hyper's API only
+  reports the balance, so the reset time is manual or auto-detected from an observed refill.
 - Open asks: none. Backend-side, inference responses from the claude/codex providers also update
   the cached windows between polls (kernel `providerResponseHeaders` event) — no FE change needed.
 

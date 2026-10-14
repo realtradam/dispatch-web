@@ -1,9 +1,12 @@
 import type { AccountUsageLimit, AccountUsageReport } from "@dispatch/transport-contract";
 import { describe, expect, it } from "vitest";
 import {
+  anchorFromTimeOfDay,
   elapsedFraction,
   formatDuration,
   normalizeAccountUsage,
+  parseAllowanceInput,
+  toLocalTimeOfDay,
   viewProviderCard,
   viewUsageBar,
 } from "./view-model";
@@ -44,6 +47,7 @@ function report(over: Partial<AccountUsageReport> = {}): AccountUsageReport {
     canServe: null,
     creditOverage: false,
     credits: null,
+    dailyCredits: null,
     fetchedAt: NOW - 3 * 60_000,
     lastAttemptAt: NOW - 3 * 60_000,
     nextRefreshAt: NOW + 2 * 60_000,
@@ -194,5 +198,80 @@ describe("formatDuration", () => {
     expect(formatDuration(45 * 60_000)).toBe("45m");
     expect(formatDuration(3 * HOUR + 12 * 60_000)).toBe("3h 12m");
     expect(formatDuration(2 * DAY + 4 * HOUR)).toBe("2d 4h");
+  });
+});
+
+describe("hyper daily credits", () => {
+  const hyperLimit = limit({
+    id: "hyper:daily",
+    label: "Daily credits",
+    windowId: "1d",
+    unit: "credits",
+    durationMs: DAY,
+    resetsAt: NOW + 12 * HOUR,
+    used: 150,
+    limit: 250,
+    remaining: 100,
+    usedFraction: 0.6,
+  });
+
+  it("formats credits and places the pace marker halfway through the day", () => {
+    const bar = viewUsageBar(hyperLimit, NOW);
+    expect(bar.valueLabel).toBe("150 / 250");
+    expect(bar.pacePercent).toBeCloseTo(50);
+    expect(bar.paceLabel).toBe("10% ahead of pace");
+  });
+
+  it("card exposes balance + reset source", () => {
+    const c = viewProviderCard(
+      report({
+        provider: "hyper",
+        label: "Hyper",
+        account: { accountId: null, email: null, planType: null },
+        limits: [hyperLimit],
+        dailyCredits: { balance: 300, allowance: 250, resetAnchor: null, resetSource: null },
+      }),
+      NOW,
+    );
+    expect(c.daily).toMatchObject({
+      balanceLabel: "300 credits left (incl. bundles)",
+      allowance: 250,
+      resetTime: "",
+      resetSource: null,
+    });
+    expect(c.daily?.resetSourceLabel).toContain("unknown");
+  });
+
+  it("round-trips a local time of day into a past anchor", () => {
+    const now = new Date(2026, 9, 14, 15, 30).getTime();
+    const a = anchorFromTimeOfDay("09:00", now);
+    expect(a).toBe(new Date(2026, 9, 14, 9, 0).getTime());
+    expect(anchorFromTimeOfDay("17:00", now)).toBe(new Date(2026, 9, 13, 17, 0).getTime());
+    expect(toLocalTimeOfDay(a ?? 0)).toBe("09:00");
+    expect(anchorFromTimeOfDay("25:00", now)).toBeNull();
+    expect(anchorFromTimeOfDay("noon", now)).toBeNull();
+  });
+
+  it("parses the allowance input", () => {
+    expect(parseAllowanceInput(" 250 ")).toBe(250);
+    expect(parseAllowanceInput("0")).toBeNull();
+    expect(parseAllowanceInput("2.5")).toBeNull();
+  });
+
+  it("normalizes hyper reports + credit units", () => {
+    const n = normalizeAccountUsage(
+      {
+        providers: [
+          {
+            ...report({ provider: "hyper" }),
+            limits: [hyperLimit],
+            dailyCredits: { balance: 1, allowance: 250, resetAnchor: 5, resetSource: "manual" },
+          },
+        ],
+      },
+      0,
+    );
+    expect(n.providers[0]?.limits[0]?.unit).toBe("credits");
+    expect(n.providers[0]?.dailyCredits?.resetSource).toBe("manual");
   });
 });

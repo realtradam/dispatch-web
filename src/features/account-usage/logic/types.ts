@@ -1,9 +1,11 @@
 import type {
+  AccountUsageDailyCredits,
   AccountUsageLimit,
   AccountUsageProviderId,
   AccountUsageReport,
   AccountUsageResponse,
   AccountUsageState,
+  UpdateAccountUsageSettingsRequest,
 } from "@dispatch/transport-contract";
 
 /**
@@ -15,11 +17,13 @@ import type {
  * refresh sends `?refresh=1`, which the server still rate-limits.
  */
 export type {
+  AccountUsageDailyCredits,
   AccountUsageLimit,
   AccountUsageProviderId,
   AccountUsageReport,
   AccountUsageResponse,
   AccountUsageState,
+  UpdateAccountUsageSettingsRequest,
 };
 
 /** Outcome of `GET /usage`. `unavailable` = the backend extension isn't loaded (503). */
@@ -31,3 +35,14 @@ export type AccountUsageResult =
 export type LoadAccountUsage = (opts?: {
   readonly refresh?: boolean;
 }) => Promise<AccountUsageResult>;
+
+/** Outcome of `PUT /usage/:provider/settings` — the provider's refreshed report. */
+export type AccountUsageSettingsResult =
+  | { readonly ok: true; readonly report: AccountUsageReport }
+  | { readonly ok: false; readonly error: string };
+
+/** Injected port: update a provider's usage settings (today only `hyper`). */
+export type SaveAccountUsageSettings = (
+  provider: AccountUsageProviderId,
+  settings: UpdateAccountUsageSettingsRequest,
+) => Promise<AccountUsageSettingsResult>;
