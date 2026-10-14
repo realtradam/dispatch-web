@@ -69,7 +69,10 @@ describe("tool summaries", () => {
   it("formats edit call badges and old/new details without hiding multiline text", () => {
     const input = { path: "a.ts", oldString: "a\nb\n", newString: "x\ny\nz\n" };
     const card = view("edit_file", input);
-    expect(card.callBadges).toEqual(["+3 −2"]);
+    expect(card.callBadges).toEqual([
+      { label: "+3", tone: "success" },
+      { label: "−2", tone: "error" },
+    ]);
     expect(card.callDetail).toEqual({
       kind: "edit",
       path: "a.ts",
@@ -77,7 +80,8 @@ describe("tool summaries", () => {
       newText: input.newString,
     });
     expect(view("edit_file", { path: "a", oldString: "", newString: "x" }).callBadges).toEqual([
-      "+1 −0",
+      { label: "+1", tone: "success" },
+      { label: "−0", tone: "error" },
     ]);
     expect(view("edit_file", { path: "a" }).callBadges).toEqual([]);
   });
@@ -96,6 +100,33 @@ describe("tool summaries", () => {
         { key: "nested", value: '{\n  "a": true\n}', multiline: true },
       ],
     });
+  });
+  it("formats short scalar arrays inline, retaining quotes, escapes, nulls and empty arrays", () => {
+    expect(
+      view("mcp", {
+        labels: ["ui", "chat"],
+        scalars: [1, true, null],
+        empty: [],
+        escaped: ["a\nb"],
+      }).callDetail,
+    ).toEqual({
+      kind: "fields",
+      fields: [
+        { key: "labels", value: '["ui", "chat"]', multiline: false },
+        { key: "scalars", value: "[1, true, null]", multiline: false },
+        { key: "empty", value: "[]", multiline: false },
+        { key: "escaped", value: '["a\\nb"]', multiline: false },
+      ],
+    });
+  });
+  it("keeps long arrays and nested structures pretty-printed and complete", () => {
+    const input = { long: ["x".repeat(80)], nested: [{ a: 1 }], mixed: [1, { a: 1 }] };
+    const card = view("mcp", input);
+    if (card.callDetail.kind !== "fields") throw new Error("expected fields");
+    expect(card.callDetail.fields.map((field) => field.multiline)).toEqual([true, true, true]);
+    expect(card.callDetail.fields.map((field) => JSON.parse(field.value))).toEqual(
+      Object.values(input),
+    );
   });
   it.each([
     "command",
@@ -192,14 +223,12 @@ describe("tool summaries", () => {
     expect(viewToolEntry(e)).toMatchObject({
       name: "read_file",
       status: "ok",
-      callSummary: "call unavailable",
+      callSummary: "Call in earlier history",
       resultSummary: "1 line",
     });
     expect(viewToolEntry(e).callDetail).toEqual({
-      kind: "fields",
-      fields: [
-        { key: "call", value: "Call unavailable (earlier history unloaded)", multiline: false },
-      ],
+      kind: "unavailable",
+      text: "The call is in earlier, unloaded history. Its response is shown below.",
     });
   });
 });
@@ -213,14 +242,15 @@ describe("tool response facts", () => {
     ["mcp", "", false, "no output"],
     ["mcp", " \n\t", false, "no output"],
     ["mcp", "a short response", false, "a short response"],
+    ["mcp", "A successful response with more than forty characters of text", false, "1 line"],
     ["mcp", "x".repeat(200), false, "1 line"],
     ["web_search", "a\nb\nc", false, "3 lines"],
     ["run_shell", "", true, "failed"],
-    ["mcp", "Permission denied", true, "failed · Permission denied"],
-    ["run_shell", "error\ndetail", true, "failed · 2 lines"],
+    ["mcp", "Permission denied", true, "failed"],
+    ["run_shell", "error\ndetail", true, "failed"],
     ["run_shell", "partial\n\n[Command timed out]", true, "timed out"],
     ["run_shell", "[Output truncated: 12000 bytes]", false, "1 line · truncated"],
-    ["run_shell", "bad\n[Output truncated: 12000 bytes]", true, "failed · 2 lines · truncated"],
+    ["run_shell", "bad\n[Output truncated: 12000 bytes]", true, "failed · truncated"],
     ["edit_file", 'Replaced 1 occurrence(s) in "a.ts".', false, "1 replacement"],
     [
       "edit_file",
@@ -236,6 +266,28 @@ describe("tool response facts", () => {
     expect(card.resultSummary).toBe(expected);
     expect(card.status).toBe(isError ? "error" : "ok");
     expect(card.output?.isError).toBe(isError);
+  });
+  it.each([
+    ["run_shell", "oops\ndetails", true, "failed"],
+    ["run_shell", "partial\n[Command timed out]", true, "timed out"],
+    ["write_file", 'Created "a.ts" (4200 bytes).', false, "created"],
+    ["write_file", 'Overwrote "a.ts" (10 bytes).', false, "overwrote"],
+    ["edit_file", 'Replaced 3 occurrences in "a.ts".\nDiagnostics: warning', false, "replaced"],
+    ["run_shell", "a\nb\nc\nd", false, "4 lines"],
+    ["mcp", "Created issue #42", false, "1 line"],
+    ["mcp", "", false, "no output"],
+    ["read_file", "(empty file: a.ts)", false, "empty file"],
+  ])("%s supplies a complete compact response fact", (name, content, isError, expected) => {
+    expect(view(name, {}, content, isError).compactResultSummary).toBe(expected);
+  });
+  it("never puts error content in header summaries, but retains it verbatim in output", () => {
+    const content = 'Error: oldString not found in content of "src/missing.ts".';
+    const card = view("edit_file", { path: "src/missing.ts" }, content, true);
+    expect(card.resultSummary).toBe("failed");
+    expect(card.compactResultSummary).toBe("failed");
+    expect(card.output).toEqual({ kind: "full", lines: [content], isError: true });
+    expect(card.callSummary).toBe("src/missing.ts");
+    expect(view("mcp", {}, null).compactResultSummary).toBeNull();
   });
   it("does not infer success on an error that resembles a write result", () => {
     expect(view("write_file", {}, 'Created "a.ts" (10 bytes).', true).resultSummary).toMatch(

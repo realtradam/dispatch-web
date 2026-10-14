@@ -4,9 +4,14 @@ export interface ToolCardView {
   readonly name: string;
   readonly status: "pending" | "ok" | "error";
   readonly callSummary: string;
-  readonly callBadges: readonly string[];
+  readonly callBadges: readonly {
+    readonly label: string;
+    readonly tone: "success" | "error";
+  }[];
   readonly resultSummary: string | null;
+  readonly compactResultSummary: string | null;
   readonly callDetail:
+    | { readonly kind: "unavailable"; readonly text: string }
     | { readonly kind: "command"; readonly text: string }
     | {
         readonly kind: "edit";
@@ -66,6 +71,22 @@ function serialize(input: unknown, pretty = false): string {
   } catch {
     return "[unserializable input]";
   }
+}
+
+/** Small scalar arrays are easier to scan inline; nested/long values stay pretty JSON. */
+function fieldValue(value: unknown): string {
+  if (
+    Array.isArray(value) &&
+    value.every((item) => item === null || ["string", "number", "boolean"].includes(typeof item))
+  ) {
+    try {
+      const inline = `[${value.map((item) => JSON.stringify(item)).join(", ")}]`;
+      if (inline.length <= 80) return inline;
+    } catch {
+      // Non-wire values still use the safe serializer below.
+    }
+  }
+  return serialize(value, true);
 }
 
 function arg(args: Args, ...keys: string[]): string {
@@ -146,7 +167,7 @@ function detail(name: string, input: unknown, args: Args): ToolCardView["callDet
   return {
     kind: "fields",
     fields: (entries.length > 0 ? entries : [["input", input]]).map(([key, value]) => {
-      const text = serialize(value, true);
+      const text = fieldValue(value);
       return { key: String(key), value: text, multiline: text.includes("\n") };
     }),
   };
@@ -166,8 +187,7 @@ function responseSummary(name: string, content: string, isError: boolean): strin
   const truncated = /\[Output truncated[^\]]*\]/i.test(content);
   let summary: string;
   if (timeout) summary = "timed out";
-  else if (isError)
-    summary = `failed${lines.length > 1 ? ` · ${count}` : first ? ` · ${first}` : ""}`;
+  else if (isError) summary = "failed";
   else if (!content.trim()) summary = "no output";
   else if (/^\(empty file\b/i.test(content)) summary = "empty file";
   else {
@@ -189,7 +209,19 @@ function responseSummary(name: string, content: string, isError: boolean): strin
       summary = count;
     } else summary = first;
   }
-  return oneLine(`${summary}${truncated ? " · truncated" : ""}`, 96);
+  const label = `${summary}${truncated ? " · truncated" : ""}`;
+  // Even the wide header must leave room for the call; prefer a whole short
+  // fact over chopping an arbitrary one-line response halfway through a word.
+  return label.length <= 40 ? label : compactResponseSummary(label, lines.length);
+}
+
+/** Never CSS-clip response facts: swap to a whole short fact when space is scarce. */
+function compactResponseSummary(summary: string, count: number): string {
+  const fact = summary.split(" · ")[0] ?? summary;
+  if (/^(failed|timed out|no output|empty file|created|overwrote|\d+ lines?)$/.test(fact))
+    return fact;
+  if (/^\d+ replacements?$/.test(fact)) return "replaced";
+  return `${count} ${count === 1 ? "line" : "lines"}`;
 }
 
 export function viewToolEntry(entry: ToolEntry): ToolCardView {
@@ -216,16 +248,21 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
   const builtInSummary = summarize?.(args).trim();
   const callSummary =
     entry.call === null
-      ? "call unavailable"
+      ? "Call in earlier history"
       : oneLine(builtInSummary || generic || serialize(input));
-  const callBadges: string[] = [];
+  const callBadges: ToolCardView["callBadges"][number][] = [];
   if (entry.toolName === "edit_file" && entry.call !== null) {
     if (typeof args.oldString === "string" && typeof args.newString === "string") {
-      callBadges.push(`+${lineCount(args.newString)} −${lineCount(args.oldString)}`);
+      callBadges.push(
+        { label: `+${lineCount(args.newString)}`, tone: "success" },
+        { label: `−${lineCount(args.oldString)}`, tone: "error" },
+      );
     }
   }
   const result = entry.result;
   const lines = result === null ? [] : outputLines(result.content);
+  const resultSummary =
+    result === null ? null : responseSummary(entry.toolName, result.content, result.isError);
   return {
     name: entry.toolName,
     status: result === null ? "pending" : result.isError ? "error" : "ok",
@@ -234,18 +271,13 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
     callDetail:
       entry.call === null
         ? {
-            kind: "fields",
-            fields: [
-              {
-                key: "call",
-                value: "Call unavailable (earlier history unloaded)",
-                multiline: false,
-              },
-            ],
+            kind: "unavailable",
+            text: "The call is in earlier, unloaded history. Its response is shown below.",
           }
         : detail(entry.toolName, input, args),
-    resultSummary:
-      result === null ? null : responseSummary(entry.toolName, result.content, result.isError),
+    resultSummary,
+    compactResultSummary:
+      resultSummary === null ? null : compactResponseSummary(resultSummary, lines.length),
     output:
       result === null
         ? null

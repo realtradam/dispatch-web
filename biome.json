@@ -11,6 +11,8 @@
       "!**/node_modules",
       "!**/dist",
       "!**/build",
+      "!scratch",
+      "!reports",
       "!**/*.svelte",
       "!**/src/themes"
     ]

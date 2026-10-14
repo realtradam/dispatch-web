@@ -18,6 +18,34 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Tool-call card visual polish (`feature/tool-call-cards`, 2026-10-14)
+
+**Slice status:** COMPLETE (frontend-only follow-up to the user's headless-browser visual pass).
+
+- Card-width container queries prioritize call summaries: diffstats hide on narrow cards,
+  response summaries switch to complete compact facts (never mid-word CSS truncation), and
+  extremely narrow cards omit secondary response text. Error headers are simply `failed`
+  (or `timed out`); full errors remain in the response body. Wide response labels are also
+  budgeted by choosing a shorter whole fact instead of slicing arbitrary text.
+- Edit badges now carry typed success/error tones. Orphans read “Call in earlier history”
+  in muted italic text, with a natural expanded explanation and de-emphasized success glyph.
+- Output folding uses a high-contrast primary button; in full-output mode it moves ABOVE
+  the output and sticks to the transcript viewport while scrolling (no new scroll box).
+- Call/Response are stronger heading elements with separators; generic input fields align
+  key/value columns. Short scalar arrays render inline; long/nested values retain full JSON.
+- Regression coverage expanded for compact facts, error privacy in headers, orphan wording,
+  semantic badges/headings/fields, array formatting, and the output-control placement.
+- Biome excludes local `scratch` fixtures and gitignored `reports` explicitly, so temporary
+  visual harnesses/artifacts do not affect the source-code check. User fixture files untouched.
+- Verification: typecheck 0 errors/0 warnings; tests **1,929 passed ×2** (111 files); check
+  clean (existing 2 config infos only); build succeeds (existing app-store/bundle warnings).
+- Browser: screenshots reviewed at **1280px and 420px**, collapsed and expanded, using the
+  user's running fixture harness. CDP measured no horizontal viewport overflow and confirmed
+  “Show fewer lines” remains at y=8px after scrolling 1,050px through the 111-line output;
+  actual mouse clicks fold it without closing the card at both widths. Local captures in
+  `reports/tool-call-polish/` (gitignored); scratch harness remains available on :24214.
+- Backend, contract pins, mirrors, and open asks: **UNCHANGED; no backend asks**.
+
 ## Milestone: Tool-call cards (`feature/tool-call-cards`, 2026-10-14)
 
 **Slice status:** COMPLETE (frontend-only, plan Steps 1–5 implemented; automated verification below).

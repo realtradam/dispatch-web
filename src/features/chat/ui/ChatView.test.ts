@@ -244,7 +244,8 @@ describe("ChatView — tool cards", () => {
     expect(box).not.toBeChecked();
     expect(screen.getByLabelText("Failed")).toHaveClass("text-error");
     expect(screen.getByLabelText("Failed")).toHaveTextContent("✗");
-    expect(screen.getByText("→ failed · Permission denied")).toHaveClass("text-error");
+    expect(screen.getByText("→ failed").closest(".tool-result")).toHaveClass("text-error");
+    expect(container.querySelector(".tool-header")).not.toHaveTextContent("Permission denied");
     expect(container.querySelector("pre")).toBeNull();
     await userEvent.click(box);
     expect(screen.getByText("Permission denied").parentElement).toHaveClass("text-error");
@@ -253,10 +254,11 @@ describe("ChatView — tool cards", () => {
     const chunks = shellChunks("contents", false, true);
     const { container, rerender } = render(ChatView, { props: { chunks: chunks.slice(1) } });
     expect(container.querySelectorAll(".chat-bubble")).toHaveLength(1);
-    expect(screen.getByText("call unavailable")).toBeInTheDocument();
+    expect(screen.getByText("Call in earlier history")).toHaveClass("earlier-history");
+    expect(screen.getByLabelText("Succeeded")).toHaveClass("opacity-60");
     const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
     await userEvent.click(box);
-    expect(screen.getByText(/Call unavailable \(earlier history unloaded\)/)).toBeInTheDocument();
+    expect(screen.getByText(/The call is in earlier, unloaded history/)).toBeInTheDocument();
     expect(screen.getByText("contents")).toBeInTheDocument();
     await rerender({ chunks });
     expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
@@ -280,6 +282,12 @@ describe("ChatView — tool cards", () => {
     expect(response).toHaveTextContent("output-7");
     expect(response.querySelectorAll("pre")).toHaveLength(1);
     expect(response.querySelector("pre")?.textContent).toBe(output);
+    const fewer = screen.getByRole("button", { name: "Show fewer lines" });
+    expect(fewer).toHaveClass("btn-primary", "btn-sm");
+    expect(fewer.parentElement).toHaveClass("sticky-controls");
+    const fullOutput = response.querySelector("pre");
+    if (fullOutput === null) throw new Error("expected full output");
+    expect(fewer.compareDocumentPosition(fullOutput)).toBe(Node.DOCUMENT_POSITION_FOLLOWING);
     expect(box).toBeChecked();
     expect(screen.getByRole("button", { name: "Show fewer lines" })).toHaveAttribute(
       "aria-expanded",
@@ -333,7 +341,8 @@ describe("ChatView — tool cards", () => {
       },
     ];
     const { container } = render(ChatView, { props: { chunks } });
-    expect(screen.getByText("+2 −1")).toBeInTheDocument();
+    expect(screen.getByText("+2")).toHaveClass("text-success");
+    expect(screen.getByText("−1")).toHaveClass("text-error");
     expect(screen.getByText("→ 1 replacement · diagnostics")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call edit_file" }));
     expect(screen.getByText("before")).toHaveClass("text-error");
@@ -341,4 +350,42 @@ describe("ChatView — tool cards", () => {
     expect(container.querySelector("script")).toBeNull();
     expect(container).toHaveTextContent("<script>alert(1)</script>");
   });
+});
+
+it("renders compact, aligned generic fields with legible headings and inline scalar arrays", async () => {
+  const chunks: RenderedChunk[] = [
+    {
+      seq: 1,
+      role: "assistant",
+      provisional: false,
+      chunk: {
+        type: "tool-call",
+        toolCallId: "issue",
+        toolName: "mcp__github__create_issue",
+        input: {
+          owner: "realtradam",
+          repo: "frontend",
+          title: "Tool cards",
+          labels: ["ui", "chat"],
+          options: { nested: true },
+        },
+      },
+    },
+  ];
+  const { container } = render(ChatView, { props: { chunks } });
+  await userEvent.click(
+    screen.getByRole("checkbox", { name: "Toggle tool call mcp__github__create_issue" }),
+  );
+  for (const name of ["Call", "Response"]) {
+    expect(screen.getByRole("heading", { name })).toHaveClass("font-semibold", "text-base-content");
+  }
+  const call = screen.getByRole("region", { name: "Call" });
+  expect(call.querySelector("dl")).toHaveClass("call-fields");
+  expect(screen.getByText("owner")).toHaveClass("font-semibold", "text-base-content/85");
+  const labels = screen.getByText('["ui", "chat"]');
+  expect(labels.tagName).toBe("PRE");
+  expect(labels.textContent).not.toContain("\n");
+  expect(container.querySelectorAll("dt")).toHaveLength(5);
+  expect(container.querySelectorAll("dd")).toHaveLength(5);
+  expect(screen.getByText("options").nextElementSibling).toHaveTextContent('"nested": true');
 });
