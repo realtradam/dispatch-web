@@ -6,6 +6,7 @@
    * surface is a SEPARATE, backend-owned list. Unkeyed (like today).
    */
   import Table from "../../components/Table.svelte";
+  import { manifest as accountUsageManifest } from "../../features/account-usage";
   import { manifest as cacheWarmingManifest } from "../../features/cache-warming";
   import { manifest as chatManifest } from "../../features/chat";
   import { manifest as concurrencyManifest } from "../../features/concurrency";
@@ -59,6 +60,7 @@
     systemPromptManifest,
     heartbeatManifest,
     concurrencyManifest,
+    accountUsageManifest,
     visionManifest,
     namedAgentsManifest,
     searchSettingsManifest,

@@ -1,7 +1,7 @@
 /**
  * The view registry — the map from view id → component that tile leaves mount.
  *
- * Every view the renderer can place (the 14 sidebar views + chat / composer /
+ * Every view the renderer can place (the sidebar views + chat / composer /
  * message-queue today; plugin views from plan 03 later) registers here. The
  * registry is REACTIVE (a Svelte store): plan 03's late registrations re-render
  * open dropdowns, and the tree renderer resolves leaves through it per render.

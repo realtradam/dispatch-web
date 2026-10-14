@@ -56,6 +56,8 @@ import {
   subscribe as protocolSubscribe,
   unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
+import type { AccountUsageResult } from "../features/account-usage";
+import { normalizeAccountUsage } from "../features/account-usage";
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
 import { createChatStore, migrateLegacyModelName } from "../features/chat";
 import type { SetThinkingRequest, ThinkingResponse } from "../features/chat/reasoning-effort";
@@ -534,6 +536,13 @@ export interface AppStore {
    * an empty list when the extension isn't loaded (`{ providers: [] }`).
    */
   concurrencyStatus(): Promise<ConcurrencyStatusResult>;
+  /**
+   * Load Claude + Codex subscription usage (`GET /usage`). Served from the
+   * backend's cache (5 min TTL); `refresh: true` sends `?refresh=1`, which the
+   * server still rate-limits (min interval + failure cooldown). A 503 (the
+   * `account-usage` extension isn't loaded) returns `unavailable: true`.
+   */
+  accountUsage(opts?: { readonly refresh?: boolean }): Promise<AccountUsageResult>;
   /**
    * Load the GLOBAL search-backend selection
    * (`GET /search/config`): which engine backs the `web_search` tool's search
@@ -2580,6 +2589,26 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         return {
           ok: false,
           error: err instanceof Error ? err.message : "Delete concurrency limit request failed",
+        };
+      }
+    },
+
+    async accountUsage(opts?: { readonly refresh?: boolean }): Promise<AccountUsageResult> {
+      try {
+        const res = await fetchImpl(`${httpBase}/usage${opts?.refresh ? "?refresh=1" : ""}`);
+        if (!res.ok) {
+          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
+          return {
+            ok: false,
+            error: errBody?.error ?? `Account usage failed (HTTP ${res.status})`,
+            ...(res.status === 503 ? { unavailable: true } : {}),
+          };
+        }
+        return { ok: true, usage: normalizeAccountUsage(await res.json(), Date.now()) };
+      } catch (err) {
+        return {
+          ok: false,
+          error: err instanceof Error ? err.message : "Account usage request failed",
         };
       }
     },

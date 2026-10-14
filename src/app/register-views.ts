@@ -9,7 +9,7 @@
  *
  * `chat` / `composer` / `message-queue` are CONTENT views (decision 5): they
  * register with `panelEligible: false` so they never appear in the panel
- * dropdowns. All 14 sidebar views keep the eligible default.
+ * dropdowns. All 15 sidebar views keep the eligible default.
  *
  * Imported ONCE by App.svelte's module script — before any tile renders.
  */
@@ -17,6 +17,7 @@
 import type { Component } from "svelte";
 import { registerView, type ViewComponent, type ViewRegistration } from "../features/layout";
 import type { AppViewPorts } from "./view-ports";
+import AccountUsagePane from "./views/AccountUsagePane.svelte";
 import CacheWarmingPane from "./views/CacheWarmingPane.svelte";
 import ChatPane from "./views/ChatPane.svelte";
 import CompactionPane from "./views/CompactionPane.svelte";
@@ -50,7 +51,7 @@ function asView(component: WrapperComponent): ViewComponent {
 
 export function registerBuiltinViews(): void {
   const views: readonly ViewRegistration[] = [
-    // --- sidebar views (panel-eligible by default — the 14 old viewKinds)
+    // --- sidebar views (panel-eligible by default — the 14 old viewKinds + account-usage)
     { id: "tabs", label: "Tabs", component: asView(TabsPane) },
     { id: "model", label: "Model", component: asView(ModelPane) },
     { id: "named-agents", label: "Named Agents", component: asView(NamedAgentsPane) },
@@ -63,6 +64,7 @@ export function registerBuiltinViews(): void {
     { id: "vision", label: "Vision", component: asView(VisionPane) },
     { id: "heartbeat", label: "Heartbeat", component: asView(HeartbeatPane) },
     { id: "concurrency", label: "Concurrency", component: asView(ConcurrencyPane) },
+    { id: "account-usage", label: "Usage", component: asView(AccountUsagePane) },
     { id: "system-prompt", label: "System Prompt", component: asView(SystemPromptPane) },
     { id: "settings", label: "Settings", component: asView(SettingsPane) },
     // --- content views (never in the panel dropdowns — decision 5)

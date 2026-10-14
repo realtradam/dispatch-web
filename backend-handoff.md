@@ -18,6 +18,24 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Account usage view (`feature/account-usage`)
+
+**Slice status:** COMPLETE + committed (both repos, `feature/account-usage`; implemented in BOTH
+repos of one worktree like archive-workspaces).
+
+- Backend contract `transport-contract@0.25.0` (additive): `GET /usage` (+ `GET /usage/:provider`,
+  `?refresh=1`) → `AccountUsageResponse` (Claude + Codex subscription quota windows, cached
+  server-side). Full contract: `../backend/notes/account-usage-frontend-handoff.md`; mirror
+  re-generated in `.dispatch/transport-contract.reference.md`.
+- FE: `src/features/account-usage` (pure `logic/view-model.ts` + `ui/AccountUsageView.svelte`,
+  `ui/UsageBar.svelte`), store `accountUsage()`, sidebar view `account-usage` ("Usage").
+  Each limit renders as a DaisyUI `<progress class="progress">` with a **pace marker** dot at the
+  window's elapsed fraction (`(now − (resetsAt − durationMs)) / durationMs`) — the usage level
+  that is "on track" to use the allowance exactly by the reset. Spend meters (no window) show no
+  marker. Polls every 60 s (backend cache hit); Refresh button sends `?refresh=1`.
+- Open asks: none. (Backend-side: inference-header ingestion is implemented in the service but not
+  wired into the external claude/codex providers.)
+
 ## Milestone: Workspace archiving (`feature/archive-workspaces`)
 
 **Slice status:** COMPLETE + committed (both repos, `feature/archive-workspaces`).
