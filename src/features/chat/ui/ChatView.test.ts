@@ -19,7 +19,7 @@ async function openAllCollapses(container: HTMLElement): Promise<void> {
 // Svelte `each_key_duplicate` (which aborts the reactive flush and makes the
 // tab appear dead). See fix-toolcall-duplicate-keys plan Part 1.
 describe("ChatView — duplicate toolCallIds", () => {
-  it("renders a tool batch with duplicated toolCallIds without throwing, showing one card per unique call", async () => {
+  it("renders duplicated toolCallIds without throwing, showing one bubble per unique call", async () => {
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -96,7 +96,7 @@ describe("ChatView — duplicate toolCallIds", () => {
         },
         provisional: false,
       },
-      // Duplicate results too — absorbed into the single deduped batch.
+      // Duplicate results too — absorbed into the corresponding cards.
       {
         seq: 7,
         role: "tool",
@@ -128,10 +128,11 @@ describe("ChatView — duplicate toolCallIds", () => {
     const { container } = render(ChatView, { props: { chunks } });
     await openAllCollapses(container);
 
-    // No each_key_duplicate crash. Batched calls render as collapsible cards —
+    // No each_key_duplicate crash. Calls render as independent collapsible cards —
     // exactly ONE per unique toolCallId (deduped), not 4.
     const collapses = container.querySelectorAll(".collapse");
     expect(collapses).toHaveLength(2);
+    expect(container.querySelectorAll(".chat-bubble")).toHaveLength(2);
 
     // Both unique tool names shown; each result rendered once (deduped).
     expect(screen.getByText("read_file")).toBeInTheDocument();
@@ -161,12 +162,183 @@ describe("ChatView — lazy collapse bodies", () => {
     expect(screen.getByText("run_shell")).toBeInTheDocument();
     expect(screen.queryByText("HUGE-OUTPUT")).toBeNull();
 
-    const box = screen.getByRole("checkbox", { name: "Toggle tool result" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
     await userEvent.click(box);
     expect(screen.getByText("HUGE-OUTPUT")).toBeInTheDocument();
 
     await userEvent.click(box); // close: body stays mounted (close animation)
     expect(screen.getByText("HUGE-OUTPUT")).toBeInTheDocument();
     expect(container.querySelectorAll(".chat-row")).toHaveLength(1);
+  });
+});
+
+function shellChunks(content: string | null, isError = false, committed = false): RenderedChunk[] {
+  const call: RenderedChunk = {
+    seq: committed ? 1 : null,
+    role: "assistant",
+    provisional: !committed,
+    chunk: {
+      type: "tool-call",
+      toolCallId: "shell-1",
+      toolName: "run_shell",
+      input: { command: "bun run test" },
+    },
+  };
+  return content === null
+    ? [call]
+    : [
+        call,
+        {
+          seq: committed ? 2 : null,
+          role: "tool",
+          provisional: !committed,
+          chunk: {
+            type: "tool-result",
+            toolCallId: "shell-1",
+            toolName: "run_shell",
+            content,
+            isError,
+          },
+        },
+      ];
+}
+
+describe("ChatView — tool cards", () => {
+  it("pairs a single call/result into one collapsed bubble with both summaries and a success icon", async () => {
+    const { container } = render(ChatView, { props: { chunks: shellChunks("first\nsecond") } });
+    expect(container.querySelectorAll(".chat-bubble")).toHaveLength(1);
+    expect(container.querySelectorAll(".collapse")).toHaveLength(1);
+    expect(screen.getByText("bun run test")).toBeInTheDocument();
+    expect(screen.getByText("→ 2 lines")).toBeInTheDocument();
+    expect(screen.getByLabelText("Succeeded")).toHaveTextContent("✓");
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    expect(box).not.toBeChecked();
+    expect(container.querySelector("pre")).toBeNull();
+    await userEvent.click(box);
+    expect(screen.getByText("$ bun run test")).toBeInTheDocument();
+    expect(screen.getByText("first second")).toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: /tool result/ })).toBeNull();
+  });
+  it("transitions pending → result → sealed without losing open state", async () => {
+    const { container, rerender } = render(ChatView, { props: { chunks: shellChunks(null) } });
+    expect(screen.getByLabelText("Running")).toHaveClass("loading-spinner");
+    expect(container.querySelector(".collapse-title")).not.toHaveTextContent("→");
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    await userEvent.click(box);
+    expect(screen.getByText("running…")).toBeInTheDocument();
+    await rerender({ chunks: shellChunks("done") });
+    expect(screen.queryByLabelText("Running")).toBeNull();
+    expect(screen.getByLabelText("Succeeded")).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
+    expect(box).toBeChecked();
+    await rerender({ chunks: shellChunks("done", false, true) });
+    expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
+    expect(box).toBeChecked();
+    expect(screen.getByText("done")).toBeInTheDocument();
+  });
+  it("keeps errors collapsed with a failure icon and tints the expanded output", async () => {
+    const { container } = render(ChatView, {
+      props: { chunks: shellChunks("Permission denied", true) },
+    });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    expect(box).not.toBeChecked();
+    expect(screen.getByLabelText("Failed")).toHaveClass("text-error");
+    expect(screen.getByLabelText("Failed")).toHaveTextContent("✗");
+    expect(screen.getByText("→ failed · Permission denied")).toHaveClass("text-error");
+    expect(container.querySelector("pre")).toBeNull();
+    await userEvent.click(box);
+    expect(screen.getByText("Permission denied").parentElement).toHaveClass("text-error");
+  });
+  it("renders an orphan result as the same card and retains state when its call is paged back in", async () => {
+    const chunks = shellChunks("contents", false, true);
+    const { container, rerender } = render(ChatView, { props: { chunks: chunks.slice(1) } });
+    expect(container.querySelectorAll(".chat-bubble")).toHaveLength(1);
+    expect(screen.getByText("call unavailable")).toBeInTheDocument();
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    await userEvent.click(box);
+    expect(screen.getByText(/Call unavailable \(earlier history unloaded\)/)).toBeInTheDocument();
+    expect(screen.getByText("contents")).toBeInTheDocument();
+    await rerender({ chunks });
+    expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
+    expect(box).toBeChecked();
+    expect(screen.getByText("$ bun run test")).toBeInTheDocument();
+  });
+  it("folds 13 output lines as 6 + toggle + 6, expands and collapses without closing the card", async () => {
+    const output = Array.from({ length: 13 }, (_, i) => `output-${i + 1}`).join("\n");
+    const { rerender } = render(ChatView, { props: { chunks: shellChunks(output) } });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    await userEvent.click(box);
+    const response = screen.getByRole("region", { name: "Response" });
+    expect(response).toHaveTextContent("output-1");
+    expect(response).toHaveTextContent("output-6");
+    expect(response).not.toHaveTextContent("output-7");
+    expect(response).toHaveTextContent("output-8");
+    expect(response).toHaveTextContent("output-13");
+    const toggle = screen.getByRole("button", { name: "⋯ 1 more lines" });
+    expect(toggle).toHaveAttribute("aria-expanded", "false");
+    await userEvent.click(toggle);
+    expect(response).toHaveTextContent("output-7");
+    expect(response.querySelectorAll("pre")).toHaveLength(1);
+    expect(response.querySelector("pre")?.textContent).toBe(output);
+    expect(box).toBeChecked();
+    expect(screen.getByRole("button", { name: "Show fewer lines" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    await userEvent.click(screen.getByRole("button", { name: "Show fewer lines" }));
+    expect(response).not.toHaveTextContent("output-7");
+    expect(box).toBeChecked();
+    // The separate output-fold state also survives sealing.
+    await userEvent.click(screen.getByRole("button", { name: "⋯ 1 more lines" }));
+    expect(response).toHaveTextContent("output-7");
+    await rerender({ chunks: shellChunks(output, false, true) });
+    expect(box).toBeChecked();
+    expect(screen.getByRole("button", { name: "Show fewer lines" })).toHaveAttribute(
+      "aria-expanded",
+      "true",
+    );
+    expect(response).toHaveTextContent("output-7");
+  });
+  it("shows 12 output lines without an inner toggle", async () => {
+    const output = Array.from({ length: 12 }, (_, i) => `output-${i + 1}`).join("\n");
+    render(ChatView, { props: { chunks: shellChunks(output) } });
+    await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" }));
+    expect(screen.queryByRole("button", { name: /more lines|fewer lines/ })).toBeNull();
+    expect(screen.getByRole("region", { name: "Response" })).toHaveTextContent("output-12");
+  });
+  it("renders edit details and treats tool output as text, not executable markup", async () => {
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "assistant",
+        provisional: false,
+        chunk: {
+          type: "tool-call",
+          toolCallId: "edit",
+          toolName: "edit_file",
+          input: { path: "a.ts", oldString: "before", newString: "after\nsecond" },
+        },
+      },
+      {
+        seq: 2,
+        role: "tool",
+        provisional: false,
+        chunk: {
+          type: "tool-result",
+          toolCallId: "edit",
+          toolName: "edit_file",
+          content: 'Replaced 1 occurrence(s) in "a.ts".\n<script>alert(1)</script>',
+          isError: false,
+        },
+      },
+    ];
+    const { container } = render(ChatView, { props: { chunks } });
+    expect(screen.getByText("+2 −1")).toBeInTheDocument();
+    expect(screen.getByText("→ 1 replacement · diagnostics")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call edit_file" }));
+    expect(screen.getByText("before")).toHaveClass("text-error");
+    expect(screen.getByText("after second")).toHaveClass("text-success");
+    expect(container.querySelector("script")).toBeNull();
+    expect(container).toHaveTextContent("<script>alert(1)</script>");
   });
 });

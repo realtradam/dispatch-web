@@ -11,6 +11,7 @@
   } from "../../../core/metrics";
   import { Markdown } from "../../markdown";
   import LazyCollapse from "./LazyCollapse.svelte";
+  import ToolCard from "./ToolCard.svelte";
 
   const badgeClass = {
     success: "badge-success",
@@ -73,6 +74,7 @@
 
   const rows = $derived(interleaveTurnMetrics(groups, turnMetrics));
 
+  // Tool cards use toolCallId keys across pending/result/seal and orphan page-in.
   // Stable per-row keys. Thinking blocks get an ordinal key (`think<n>`) that
   // survives the provisional→committed (seq null → seq N) transition, so the
   // collapse's open/close state is NOT lost when a turn seals. The ordinal
@@ -89,8 +91,8 @@
       }
       const group = row.group;
       let key: string;
-      if (group.kind === "tool-batch") {
-        key = `b${group.stepId}`;
+      if (group.kind === "tool") {
+        key = `t${group.entry.toolCallId}`;
       } else if (group.chunk.chunk.type === "thinking") {
         key = `think${thinking++}`;
       } else if (group.chunk.seq != null) {
@@ -102,22 +104,6 @@
     });
   });
 </script>
-
-{#snippet wrench()}
-  <svg
-    class="h-4 w-4 opacity-60"
-    xmlns="http://www.w3.org/2000/svg"
-    viewBox="0 0 24 24"
-    fill="none"
-    stroke="currentColor"
-    stroke-width="2"
-    stroke-linecap="round"
-    stroke-linejoin="round"
-    ><path
-      d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-    /></svg
-  >
-{/snippet}
 
 {#snippet chunkRow(rendered: RenderedChunk)}
   {#if rendered.role === "user"}
@@ -156,36 +142,6 @@
           {/snippet}
           <p class="whitespace-pre-wrap">{rendered.chunk.type === "thinking" ? rendered.chunk.text : ""}</p>
         </LazyCollapse>
-      </div>
-    </div>
-  {:else if rendered.chunk.type === "tool-call" || rendered.chunk.type === "tool-result"}
-    <!-- Single tool call/result: a collapsible card (collapsed by default,
-         like thinking). Title shows the tool name; content shows the
-         input/output. Same chat-start grid shim as the thinking block. -->
-    <div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
-      <div class="chat-bubble w-full bg-transparent">
-        {#if rendered.chunk.type === "tool-call"}
-          {@const call = rendered.chunk}
-          <LazyCollapse label="Toggle tool call">
-            {#snippet title()}
-              {@render wrench()}
-              <span>{call.toolName}</span>
-            {/snippet}
-            <pre class="overflow-x-auto text-xs">{JSON.stringify(call.input, null, 2)}</pre>
-          </LazyCollapse>
-        {:else}
-          {@const res = rendered.chunk}
-          <LazyCollapse label="Toggle tool result" titleClass={res.isError ? "text-error" : ""}>
-            {#snippet title()}
-              {@render wrench()}
-              <span>{res.toolName}</span>
-              {#if res.isError}
-                <span class="badge badge-error badge-xs">error</span>
-              {/if}
-            {/snippet}
-            <pre class="max-h-96 overflow-auto text-xs">{res.content}</pre>
-          </LazyCollapse>
-        {/if}
       </div>
     </div>
   {:else}
@@ -287,31 +243,10 @@
     {:else if row.group.kind === "single"}
       {@render chunkRow(row.group.chunk)}
     {:else}
-      <!-- Batched tool calls (one step): each entry is a collapsible card.
-           Click to expand and see the input/output. -->
-      <div class="chat chat-start [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
-        <div class="chat-bubble w-full bg-transparent">
-          <div class="flex flex-col gap-1">
-            {#each row.group.entries as entry, entryIndex (entryIndex)}
-              <LazyCollapse label="Toggle tool call">
-                {#snippet title()}
-                  {@render wrench()}
-                  <span>{entry.call.toolName}</span>
-                  {#if entry.result?.isError}
-                    <span class="badge badge-error badge-xs">error</span>
-                  {:else if entry.result === null}
-                    <span class="loading loading-spinner loading-xs" aria-label="Running"></span>
-                  {/if}
-                {/snippet}
-                <pre class="overflow-x-auto text-xs">{JSON.stringify(entry.call.input, null, 2)}</pre>
-                {#if entry.result}
-                  <pre
-                    class="mt-1 max-h-96 overflow-auto text-xs"
-                    class:text-error={entry.result.isError}>{entry.result.content}</pre>
-                {/if}
-              </LazyCollapse>
-            {/each}
-          </div>
+      <!-- Each call owns one bubble; the matching result is folded into its card. -->
+      <div class="chat chat-start [grid-template-columns:auto_minmax(0,1fr)] [&>.chat-bubble]:max-w-5xl [&>.chat-bubble]:p-0">
+        <div class="chat-bubble min-w-0 w-full bg-transparent">
+          <ToolCard entry={row.group.entry} />
         </div>
       </div>
     {/if}

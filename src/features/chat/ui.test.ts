@@ -210,7 +210,7 @@ describe("ChatView", () => {
     expect(log.children).toHaveLength(0);
   });
 
-  it("groups batched tool calls (shared stepId) into one DaisyUI list", async () => {
+  it("renders parallel tool calls (shared stepId) as separate bubbles", async () => {
     const chunks: RenderedChunk[] = [
       {
         seq: 1,
@@ -254,9 +254,11 @@ describe("ChatView", () => {
     const { container } = render(ChatView, { props: { chunks } });
     await openAllCollapses(container);
 
-    // Batched calls render as collapsible cards (one per call), not a list.
+    // Parallel calls render as independent collapsible cards (one per bubble).
     const collapses = container.querySelectorAll(".collapse");
     expect(collapses).toHaveLength(2);
+
+    expect(container.querySelectorAll(".chat-bubble")).toHaveLength(2);
 
     // Both call names + the available result are shown; the result is absorbed
     // (no standalone tool-result card).

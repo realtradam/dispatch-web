@@ -1,0 +1,281 @@
+import { describe, expect, it } from "vitest";
+import type { ToolEntry } from "../../../core/chunks";
+import { viewToolEntry } from "./tool-summary";
+
+function entry(
+  name: string,
+  input: unknown,
+  content: string | null = "ok",
+  isError = false,
+): ToolEntry {
+  return {
+    toolCallId: "a",
+    toolName: name,
+    call: { type: "tool-call", toolCallId: "a", toolName: name, input },
+    result:
+      content === null
+        ? null
+        : { type: "tool-result", toolCallId: "a", toolName: name, content, isError },
+  };
+}
+
+const view = (name: string, input: unknown, content: string | null = "ok", isError = false) =>
+  viewToolEntry(entry(name, input, content, isError));
+const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`);
+
+describe("tool summaries", () => {
+  it.each([
+    ["run_shell", { command: "bun run test\n  --run" }, "bun run test --run"],
+    ["read_file", { path: "src/a.ts", offset: 5, limit: 80 }, "src/a.ts:5-84"],
+    ["read_file", { path: "src/a.ts", limit: 12 }, "src/a.ts:1-12"],
+    ["read_file", { path: "src/a.ts", offset: 10 }, "src/a.ts:10"],
+    ["read_file", { path: "src/a.ts" }, "src/a.ts"],
+    ["edit_file", { path: "src/a.ts", oldString: "a", newString: "b" }, "src/a.ts"],
+    ["write_file", { path: "src/a.ts", content: "data" }, "src/a.ts"],
+    ["web_search", { query: "svelte 5 runes", url: "ignored" }, "svelte 5 runes"],
+    ["web_search", { url: "https://example.org", mode: "scrape" }, "https://example.org"],
+    [
+      "lsp",
+      { operation: "references", path: "src/a.ts", line: 12, character: 3 },
+      "references src/a.ts:12:3",
+    ],
+    ["lsp", { operation: "diagnostics", path: "src/a.ts" }, "diagnostics src/a.ts"],
+    [
+      "todo_write",
+      { todos: [{ status: "pending" }, { status: "completed" }, null] },
+      "3 tasks · 1 completed",
+    ],
+    ["load_skill", { name: "research_methodology" }, "research_methodology"],
+    [
+      "consult_vision",
+      { question: "What is in this picture?", imageIds: [1] },
+      "What is in this picture?",
+    ],
+    ["youtube_transcript", { url: "https://youtu.be/abc" }, "https://youtu.be/abc"],
+    ["summon_agent", { title: "Review", task: "long task", agent: "Opus" }, "Review"],
+    ["summon_agent", { task: "Review the patch" }, "Review the patch"],
+    ["summon_agent", { agent: "Opus" }, "Opus"],
+    ["send_agent_message", { conversationId: "abcd", message: "Continue" }, "abcd"],
+    ["read_agent", { conversationId: "abcd" }, "abcd"],
+    ["open_agent", { conversationId: "abcd" }, "abcd"],
+    ["cancel_agent_message", { conversationId: "abcd", messageId: "m1" }, "abcd"],
+    ["list_agents", { relationship: "descendants" }, "descendants"],
+    ["list_agents", { query: "review" }, "review"],
+    ["list_agent_models", { query: "Opus" }, "Opus"],
+  ])("%s derives a meaningful call summary from %j", (name, input, expected) => {
+    expect(view(name, input).callSummary).toBe(expected);
+  });
+
+  it("formats edit call badges and old/new details without hiding multiline text", () => {
+    const input = { path: "a.ts", oldString: "a\nb\n", newString: "x\ny\nz\n" };
+    const card = view("edit_file", input);
+    expect(card.callBadges).toEqual(["+3 −2"]);
+    expect(card.callDetail).toEqual({
+      kind: "edit",
+      path: "a.ts",
+      oldText: input.oldString,
+      newText: input.newString,
+    });
+    expect(view("edit_file", { path: "a", oldString: "", newString: "x" }).callBadges).toEqual([
+      "+1 −0",
+    ]);
+    expect(view("edit_file", { path: "a" }).callBadges).toEqual([]);
+  });
+  it("preserves exact shell commands in the expanded detail", () => {
+    expect(view("run_shell", { command: "ls\n pwd" }).callDetail).toEqual({
+      kind: "command",
+      text: "ls\n pwd",
+    });
+  });
+  it("shows scalar fields and pretty nested JSON", () => {
+    expect(view("mcp__foo", { path: "a.ts", count: 2, nested: { a: true } }).callDetail).toEqual({
+      kind: "fields",
+      fields: [
+        { key: "path", value: "a.ts", multiline: false },
+        { key: "count", value: "2", multiline: false },
+        { key: "nested", value: '{\n  "a": true\n}', multiline: true },
+      ],
+    });
+  });
+  it.each([
+    "command",
+    "path",
+    "file_path",
+    "query",
+    "url",
+    "pattern",
+    "name",
+    "question",
+    "title",
+    "task",
+    "message",
+    "conversationId",
+  ])("generic fallback recognizes %s", (key) => {
+    expect(view("mcp__foo", { [key]: "target" }).callSummary).toBe("target");
+  });
+  it("generic fallback prefers the first meaningful argument, else compact JSON", () => {
+    expect(view("mcp__foo", { command: " ", path: "a", query: "b" }).callSummary).toBe("a");
+    expect(view("mcp__foo", { a: 1, b: "x" }).callSummary).toBe('{"a":1,"b":"x"}');
+  });
+  it.each([
+    "not JSON",
+    "{bad",
+    null,
+    undefined,
+    42,
+    true,
+    [1, "a"],
+    {},
+    "null",
+    '"hi"',
+  ])("tolerates malformed/non-object input %j", (input) => {
+    expect(() => view("read_file", input)).not.toThrow();
+    expect(view("read_file", input).callSummary).not.toBe("");
+    expect(view("read_file", input).callDetail.kind).toBe("fields");
+  });
+  it.each([
+    "run_shell",
+    "read_file",
+    "edit_file",
+    "write_file",
+    "web_search",
+    "lsp",
+    "todo_write",
+    "load_skill",
+    "consult_vision",
+    "youtube_transcript",
+    "summon_agent",
+    "read_agent",
+  ])("%s falls back safely for missing arguments", (name) => {
+    for (const input of [null, undefined, {}, "{bad"]) {
+      expect(() => view(name, input)).not.toThrow();
+      expect(view(name, input).callSummary.trim()).not.toBe("");
+    }
+  });
+  it("parses JSON-string inputs", () => {
+    const card = view("run_shell", '{"command":"bun run test"}');
+    expect(card.callSummary).toBe("bun run test");
+    expect(card.callDetail).toEqual({ kind: "command", text: "bun run test" });
+  });
+  it("handles unexpected built-in argument types and prototype-looking tool names", () => {
+    expect(view("todo_write", { todos: "wrong" }).callSummary).toBe('{"todos":"wrong"}');
+    expect(view("run_shell", { command: { nested: true } }).callDetail.kind).toBe("fields");
+    expect(view("constructor", { path: "a" }).callSummary).toBe("a");
+    expect(view("__proto__", {}).callSummary).toBe("{}");
+    expect(
+      view("mcp", JSON.parse('{"__proto__":{"command":"bad"},"path":"good"}')).callSummary,
+    ).toBe("good");
+  });
+  it("does not throw on unserializable input", () => {
+    const cyclic: Record<string, unknown> = {};
+    cyclic.self = cyclic;
+    expect(view("mcp", cyclic).callSummary).toBe("[unserializable input]");
+    expect(() => view("mcp", { integer: 1n })).not.toThrow();
+  });
+  it("caps and whitespace-collapses header strings but retains full detail", () => {
+    const command = `  echo\n${"x".repeat(300)}`;
+    const card = view("run_shell", { command });
+    expect(card.callSummary.length).toBe(120);
+    expect(card.callSummary.endsWith("…")).toBe(true);
+    expect(card.callSummary).not.toMatch(/\n/);
+    expect(card.callDetail).toEqual({ kind: "command", text: command });
+  });
+  it("represents pending entries with no response summary/output", () => {
+    expect(view("run_shell", { command: "sleep 1" }, null)).toMatchObject({
+      status: "pending",
+      resultSummary: null,
+      output: null,
+    });
+  });
+  it("represents orphan results with unknown call details, not pending", () => {
+    const e = { ...entry("read_file", {}, "data"), call: null };
+    expect(viewToolEntry(e)).toMatchObject({
+      name: "read_file",
+      status: "ok",
+      callSummary: "call unavailable",
+      resultSummary: "1 line",
+    });
+    expect(viewToolEntry(e).callDetail).toEqual({
+      kind: "fields",
+      fields: [
+        { key: "call", value: "Call unavailable (earlier history unloaded)", multiline: false },
+      ],
+    });
+  });
+});
+
+describe("tool response facts", () => {
+  it.each([
+    ["run_shell", "one\ntwo\n", false, "2 lines"],
+    ["run_shell", "done", false, "1 line"],
+    ["read_file", "1\tfile text\n", false, "1 line"],
+    ["read_file", "(empty file: a.ts)", false, "empty file"],
+    ["mcp", "", false, "no output"],
+    ["mcp", " \n\t", false, "no output"],
+    ["mcp", "a short response", false, "a short response"],
+    ["mcp", "x".repeat(200), false, "1 line"],
+    ["web_search", "a\nb\nc", false, "3 lines"],
+    ["run_shell", "", true, "failed"],
+    ["mcp", "Permission denied", true, "failed · Permission denied"],
+    ["run_shell", "error\ndetail", true, "failed · 2 lines"],
+    ["run_shell", "partial\n\n[Command timed out]", true, "timed out"],
+    ["run_shell", "[Output truncated: 12000 bytes]", false, "1 line · truncated"],
+    ["run_shell", "bad\n[Output truncated: 12000 bytes]", true, "failed · 2 lines · truncated"],
+    ["edit_file", 'Replaced 1 occurrence(s) in "a.ts".', false, "1 replacement"],
+    [
+      "edit_file",
+      'Replaced 3 occurrences in "a.ts".\n\nLSP diagnostics: error at line 2',
+      false,
+      "3 replacements · diagnostics",
+    ],
+    ["write_file", 'Created "a.ts" (4200 bytes).', false, "created · 4.1 KB"],
+    ["write_file", 'Overwrote "a.ts" (10 bytes).', false, "overwrote · 10 B"],
+    ["write_file", 'Created "a.ts" (1048576 bytes).', false, "created · 1.0 MB"],
+  ])("%s summarizes %j (error=%s)", (name, content, isError, expected) => {
+    const card = view(name, {}, content, isError);
+    expect(card.resultSummary).toBe(expected);
+    expect(card.status).toBe(isError ? "error" : "ok");
+    expect(card.output?.isError).toBe(isError);
+  });
+  it("does not infer success on an error that resembles a write result", () => {
+    expect(view("write_file", {}, 'Created "a.ts" (10 bytes).', true).resultSummary).toMatch(
+      /^failed/,
+    );
+  });
+});
+
+describe("tool output elision", () => {
+  it.each([0, 1, 6, 11, 12])("shows %i lines in full", (n) => {
+    expect(view("mcp", {}, lines(n).join("\n")).output).toEqual({
+      kind: "full",
+      lines: lines(n),
+      isError: false,
+    });
+  });
+  it.each([
+    13, 14, 100,
+  ])("shows first/last six of %i lines, retaining everything for expansion", (n) => {
+    expect(view("mcp", {}, lines(n).join("\n"), true).output).toEqual({
+      kind: "elided",
+      head: lines(n).slice(0, 6),
+      hiddenCount: n - 12,
+      tail: lines(n).slice(-6),
+      all: lines(n),
+      isError: true,
+    });
+  });
+  it("ignores one final newline terminator at the 12/13 boundary (including CRLF)", () => {
+    expect(view("mcp", {}, `${lines(12).join("\r\n")}\r\n`).output?.kind).toBe("full");
+    expect(view("mcp", {}, `${lines(13).join("\n")}\n`).output).toMatchObject({
+      kind: "elided",
+      hiddenCount: 1,
+    });
+  });
+  it("preserves meaningful blank lines including an extra trailing blank line", () => {
+    expect(view("mcp", {}, "a\n\nb\n\n").output).toEqual({
+      kind: "full",
+      lines: ["a", "", "b", ""],
+      isError: false,
+    });
+  });
+});

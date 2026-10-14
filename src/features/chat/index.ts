@@ -2,7 +2,7 @@ export type {
   ProviderRetryView,
   RenderedChunk,
   RenderGroup,
-  ToolBatchEntry,
+  ToolEntry,
 } from "../../core/chunks";
 export { groupRenderedChunks, resolveImageUrl, viewProviderRetry } from "../../core/chunks";
 export type { TurnMetricsEntry } from "../../core/metrics";

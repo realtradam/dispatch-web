@@ -3,16 +3,16 @@ import { describe, expect, it } from "vitest";
 import { groupRenderedChunks } from "./groups";
 import type { RenderedChunk } from "./types";
 
-const text = (seq: number, role: Role, t: string, provisional = false): RenderedChunk => ({
+const text = (seq: number, role: Role, t: string): RenderedChunk => ({
   seq,
   role,
   chunk: { type: "text", text: t },
-  provisional,
+  provisional: false,
 });
-
 const call = (seq: number, id: string, stepId?: string, provisional = false): RenderedChunk => ({
   seq,
   role: "assistant",
+  provisional,
   chunk: {
     type: "tool-call",
     toolCallId: id,
@@ -20,12 +20,11 @@ const call = (seq: number, id: string, stepId?: string, provisional = false): Re
     input: { id },
     ...(stepId !== undefined ? { stepId: stepId as StepId } : {}),
   },
-  provisional,
 });
-
 const result = (seq: number, id: string, stepId?: string, provisional = false): RenderedChunk => ({
   seq,
   role: "tool",
+  provisional,
   chunk: {
     type: "tool-result",
     toolCallId: id,
@@ -34,165 +33,120 @@ const result = (seq: number, id: string, stepId?: string, provisional = false): 
     isError: false,
     ...(stepId !== undefined ? { stepId: stepId as StepId } : {}),
   },
-  provisional,
 });
+
+function toolGroups(rows: readonly RenderedChunk[]) {
+  return groupRenderedChunks(rows).map((g) => {
+    if (g.kind !== "tool") throw new Error("expected a tool group");
+    return g;
+  });
+}
 
 describe("groupRenderedChunks", () => {
   it("returns no groups for an empty stream", () => {
     expect(groupRenderedChunks([])).toEqual([]);
   });
-
-  it("passes non-tool chunks through as single groups, in order", () => {
-    const groups = groupRenderedChunks([text(1, "user", "hi"), text(2, "assistant", "hello")]);
-    expect(groups).toHaveLength(2);
-    expect(groups.every((g) => g.kind === "single")).toBe(true);
+  it("passes non-tool chunks through unchanged and in order", () => {
+    const rows = [text(1, "user", "hi"), text(2, "assistant", "hello")];
+    expect(groupRenderedChunks(rows)).toEqual(rows.map((chunk) => ({ kind: "single", chunk })));
   });
-
-  it("does NOT batch a single tool call (one per step) — call+result stay separate singles", () => {
-    const groups = groupRenderedChunks([call(1, "a", "s1"), result(2, "a", "s1")]);
-    expect(groups).toHaveLength(2);
-    expect(groups.map((g) => g.kind)).toEqual(["single", "single"]);
-  });
-
-  it("does NOT batch tool calls that have no stepId (pre-0.2.0 replay)", () => {
-    const groups = groupRenderedChunks([
-      call(1, "a"),
-      call(2, "b"),
-      result(3, "a"),
-      result(4, "b"),
+  it("pairs a single call and result into one group", () => {
+    const c = call(1, "a", "s1");
+    const r = result(2, "a", "s1");
+    expect(toolGroups([c, r])).toEqual([
+      {
+        kind: "tool",
+        entry: { toolCallId: "a", toolName: "tool-a", call: c.chunk, result: r.chunk },
+        stepId: "s1",
+        provisional: false,
+      },
     ]);
-    expect(groups).toHaveLength(4);
-    expect(groups.every((g) => g.kind === "single")).toBe(true);
   });
-
-  it("batches 2+ calls sharing a stepId into one group, pairing each with its result", () => {
-    const groups = groupRenderedChunks([
+  it("renders parallel calls independently in call order, with out-of-order results", () => {
+    const groups = toolGroups([
       call(1, "a", "s1"),
       call(2, "b", "s1"),
-      result(3, "a", "s1"),
-      result(4, "b", "s1"),
+      result(3, "b", "s1"),
+      result(4, "a", "s1"),
     ]);
-    expect(groups).toHaveLength(1);
-    const g = groups[0];
-    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(g.stepId).toBe("s1");
-    expect(g.entries).toHaveLength(2);
-    expect(g.entries[0]?.call.toolCallId).toBe("a");
-    expect(g.entries[0]?.result?.content).toBe("result-a");
-    expect(g.entries[1]?.call.toolCallId).toBe("b");
-    expect(g.entries[1]?.result?.content).toBe("result-b");
+    expect(groups.map((g) => g.entry.toolCallId)).toEqual(["a", "b"]);
+    expect(groups.map((g) => g.entry.result?.content)).toEqual(["result-a", "result-b"]);
   });
-
-  it("positions the batch at the first call and keeps surrounding chunks in order", () => {
+  it("pairs legacy chunks without stepId and mismatching stepIds by toolCallId", () => {
+    const groups = toolGroups([
+      call(1, "a"),
+      result(2, "a"),
+      call(3, "b", "s1"),
+      result(4, "b", "s2"),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.entry.result).not.toBeNull();
+    expect(groups[1]?.stepId).toBe("s1");
+  });
+  it("keeps surrounding text at its position and absorbs results", () => {
     const groups = groupRenderedChunks([
       text(1, "assistant", "before"),
       call(2, "a", "s1"),
-      call(3, "b", "s1"),
-      result(4, "a", "s1"),
-      result(5, "b", "s1"),
-      text(6, "assistant", "after"),
-    ]);
-    expect(groups.map((g) => g.kind)).toEqual(["single", "tool-batch", "single"]);
-  });
-
-  it("marks the batch provisional when any of its calls/results is provisional", () => {
-    const groups = groupRenderedChunks([call(1, "a", "s1"), call(2, "b", "s1", true)]);
-    const g = groups[0];
-    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(g.provisional).toBe(true);
-    expect(g.entries).toHaveLength(2);
-    expect(g.entries[1]?.result).toBeNull(); // dangling call (no result yet)
-  });
-
-  it("batches one step while leaving a different single-call step ungrouped", () => {
-    const groups = groupRenderedChunks([
-      call(1, "a", "s1"),
-      call(2, "b", "s1"),
-      call(3, "c", "s2"),
-      result(4, "a", "s1"),
-      result(5, "b", "s1"),
-      result(6, "c", "s2"),
-    ]);
-    expect(groups.map((g) => g.kind)).toEqual(["tool-batch", "single", "single"]);
-    const batch = groups[0];
-    if (batch?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(batch.entries).toHaveLength(2);
-    // the s2 single call + its result remain as separate single groups
-    const singles = groups.slice(1);
-    expect(singles[0]?.kind === "single" && singles[0].chunk.chunk.type).toBe("tool-call");
-    expect(singles[1]?.kind === "single" && singles[1].chunk.chunk.type).toBe("tool-result");
-  });
-
-  // --- Duplicate toolCallId hardening (fix-toolcall-duplicate-keys) ---
-  // A provider double-emission (e.g. openrouter/stealth/ox-alpha) can persist the
-  // SAME toolCallId twice within one step. The renderer must NEVER crash on that
-  // (Svelte `each_key_duplicate` aborts the reactive flush — the tab appears dead).
-
-  it("dedupes duplicate toolCallIds within a batch", () => {
-    // The PII_REDACTED_CONVERSATION_SHORT_01 pattern: every id emitted twice, in order (seq 1,2 then 3,4).
-    const groups = groupRenderedChunks([
-      call(1, "a", "s1"),
-      call(2, "b", "s1"),
-      call(3, "a", "s1"),
+      text(3, "assistant", "between"),
       call(4, "b", "s1"),
+      result(5, "a"),
+      result(6, "b"),
+      text(7, "assistant", "after"),
     ]);
-    expect(groups).toHaveLength(1);
-    const g = groups[0];
-    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(g.entries).toHaveLength(2);
-    expect(g.entries.map((e) => e.call.toolCallId)).toEqual(["a", "b"]);
+    expect(groups.map((g) => g.kind)).toEqual(["single", "tool", "single", "tool", "single"]);
   });
-
-  it("dedupes duplicate toolCallIds and pairs each unique call with its result", () => {
-    const groups = groupRenderedChunks([
-      call(1, "a", "s1"),
-      call(2, "b", "s1"),
-      call(3, "a", "s1"),
-      call(4, "b", "s1"),
-      result(5, "a", "s1"),
-      result(6, "b", "s1"),
-      result(7, "a", "s1"),
-      result(8, "b", "s1"),
+  it("keeps pending calls and orphan results", () => {
+    const groups = toolGroups([call(1, "pending"), result(2, "orphan", "s2", true)]);
+    expect(groups[0]?.entry.result).toBeNull();
+    expect(groups[1]?.entry.call).toBeNull();
+    expect(groups[1]?.entry.toolName).toBe("tool-orphan");
+    expect(groups[1]?.provisional).toBe(true);
+    expect(groups[1]?.stepId).toBe("s2");
+  });
+  it.each([
+    [true, false],
+    [false, true],
+    [false, false],
+  ])("combines call/result provisional flags (%s, %s)", (cp, rp) => {
+    expect(toolGroups([call(1, "a", "s1", cp), result(2, "a", "s1", rp)])[0]?.provisional).toBe(
+      cp || rp,
+    );
+  });
+  it("prefers call provenance, falling back to result provenance", () => {
+    const groups = toolGroups([
+      { ...call(1, "a", "s1"), turnId: "t1" },
+      { ...result(2, "a", "s2"), turnId: "t2" },
+      call(3, "b"),
+      { ...result(4, "b", "s3"), turnId: "t3" },
     ]);
-    expect(groups).toHaveLength(1);
-    const g = groups[0];
-    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(g.entries).toHaveLength(2);
-    expect(g.entries[0]?.call.toolCallId).toBe("a");
-    expect(g.entries[0]?.result?.content).toBe("result-a");
-    expect(g.entries[1]?.call.toolCallId).toBe("b");
-    expect(g.entries[1]?.result?.content).toBe("result-b");
-  });
-
-  it("keeps the first occurrence of a duplicate toolCallId and skips the second", () => {
-    const firstA = call(1, "a", "s1"); // first occurrence of a
-    const firstB = call(2, "b", "s1"); // first occurrence of b
-    const groups = groupRenderedChunks([
-      firstA,
-      firstB,
-      call(3, "a", "s1"), // duplicate of a — skipped
-      call(4, "b", "s1"), // duplicate of b — skipped
+    expect(groups.map((g) => [g.stepId, g.turnId])).toEqual([
+      ["s1", "t1"],
+      ["s3", "t3"],
     ]);
-    const g = groups[0];
-    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(g.entries).toHaveLength(2);
-    // The FIRST occurrence (by stream order) is the one kept — referential
-    // equality against the seq-1 / seq-2 chunks (the entry stores the inner
-    // chunk; the outer `seq` lives on the RenderedChunk wrapper).
-    expect(g.entries[0]?.call).toBe(firstA.chunk);
-    expect(g.entries[1]?.call).toBe(firstB.chunk);
   });
-
-  it("keeps the first (provisional) occurrence of a duplicate and marks the batch provisional", () => {
-    // One provisional + one committed chunk with the SAME id: the first
-    // (provisional) occurrence wins, and the batch stays provisional.
-    const prov = call(1, "a", "s1", true);
-    const groups = groupRenderedChunks([prov, call(2, "a", "s1")]);
-    const g = groups[0];
-    if (g?.kind !== "tool-batch") throw new Error("expected a tool-batch group");
-    expect(g.provisional).toBe(true);
-    expect(g.entries).toHaveLength(1);
-    expect(g.entries[0]?.call).toBe(prov.chunk);
-    expect(g.entries[0]?.result).toBeNull();
+  it("dedupes calls/results across steps, first occurrence wins", () => {
+    const first = call(1, "a", "s1", true);
+    const firstResult = result(4, "a", "s1");
+    const groups = toolGroups([
+      first,
+      call(2, "a", "s2"),
+      call(3, "b"),
+      firstResult,
+      result(5, "a", "s2"),
+      result(6, "b"),
+      result(7, "b"),
+    ]);
+    expect(groups).toHaveLength(2);
+    expect(groups[0]?.entry.call).toBe(first.chunk);
+    expect(groups[0]?.entry.result).toBe(firstResult.chunk);
+    expect(groups[0]?.provisional).toBe(true);
+  });
+  it("dedupes orphan results too", () => {
+    expect(toolGroups([result(1, "a"), result(2, "a")])).toHaveLength(1);
+  });
+  it("positions a card at its call even when its result came first", () => {
+    const c = call(3, "a");
+    const groups = groupRenderedChunks([result(1, "a"), text(2, "assistant", "before call"), c]);
+    expect(groups.map((g) => g.kind)).toEqual(["single", "tool"]);
   });
 });

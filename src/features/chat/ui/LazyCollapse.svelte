@@ -33,7 +33,7 @@
 
 <div class="collapse w-full rounded-box bg-base-200 text-sm">
   <input type="checkbox" aria-label={label} bind:checked={open} />
-  <div class="collapse-title flex min-h-0 items-center gap-2 py-2 font-medium {titleClass}">
+  <div class="collapse-title flex min-h-0 min-w-0 items-center gap-2 py-2 whitespace-nowrap font-medium {titleClass}">
     {@render title()}
   </div>
   <div class="collapse-content">

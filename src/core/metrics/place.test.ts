@@ -28,31 +28,36 @@ function assistantGroup(seq: number, text: string): RenderGroup {
   };
 }
 
-function toolCallGroup(seq: number, stepId: string, toolCallId: string): RenderGroup {
+function toolCallGroup(stepId: string, toolCallId: string): RenderGroup {
   return {
-    kind: "single",
-    chunk: {
-      seq,
-      role: "assistant",
-      chunk: {
+    kind: "tool",
+    stepId,
+    provisional: false,
+    entry: {
+      toolCallId,
+      toolName: "test",
+      result: null,
+      call: {
         type: "tool-call",
         toolCallId,
         toolName: "test",
         input: {},
         stepId: stepId as StepId,
       },
-      provisional: false,
     },
   };
 }
 
-function toolResultGroup(seq: number, stepId: string, toolCallId: string): RenderGroup {
+function toolResultGroup(stepId: string, toolCallId: string): RenderGroup {
   return {
-    kind: "single",
-    chunk: {
-      seq,
-      role: "tool",
-      chunk: {
+    kind: "tool",
+    stepId,
+    provisional: false,
+    entry: {
+      toolCallId,
+      toolName: "test",
+      call: null,
+      result: {
         type: "tool-result",
         toolCallId,
         toolName: "test",
@@ -60,26 +65,7 @@ function toolResultGroup(seq: number, stepId: string, toolCallId: string): Rende
         isError: false,
         stepId: stepId as StepId,
       },
-      provisional: false,
     },
-  };
-}
-
-function toolBatchGroup(stepId: string, toolCallIds: string[]): RenderGroup {
-  return {
-    kind: "tool-batch",
-    stepId,
-    entries: toolCallIds.map((id) => ({
-      call: {
-        type: "tool-call" as const,
-        toolCallId: id,
-        toolName: "test",
-        input: {},
-        stepId: stepId as StepId,
-      },
-      result: null,
-    })),
-    provisional: false,
   };
 }
 
@@ -169,9 +155,9 @@ describe("interleaveTurnMetrics", () => {
 
   it("head-aligned: segment i gets entries[i]", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolCallGroup(2, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = userGroup(3, "q2");
-    const g4 = toolCallGroup(4, "s2", "c2");
+    const g4 = toolCallGroup("s2", "c2");
     const step1 = makeStep("s1", 100, 50);
     const step2 = makeStep("s2", 200, 80);
     const rows = interleaveTurnMetrics(
@@ -192,7 +178,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("a trailing segment with no entry (in-flight turn) renders no metrics", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolCallGroup(2, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = userGroup(3, "q2");
     const g4 = assistantGroup(4, "a2");
     const step = makeStep("s1", 100, 50);
@@ -220,26 +206,28 @@ describe("interleaveTurnMetrics", () => {
     expectTurnMetricsAt(rows, 2, "t1");
   });
 
-  it("tool step anchors inline after its tool-batch group", () => {
+  it("tool step anchors inline after its LAST independent tool card", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolBatchGroup("t#0", ["c1", "c2"]);
+    const g2 = toolCallGroup("t#0", "c1");
+    const parallel = toolCallGroup("t#0", "c2");
     const g3 = assistantGroup(3, "a1");
     const step0 = makeStep("t#0", 100, 50);
     const step1 = makeStep("t#1", 200, 80);
     const turn = makeEntry("t1", 300, 130, [step0, step1]);
-    const rows = interleaveTurnMetrics([g1, g2, g3], [turn]);
+    const rows = interleaveTurnMetrics([g1, g2, parallel, g3], [turn]);
 
-    expect(rows).toHaveLength(5);
+    expect(rows).toHaveLength(6);
     expectGroupAt(rows, 0, g1);
     expectGroupAt(rows, 1, g2);
-    expectStepMetricsAt(rows, 2, "t#0", 0);
-    expectGroupAt(rows, 3, g3);
-    expectTurnMetricsAt(rows, 4, "t1");
+    expectGroupAt(rows, 2, parallel);
+    expectStepMetricsAt(rows, 3, "t#0", 0);
+    expectGroupAt(rows, 4, g3);
+    expectTurnMetricsAt(rows, 5, "t1");
   });
 
   it("single tool-call group anchors its step", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolCallGroup(2, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = assistantGroup(3, "a1");
     const step = makeStep("s1", 100, 50);
     const turn = makeEntry("t1", 100, 50, [step]);
@@ -255,7 +243,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("single tool-result group anchors its step", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolResultGroup(2, "s1", "c1");
+    const g2 = toolResultGroup("s1", "c1");
     const g3 = assistantGroup(3, "a1");
     const step = makeStep("s1", 100, 50);
     const turn = makeEntry("t1", 100, 50, [step]);
@@ -271,9 +259,9 @@ describe("interleaveTurnMetrics", () => {
 
   it("multi-step: each tool step inline, unanchored text step skipped", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolBatchGroup("t#0", ["c1"]);
+    const g2 = toolCallGroup("t#0", "c1");
     const g3 = assistantGroup(2, "thinking");
-    const g4 = toolBatchGroup("t#1", ["c2", "c3"]);
+    const g4 = toolCallGroup("t#1", "c2");
     const g5 = assistantGroup(3, "a1");
     const step0 = makeStep("t#0", 100, 50);
     const step1 = makeStep("t#1", 200, 80);
@@ -294,10 +282,10 @@ describe("interleaveTurnMetrics", () => {
 
   it("multiple turns head-aligned with inline steps", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolBatchGroup("s1", ["c1"]);
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = assistantGroup(2, "a1");
     const g4 = userGroup(3, "q2");
-    const g5 = toolCallGroup(4, "s2", "c2");
+    const g5 = toolCallGroup("s2", "c2");
     const step1 = makeStep("s1", 100, 50);
     const step2 = makeStep("s2", 200, 80);
     const rows = interleaveTurnMetrics(
@@ -332,7 +320,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("fewer metrics than segments: trailing segments are bare", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolCallGroup(2, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = userGroup(3, "q2");
     const g4 = assistantGroup(4, "a2");
     const g5 = userGroup(5, "q3");
@@ -361,7 +349,7 @@ describe("interleaveTurnMetrics", () => {
     // stepId groups) — the failure case. The text-only turn MUST get its OWN
     // entry (t3), NOT the trimmed t1's stale metrics.
     const g3 = userGroup(3, "q2");
-    const g4 = toolBatchGroup("s2", ["c2"]);
+    const g4 = toolCallGroup("s2", "c2");
     const g5 = assistantGroup(4, "tool-reply");
     const g6 = userGroup(5, "q3");
     const g7 = assistantGroup(6, "text-reply");
@@ -436,7 +424,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("in-flight turn (no durationMs) still produces turn row", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolCallGroup(2, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const step = makeStep("s1", 100, 50);
     const turn: TurnMetricsEntry = {
       turnId: "t1",
@@ -459,7 +447,7 @@ describe("interleaveTurnMetrics", () => {
   it("leading non-turn groups emit as plain group rows", () => {
     const g0 = assistantGroup(1, "system msg");
     const g1 = userGroup(2, "q1");
-    const g2 = toolCallGroup(3, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const step = makeStep("s1", 100, 50);
     const rows = interleaveTurnMetrics([g0, g1, g2], [makeEntry("t1", 100, 50, [step])]);
 
@@ -473,7 +461,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("trimmed turn (more metrics than segments) does NOT emit a standalone row at the top", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolCallGroup(2, "s1", "c1");
+    const g2 = toolCallGroup("s1", "c1");
     const step1 = makeStep("s1", 100, 50);
     const step2 = makeStep("s2", 200, 80);
     const rows = interleaveTurnMetrics(
@@ -509,7 +497,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("progressive: entry with steps but total=null emits step rows and NO turn-metrics row", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolBatchGroup("s1", ["c1"]);
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = assistantGroup(2, "a1");
     const step1 = makeStep("s1", 100, 50);
     const entry = makeProgressiveEntry("t1", [step1]);
@@ -524,7 +512,7 @@ describe("interleaveTurnMetrics", () => {
 
   it("entry with total emits step rows + a turn-metrics row", () => {
     const g1 = userGroup(1, "q1");
-    const g2 = toolBatchGroup("s1", ["c1"]);
+    const g2 = toolCallGroup("s1", "c1");
     const g3 = assistantGroup(2, "a1");
     const step1 = makeStep("s1", 100, 50);
     const entry = makeEntry("t1", 100, 50, [step1]);

@@ -1,4 +1,4 @@
-export type { RenderGroup, ToolBatchEntry } from "./groups";
+export type { RenderGroup, ToolEntry } from "./groups";
 export { groupRenderedChunks } from "./groups";
 export { resolveImageUrl } from "./image-url";
 export {

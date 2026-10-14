@@ -18,6 +18,44 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Tool-call cards (`feature/tool-call-cards`, 2026-10-14)
+
+**Slice status:** COMPLETE (frontend-only, plan Steps 1–5 implemented; automated verification below).
+
+- `core/chunks/groups.ts`: `ToolEntry` replaces `ToolBatchEntry`; every call becomes an independent
+  `tool` render group, paired by `toolCallId` (including legacy chunks without `stepId`). Duplicate
+  calls/results are deduped first-occurrence-wins; results whose calls were unloaded remain visible
+  as orphan cards. Call/result provisional flags and step/turn provenance are retained.
+- `core/metrics/place.ts`: metrics consume the new group shape; step metrics follow the LAST
+  independent tool card of the step, with turn placement and legacy attribution unchanged.
+- `features/chat/logic/tool-summary.ts`: pure built-in summary table + generic/MCP fallback,
+  defensive unknown/JSON-string input normalization, call details, response facts derived from
+  the existing result strings (including failures/timeouts/truncation/replacements/bytes), and
+  first-six/last-six output folding above 12 lines (one terminal newline is not an extra line).
+- `features/chat/ui/ToolCard.svelte`: one lazy, default-collapsed dropdown per bubble, including
+  errors; spinner/✓/✗ alongside wrench/name + call/response summaries. Expanded body holds the
+  call AND response. Long output has a `⋯ N more lines` toggle, full-output mode and a collapse-back
+  button. Stable `t<toolCallId>` keys preserve card/output expansion through arrival/sealing and
+  orphan-call page-in. Header truncation keeps long names/paths/results on one line.
+- Contracts/pins/mirrors: **UNCHANGED** (`file:../backend/packages/{wire,transport-contract,
+  ui-contract,layout-contract,tile-layout-contract}`); consumes existing `ToolCallChunk` and
+  `ToolResultChunk` from `.dispatch/wire.reference.md`. No backend changes, contract asks or
+  roadblocks. Richer structured result facts remain an optional future backend change, not needed
+  for this feature. No network/storage/browser-effect adapter changes; no live network probe needed.
+- Human visual pass still required: single shell call; parallel calls as separate bubbles; pending
+  spinner → ✓/✗; collapsed errors + red response; edit old/new; >12-line preview + expand/back;
+  narrow-layout truncation; reload mid-turn, open a pending card, and confirm sealing preserves it.
+  Use the worktree's `bin/up` from its parent only after stopping the main stack (shared ports);
+  backend startup remains user-owned.
+
+### Verification
+
+- `bun install`: succeeds (lockfile unchanged).
+- `bun run typecheck`: 0 errors / 0 warnings.
+- `bun run test` ×2: 1,915 passed per run (111 files).
+- `bun run check`: clean (0 errors; existing Biome config-version/deprecation infos only).
+- `bun run build`: succeeds (existing app-store initial-value and bundle-size warnings only).
+
 ## Milestone: Account usage view (`feature/account-usage`)
 
 **Slice status:** COMPLETE + committed (both repos, `feature/account-usage`; implemented in BOTH

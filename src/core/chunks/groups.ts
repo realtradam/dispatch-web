@@ -1,111 +1,65 @@
 import type { ToolCallChunk, ToolResultChunk } from "@dispatch/wire";
 import type { RenderedChunk } from "./types";
 
-/**
- * One tool call within a batch, paired with its result (matched by `toolCallId`).
- * `result` is null while the call is still pending (no result chunk yet).
- */
-export interface ToolBatchEntry {
-  readonly call: ToolCallChunk;
+/** One tool call and its response. Null call = unloaded history; null result = pending. */
+export interface ToolEntry {
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly call: ToolCallChunk | null;
   readonly result: ToolResultChunk | null;
 }
 
-/**
- * A render group: either a single rendered chunk (rendered as today) or a batch
- * of tool calls the model emitted together in one step (shared `stepId`), to be
- * rendered as one grouped unit.
- */
 export type RenderGroup =
   | { readonly kind: "single"; readonly chunk: RenderedChunk }
   | {
-      readonly kind: "tool-batch";
-      readonly stepId: string;
-      readonly entries: readonly ToolBatchEntry[];
+      readonly kind: "tool";
+      readonly entry: ToolEntry;
       readonly provisional: boolean;
-      /** The producing turn (from the batch's first call chunk), when known. */
+      readonly stepId?: string;
       readonly turnId?: string;
     };
 
 /**
- * Group a flat rendered-chunk stream for display. Tool calls sharing a `stepId`
- * (the backend's authoritative batch key) where the step has 2+ calls become one
- * `tool-batch` group, positioned at the first call and pairing each call with its
- * `tool-result` (by `toolCallId`); the absorbed result chunks are not emitted on
- * their own. Single tool calls (one per step, or no `stepId` — e.g. pre-0.2.0
- * replay rows) and every non-tool chunk render as `single` groups, in order.
- *
- * Pure: input → output, no DOM, no Svelte.
+ * One independent group per call, at the call's position, absorbing its result
+ * by toolCallId (including legacy chunks without stepId). Orphan results stay
+ * visible at their own position. First occurrence wins for duplicate ids, so
+ * the stable t<toolCallId> render keys are always unique, even on corrupt replay.
+ * Pure: input → output; no DOM, effects, or Svelte.
  */
 export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonly RenderGroup[] {
-  // 1. Steps that batched 2+ tool calls.
-  const callsPerStep = new Map<string, number>();
+  const calls = new Map<string, RenderedChunk>();
+  const results = new Map<string, RenderedChunk>();
   for (const rc of rendered) {
-    if (rc.chunk.type === "tool-call" && rc.chunk.stepId !== undefined) {
-      callsPerStep.set(rc.chunk.stepId, (callsPerStep.get(rc.chunk.stepId) ?? 0) + 1);
-    }
-  }
-  const batchSteps = new Set<string>();
-  for (const [stepId, count] of callsPerStep) {
-    if (count >= 2) batchSteps.add(stepId);
+    const c = rc.chunk;
+    if (c.type === "tool-call" && !calls.has(c.toolCallId)) calls.set(c.toolCallId, rc);
+    if (c.type === "tool-result" && !results.has(c.toolCallId)) results.set(c.toolCallId, rc);
   }
 
-  // 2. toolCallIds belonging to a batch (so their results are absorbed), and a
-  //    lookup of result chunks by toolCallId for pairing.
-  const batchCallIds = new Set<string>();
-  const resultByCallId = new Map<string, ToolResultChunk>();
-  for (const rc of rendered) {
-    const chunk = rc.chunk;
-    if (chunk.type === "tool-call" && chunk.stepId !== undefined && batchSteps.has(chunk.stepId)) {
-      batchCallIds.add(chunk.toolCallId);
-    } else if (chunk.type === "tool-result" && !resultByCallId.has(chunk.toolCallId)) {
-      resultByCallId.set(chunk.toolCallId, chunk);
-    }
-  }
-
-  // 3. Emit groups in stream order; each batch lands at its first call.
   const groups: RenderGroup[] = [];
-  const emittedSteps = new Set<string>();
+  const emitted = new Set<string>();
   for (const rc of rendered) {
-    const chunk = rc.chunk;
-
-    if (chunk.type === "tool-call" && chunk.stepId !== undefined && batchSteps.has(chunk.stepId)) {
-      const stepId = chunk.stepId;
-      if (emittedSteps.has(stepId)) continue;
-      emittedSteps.add(stepId);
-
-      const entries: ToolBatchEntry[] = [];
-      // Dedupe by toolCallId within the batch: a provider double-emission (or any
-      // corrupted transcript) can carry the SAME call id on multiple tool-call
-      // chunks in one step. The first occurrence (stream order) wins; later ones
-      // are skipped so the keyed `{#each}` in the UI never sees duplicate keys
-      // (Svelte `each_key_duplicate` aborts the reactive flush — tab appears dead).
-      const seenCallIds = new Set<string>();
-      let provisional = false;
-      let turnId: string | undefined;
-      for (const inner of rendered) {
-        if (inner.chunk.type === "tool-call" && inner.chunk.stepId === stepId) {
-          if (seenCallIds.has(inner.chunk.toolCallId)) continue;
-          seenCallIds.add(inner.chunk.toolCallId);
-          const result = resultByCallId.get(inner.chunk.toolCallId) ?? null;
-          entries.push({ call: inner.chunk, result });
-          if (inner.provisional) provisional = true;
-          turnId ??= inner.turnId;
-        }
-      }
-      groups.push(
-        turnId !== undefined
-          ? { kind: "tool-batch", stepId, entries, provisional, turnId }
-          : { kind: "tool-batch", stepId, entries, provisional },
-      );
+    const c = rc.chunk;
+    if (c.type !== "tool-call" && c.type !== "tool-result") {
+      groups.push({ kind: "single", chunk: rc });
       continue;
     }
-
-    if (chunk.type === "tool-result" && batchCallIds.has(chunk.toolCallId)) {
-      continue; // absorbed into its batch
-    }
-
-    groups.push({ kind: "single", chunk: rc });
+    if (emitted.has(c.toolCallId)) continue;
+    // A matching call owns the card's position, even if the result came first.
+    if (c.type === "tool-result" && calls.has(c.toolCallId)) continue;
+    emitted.add(c.toolCallId);
+    const callRow = calls.get(c.toolCallId);
+    const resultRow = results.get(c.toolCallId);
+    const call = callRow?.chunk.type === "tool-call" ? callRow.chunk : null;
+    const result = resultRow?.chunk.type === "tool-result" ? resultRow.chunk : null;
+    const stepId = call?.stepId ?? result?.stepId;
+    const turnId = callRow?.turnId ?? resultRow?.turnId;
+    groups.push({
+      kind: "tool",
+      entry: { toolCallId: c.toolCallId, toolName: call?.toolName ?? c.toolName, call, result },
+      provisional: Boolean(callRow?.provisional || resultRow?.provisional),
+      ...(stepId !== undefined ? { stepId } : {}),
+      ...(turnId !== undefined ? { turnId } : {}),
+    });
   }
-
   return groups;
 }

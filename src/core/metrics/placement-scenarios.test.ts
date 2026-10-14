@@ -36,9 +36,9 @@ function layout(rows: readonly MetricsRow[]): string[] {
       const c = r.group.chunk.chunk;
       if (c.type === "text") out.push(`${r.group.chunk.role}:${c.text}`);
       else if (c.type === "image") out.push(`${r.group.chunk.role}:<img>`);
-      else if (c.type === "tool-call") out.push(`call:${c.toolCallId}`);
-      else if (c.type === "tool-result") out.push(`result:${c.toolCallId}`);
       else if (c.type === "error") out.push(`error:${c.message}`);
+    } else {
+      out.push(`tool:${r.group.entry.toolCallId}`);
     }
   }
   return out;
@@ -245,8 +245,7 @@ for (const legacy of [false, true]) {
       expect(sim.layout()).toEqual([
         ...before,
         "user:q5",
-        "call:k1",
-        "result:k1",
+        "tool:k1",
         "[step t5#0]",
         "assistant:a5",
         "[turn t5]",
@@ -291,8 +290,7 @@ for (const legacy of [false, true]) {
         "assistant:a1",
         "[turn t1]",
         "user:q2",
-        "call:k1",
-        "result:k1",
+        "tool:k1",
         "[step t2#0]",
         "user:steer!",
       ]);
@@ -304,12 +302,10 @@ for (const legacy of [false, true]) {
         "assistant:a1",
         "[turn t1]",
         "user:q2",
-        "call:k1",
-        "result:k1",
+        "tool:k1",
         "[step t2#0]",
         "user:steer!",
-        "call:k2",
-        "result:k2",
+        "tool:k2",
         "[step t2#1]",
         "assistant:a2",
         "[turn t2]",

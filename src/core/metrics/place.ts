@@ -3,13 +3,11 @@ import type { RenderGroup } from "../chunks";
 import type { MetricsRow, StepMetrics, TurnMetricsEntry } from "./types";
 
 function groupStepId(g: RenderGroup): string | undefined {
-  if (g.kind === "tool-batch") return g.stepId;
-  const c = g.chunk.chunk;
-  return c.type === "tool-call" || c.type === "tool-result" ? c.stepId : undefined;
+  return g.kind === "tool" ? g.stepId : undefined;
 }
 
 function groupTurnId(g: RenderGroup): string | undefined {
-  return g.kind === "tool-batch" ? g.turnId : g.chunk.turnId;
+  return g.kind === "tool" ? g.turnId : g.chunk.turnId;
 }
 
 function isUser(g: RenderGroup): boolean {
