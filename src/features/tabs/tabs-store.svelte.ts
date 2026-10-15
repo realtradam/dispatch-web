@@ -9,6 +9,7 @@ import {
   selectTab as reduceSelectTab,
   setModel as reduceSetModel,
   setSnapshot as reduceSetSnapshot,
+  setTabGroupParent as reduceSetTabGroupParent,
   setTitle as reduceSetTitle,
   setWorkspaceId as reduceSetWorkspaceId,
   activeTab as selectActiveTab,
@@ -37,6 +38,8 @@ export interface TabsStore {
   setSnapshot(conversationId: string, snapshot: NamedAgentSelectionSnapshot | null): void;
   setTitle(conversationId: string, title: string): void;
   setWorkspaceId(conversationId: string, workspaceId: string): void;
+  /** Set (string) or clear (null) a tab's tab group parent (visual subagent group). */
+  setTabGroupParent(conversationId: string, parentId: string | null): void;
 }
 
 export function createTabsStore(storage: TabsStorage): TabsStore {
@@ -83,6 +86,9 @@ export function createTabsStore(storage: TabsStorage): TabsStore {
     },
     setWorkspaceId(conversationId: string, workspaceId: string): void {
       apply(reduceSetWorkspaceId(state, conversationId, workspaceId));
+    },
+    setTabGroupParent(conversationId: string, parentId: string | null): void {
+      apply(reduceSetTabGroupParent(state, conversationId, parentId));
     },
   };
 }

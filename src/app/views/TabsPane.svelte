@@ -20,5 +20,6 @@
     onClose={(id) => store.closeTab(id)}
     onNewDraft={() => store.newDraft()}
     onRename={(id, title) => store.renameTab(id, title)}
+    onSetTabGroup={(id, parentId) => store.setTabGroup(id, parentId)}
   />
 {/key}

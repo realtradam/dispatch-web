@@ -1,3 +1,13 @@
+export type { TabGroupForest, TabGroupNode } from "./tab-groups";
+export {
+  buildTabGroups,
+  directGroupChildren,
+  groupBleedPx,
+  groupDescendants,
+  groupGutterPx,
+  groupParentCandidates,
+  visibleGroupParents,
+} from "./tab-groups";
 export type { Tab, TabsState } from "./tabs";
 export {
   activeTab,
@@ -9,6 +19,7 @@ export {
   newDraft,
   selectTab,
   setModel,
+  setTabGroupParent,
   setTitle,
   shortHandle,
 } from "./tabs";

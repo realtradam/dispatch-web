@@ -4,6 +4,7 @@ import type {
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
+  ConversationTabGroupChangedMessage,
   ExtensionsChangedMessage,
   LayoutChangedMessage,
   TileLayoutChangedMessage,
@@ -27,6 +28,7 @@ const VALID_SERVER_TYPES = new Set([
   "conversation.open",
   "conversation.statusChanged",
   "conversation.compacted",
+  "conversation.tabGroupChanged",
   "extensions-changed",
   "layout",
   "tile-layout",
@@ -126,11 +128,30 @@ export function parseServerMessage(data: string): WsServerMessage | null {
       // it, so a client can stamp the opened tab with the conversation's ACTUAL
       // model (fix-toolcall-duplicate-keys plan Part 4).
       const model = parsed.model;
+      // The EFFECTIVE tab group parent, so a summoned subagent's tab lands in
+      // its summoner's group immediately.
+      const tabGroupParentId = parsed.tabGroupParentId;
       const msg: ConversationOpenMessage = {
         type: "conversation.open",
         conversationId: parsed.conversationId,
         workspaceId: parsed.workspaceId,
         ...(typeof model === "string" && model.length > 0 ? { model } : {}),
+        ...(typeof tabGroupParentId === "string" && tabGroupParentId.length > 0
+          ? { tabGroupParentId }
+          : {}),
+      };
+      return msg;
+    }
+    case "conversation.tabGroupChanged": {
+      if (typeof parsed.conversationId !== "string") return null;
+      if (typeof parsed.workspaceId !== "string") return null;
+      const parent = parsed.tabGroupParentId;
+      if (parent !== null && (typeof parent !== "string" || parent.length === 0)) return null;
+      const msg: ConversationTabGroupChangedMessage = {
+        type: "conversation.tabGroupChanged",
+        conversationId: parsed.conversationId,
+        workspaceId: parsed.workspaceId,
+        tabGroupParentId: parent,
       };
       return msg;
     }

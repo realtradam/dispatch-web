@@ -502,3 +502,63 @@ describe("parseServerMessage — layout (plan 02)", () => {
     expect(parseServerMessage(JSON.stringify({ type: "layout.unknown" }))).toBeNull();
   });
 });
+
+describe("parseServerMessage — subagent tab groups", () => {
+  it("forwards the effective tabGroupParentId on conversation.open", () => {
+    const result = parseServerMessage(
+      JSON.stringify({
+        type: "conversation.open",
+        conversationId: "child",
+        workspaceId: "w1",
+        tabGroupParentId: "parent",
+      }),
+    );
+    expect(result).toEqual({
+      type: "conversation.open",
+      conversationId: "child",
+      workspaceId: "w1",
+      tabGroupParentId: "parent",
+    });
+  });
+
+  it("omits a non-string/empty tabGroupParentId on conversation.open", () => {
+    for (const tabGroupParentId of ["", 42, null]) {
+      const result = parseServerMessage(
+        JSON.stringify({
+          type: "conversation.open",
+          conversationId: "c1",
+          workspaceId: "w1",
+          tabGroupParentId,
+        }),
+      );
+      expect(result).toEqual({
+        type: "conversation.open",
+        conversationId: "c1",
+        workspaceId: "w1",
+      });
+    }
+  });
+
+  it("parses conversation.tabGroupChanged with a parent id and with null (ungrouped)", () => {
+    for (const tabGroupParentId of ["parent", null]) {
+      const msg = {
+        type: "conversation.tabGroupChanged",
+        conversationId: "c1",
+        workspaceId: "w1",
+        tabGroupParentId,
+      };
+      expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+    }
+  });
+
+  it("rejects a malformed conversation.tabGroupChanged", () => {
+    const base = { type: "conversation.tabGroupChanged", conversationId: "c1", workspaceId: "w1" };
+    expect(parseServerMessage(JSON.stringify(base))).toBeNull(); // missing (undefined) parent
+    expect(parseServerMessage(JSON.stringify({ ...base, tabGroupParentId: "" }))).toBeNull();
+    expect(parseServerMessage(JSON.stringify({ ...base, tabGroupParentId: 1 }))).toBeNull();
+    const { workspaceId: _w, ...noWorkspace } = base;
+    expect(
+      parseServerMessage(JSON.stringify({ ...noWorkspace, tabGroupParentId: "p" })),
+    ).toBeNull();
+  });
+});

@@ -165,7 +165,7 @@ describe("TabList", () => {
     expect(screen.getByText("7c2d")).toBeInTheDocument();
   });
 
-  it("renders each tab as a single vertical row (flex-col list, not a horizontal strip)", () => {
+  it("renders the tabs as a 2-column grid of same-size cards", () => {
     render(TabList, {
       props: {
         tabs: sampleTabs,
@@ -176,14 +176,17 @@ describe("TabList", () => {
       },
     });
 
-    // The scroll region containing the tab rows is a vertical flex column.
     const tabs = screen.getAllByRole("tab");
-    expect(tabs.length).toBeGreaterThan(0);
-    const region = tabs[0]?.parentElement;
-    expect(region).toHaveClass("flex-col");
+    const grid = tabs[0]?.parentElement;
+    expect(grid).toHaveClass("grid", "grid-cols-2");
+    // Every card has the same fixed height; none is double-width without a group.
+    for (const t of tabs) {
+      expect(t).toHaveClass("h-[4.5rem]");
+      expect(t).not.toHaveClass("col-span-2");
+    }
   });
 
-  it("fixes the tab list region at 40vh so a long set scrolls internally", () => {
+  it("fixes the tab grid region at 40vh so a long set scrolls internally", () => {
     render(TabList, {
       props: {
         tabs: sampleTabs,
@@ -195,7 +198,7 @@ describe("TabList", () => {
     });
 
     const tabs = screen.getAllByRole("tab");
-    const region = tabs[0]?.parentElement;
+    const region = tabs[0]?.parentElement?.parentElement;
     expect(region).toHaveClass("h-[40vh]");
     expect(region).toHaveClass("overflow-y-auto");
   });
@@ -294,5 +297,168 @@ describe("TabList", () => {
 
     // c3 has no status → no spinner at all.
     expect(idleTab.querySelector(".loading")).toBeNull();
+  });
+
+  describe("subagent groups", () => {
+    const grouped: readonly Tab[] = [
+      { conversationId: "p", model: "m", title: "Parent", workspaceId: "w" },
+      {
+        conversationId: "c1",
+        model: "m",
+        title: "Child 1",
+        workspaceId: "w",
+        tabGroupParentId: "p",
+      },
+      {
+        conversationId: "c2",
+        model: "m",
+        title: "Child 2",
+        workspaceId: "w",
+        tabGroupParentId: "p",
+      },
+      {
+        conversationId: "g",
+        model: "m",
+        title: "Grandchild",
+        workspaceId: "w",
+        tabGroupParentId: "c1",
+      },
+      { conversationId: "solo", model: "m", title: "Solo", workspaceId: "w" },
+    ];
+
+    function renderGrouped(onSetTabGroup = vi.fn()) {
+      render(TabList, {
+        props: {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose: vi.fn(),
+          onNewDraft: vi.fn(),
+          onSetTabGroup,
+        },
+      });
+      return onSetTabGroup;
+    }
+
+    const card = (id: string): HTMLElement => {
+      const el = document.querySelector<HTMLElement>(`[role="tab"][data-conversation-id="${id}"]`);
+      if (el === null) throw new Error(`card ${id} not found`);
+      return el;
+    };
+
+    it("renders a group parent double-width inside a darker group box with its subagents", () => {
+      renderGrouped();
+      const box = document.querySelector<HTMLElement>('[data-tab-group="p"]');
+      expect(box).not.toBeNull();
+      expect(box).toHaveClass("col-span-2");
+      expect(card("p")).toHaveClass("col-span-2");
+      expect(card("p")).toHaveTextContent("2 subagents");
+      expect(box?.contains(card("c1"))).toBe(true);
+      expect(box?.contains(card("c2"))).toBe(true);
+      expect(box?.contains(card("solo"))).toBe(false);
+      // Subagents are regular half-width cards.
+      expect(card("c2")).not.toHaveClass("col-span-2");
+    });
+
+    it("nests a subagent that has its own subagents in an inner box", () => {
+      renderGrouped();
+      const outer = document.querySelector<HTMLElement>('[data-tab-group="p"]');
+      const inner = document.querySelector<HTMLElement>('[data-tab-group="c1"]');
+      expect(inner).not.toBeNull();
+      expect(outer?.contains(inner)).toBe(true);
+      expect(inner?.dataset.level).toBe("2");
+      expect(card("c1")).toHaveClass("col-span-2");
+      expect(inner?.contains(card("g"))).toBe(true);
+      // Inner boxes bleed less than outer ones, so nested edges stay visible
+      // while the cards keep identical widths.
+      const pad = (el: HTMLElement | null) => el?.style.getPropertyValue("padding-inline") ?? "";
+      const bleed = (el: HTMLElement | null) => Number.parseFloat(pad(el));
+      expect(bleed(inner)).toBeGreaterThan(0);
+      expect(bleed(outer)).toBeGreaterThan(bleed(inner));
+      expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${pad(outer)}`);
+    });
+
+    it("right-click opens the menu; 'Remove from group' ungroups the tab", async () => {
+      const onSetTabGroup = renderGrouped();
+      await fireEvent.contextMenu(card("c2"), { clientX: 10, clientY: 10 });
+      const menu = screen.getByRole("menu");
+      expect(menu).toBeInTheDocument();
+      await fireEvent.click(screen.getByRole("menuitem", { name: /Remove from group/ }));
+      expect(onSetTabGroup).toHaveBeenCalledWith("c2", null);
+      expect(screen.queryByRole("menu")).toBeNull();
+    });
+
+    it("'Add to group' lists valid parents (no self/descendants/current) and moves the tab", async () => {
+      const onSetTabGroup = renderGrouped();
+      await fireEvent.contextMenu(card("c1"));
+      const candidates = [...document.querySelectorAll<HTMLElement>("[data-group-candidate]")].map(
+        (el) => el.dataset.groupCandidate,
+      );
+      expect(candidates).toEqual(["c2", "solo"]);
+      const solo = document.querySelector<HTMLElement>('[data-group-candidate="solo"]');
+      if (solo === null) throw new Error("solo candidate missing");
+      await fireEvent.click(solo);
+      expect(onSetTabGroup).toHaveBeenCalledWith("c1", "solo");
+    });
+
+    it("a group parent's menu can ungroup all of its direct subagents", async () => {
+      const onSetTabGroup = renderGrouped();
+      await fireEvent.contextMenu(card("p"));
+      expect(screen.queryByRole("menuitem", { name: /Remove from group/ })).toBeNull();
+      await fireEvent.click(screen.getByRole("menuitem", { name: /Ungroup 2 subagents/ }));
+      expect(onSetTabGroup).toHaveBeenCalledTimes(2);
+      expect(onSetTabGroup).toHaveBeenCalledWith("c1", null);
+      expect(onSetTabGroup).toHaveBeenCalledWith("c2", null);
+    });
+
+    it("Escape closes the menu without changing anything", async () => {
+      const onSetTabGroup = renderGrouped();
+      await fireEvent.contextMenu(card("solo"));
+      expect(screen.getByRole("menu")).toBeInTheDocument();
+      await fireEvent.keyDown(window, { key: "Escape" });
+      expect(screen.queryByRole("menu")).toBeNull();
+      expect(onSetTabGroup).not.toHaveBeenCalled();
+    });
+
+    it("touch-and-hold opens the menu and swallows the follow-up click", async () => {
+      vi.useFakeTimers();
+      try {
+        const onSelect = vi.fn();
+        render(TabList, {
+          props: {
+            tabs: grouped,
+            activeConversationId: "p",
+            onSelect,
+            onClose: vi.fn(),
+            onNewDraft: vi.fn(),
+            onSetTabGroup: vi.fn(),
+          },
+        });
+        await fireEvent.pointerDown(card("solo"), { pointerType: "touch", clientX: 5, clientY: 5 });
+        await vi.advanceTimersByTimeAsync(600);
+        expect(screen.getByRole("menu")).toBeInTheDocument();
+        await fireEvent.click(card("solo"));
+        expect(onSelect).not.toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+
+    it("a touch that moves away cancels the long-press", async () => {
+      vi.useFakeTimers();
+      try {
+        renderGrouped();
+        await fireEvent.pointerDown(card("solo"), { pointerType: "touch", clientX: 5, clientY: 5 });
+        await fireEvent.pointerMove(card("solo"), {
+          pointerType: "touch",
+          clientX: 5,
+          clientY: 60,
+        });
+        await vi.advanceTimersByTimeAsync(600);
+        expect(screen.queryByRole("menu")).toBeNull();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
   });
 });

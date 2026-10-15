@@ -13,6 +13,13 @@ export interface Tab {
    * renamed/removed. Absent for a raw model selection.
    */
   readonly snapshot?: NamedAgentSelectionSnapshot;
+  /**
+   * The EFFECTIVE tab group parent (backend `tabGroupParentId`): the
+   * conversation whose subagent group this tab is visually nested under in
+   * the tab grid. Purely presentational — distinct from the lineage
+   * `parentConversationId`. Absent = ungrouped (a top-level tab).
+   */
+  readonly tabGroupParentId?: string;
 }
 
 export interface TabsState {
@@ -117,6 +124,26 @@ export function setSnapshot(
 
 export function setTitle(state: TabsState, conversationId: string, title: string): TabsState {
   const tabs = state.tabs.map((t) => (t.conversationId === conversationId ? { ...t, title } : t));
+  return { tabs, activeConversationId: state.activeConversationId };
+}
+
+/**
+ * Set (string) or clear (null) a tab's tab group parent. Omits the key when
+ * cleared (`exactOptionalPropertyTypes`). No-op for an unknown tab.
+ */
+export function setTabGroupParent(
+  state: TabsState,
+  conversationId: string,
+  parentId: string | null,
+): TabsState {
+  const tabs = state.tabs.map((t) => {
+    if (t.conversationId !== conversationId) return t;
+    if (parentId !== null) return { ...t, tabGroupParentId: parentId };
+    if (!("tabGroupParentId" in t)) return t;
+    const { tabGroupParentId: _omit, ...rest } = t;
+    void _omit;
+    return rest;
+  });
   return { tabs, activeConversationId: state.activeConversationId };
 }
 

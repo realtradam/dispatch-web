@@ -10,6 +10,7 @@ import {
   newDraft,
   selectTab,
   setModel,
+  setTabGroupParent,
   setTitle,
   shortHandle,
 } from "./tabs";
@@ -221,5 +222,33 @@ describe("shortHandle", () => {
   it("falls back to the full id when one id is a prefix of another", () => {
     // "abcd" is a prefix of "abcd1234" → no unique shorter prefix exists for it
     expect(shortHandle("abcd", ["abcd", "abcd1234"])).toBe("abcd");
+  });
+});
+
+describe("setTabGroupParent", () => {
+  const base: TabsState = {
+    tabs: [
+      { conversationId: "a", model: "m", title: "A", workspaceId: "w" },
+      { conversationId: "b", model: "m", title: "B", workspaceId: "w" },
+    ],
+    activeConversationId: "a",
+  };
+
+  it("sets the tab group parent on the named tab only", () => {
+    const next = setTabGroupParent(base, "b", "a");
+    expect(next.tabs[1]?.tabGroupParentId).toBe("a");
+    expect(next.tabs[0]).toBe(base.tabs[0]);
+    expect(next.activeConversationId).toBe("a");
+  });
+
+  it("clears the key entirely with null", () => {
+    const grouped = setTabGroupParent(base, "b", "a");
+    const cleared = setTabGroupParent(grouped, "b", null);
+    expect(cleared.tabs[1]).toEqual(base.tabs[1]);
+    expect("tabGroupParentId" in (cleared.tabs[1] ?? {})).toBe(false);
+  });
+
+  it("is a no-op for an unknown tab", () => {
+    expect(setTabGroupParent(base, "zz", "a").tabs).toEqual(base.tabs);
   });
 });

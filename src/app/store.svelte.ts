@@ -12,6 +12,7 @@ import type {
   ConversationMetricsResponse,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
+  ConversationTabGroupChangedMessage,
   CwdResponse,
   ExtensionsChangedMessage,
   LayoutChangedMessage,
@@ -28,11 +29,13 @@ import type {
   SetModelRequest,
   SetReasoningEffortRequest,
   SetSystemPromptTemplateRequest,
+  SetTabGroupRequest,
   SetTitleRequest,
   SetVisionSettingsRequest,
   SystemPromptTemplateResponse,
   SystemPromptVariable,
   SystemPromptVariablesResponse,
+  TabGroupResponse,
   TestComputerResponse,
   TileLayoutChangedMessage,
   WarmRequest,
@@ -269,6 +272,13 @@ export interface AppStore {
   selectTab(conversationId: string): void;
   closeTab(conversationId: string): void;
   renameTab(conversationId: string, title: string): void;
+  /**
+   * Move a tab into a subagent group (the tab group parent's id) or out of
+   * any group (null). Purely presentational (NOT lineage): applied
+   * optimistically, persisted via `PUT /conversations/:id/tab-group` (synced
+   * to other clients by `conversation.tabGroupChanged`), reverted on failure.
+   */
+  setTabGroup(conversationId: string, parentId: string | null): void;
   invoke(surfaceId: string, actionId: string, payload?: unknown): void;
   /**
    * Explicitly (re-)subscribe one surface, scoped to `conversationId` (or the
@@ -1351,7 +1361,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
    * stamped with the conversation's actual `workspaceId`, NOT the viewer's
    * currently active workspace.
    */
-  function openConversation(conversationId: string, workspaceId: string, model?: string): void {
+  function openConversation(
+    conversationId: string,
+    workspaceId: string,
+    model?: string,
+    tabGroupParentId?: string,
+  ): void {
     if (chatStores.has(conversationId)) return;
     // Stamp the tab with the conversation's PERSISTED model when the open
     // broadcast carries it (falling back to the current global selection) —
@@ -1367,6 +1382,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       model: tabModel,
       title: "Conversation",
       workspaceId,
+      ...(tabGroupParentId !== undefined ? { tabGroupParentId } : {}),
     });
   }
 
@@ -1465,6 +1481,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
             model,
             title: conv.title,
             workspaceId: conv.workspaceId,
+            ...(conv.tabGroupParentId !== undefined
+              ? { tabGroupParentId: conv.tabGroupParentId }
+              : {}),
           });
         } else {
           // Already open — reconcile title + workspace from the authoritative
@@ -1473,11 +1492,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           // authoritative conversation record is the source of truth, so a
           // differing tab workspace is corrected here.
           tabsStore.setTitle(conv.id, conv.title);
-          if (
-            tabsStore.tabs.find((t) => t.conversationId === conv.id)?.workspaceId !==
-            conv.workspaceId
-          ) {
+          const tab = tabsStore.tabs.find((t) => t.conversationId === conv.id);
+          if (tab?.workspaceId !== conv.workspaceId) {
             tabsStore.setWorkspaceId(conv.id, conv.workspaceId);
+          }
+          // The backend's EFFECTIVE tab group parent is authoritative too.
+          if (tab?.tabGroupParentId !== conv.tabGroupParentId) {
+            tabsStore.setTabGroupParent(conv.id, conv.tabGroupParentId ?? null);
           }
         }
       }
@@ -1533,7 +1554,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     onMessage: handleServerMessage,
     onChat: handleChatMessage,
     onConversationOpen(msg: ConversationOpenMessage): void {
-      openConversation(msg.conversationId, msg.workspaceId, msg.model);
+      openConversation(msg.conversationId, msg.workspaceId, msg.model, msg.tabGroupParentId);
+    },
+    onConversationTabGroupChanged(msg: ConversationTabGroupChangedMessage): void {
+      // Another client (or this one, echoed) regrouped a tab — apply the
+      // authoritative EFFECTIVE value. Unknown tabs are a reducer no-op.
+      tabsStore.setTabGroupParent(msg.conversationId, msg.tabGroupParentId);
     },
     onConversationStatusChanged(msg: ConversationStatusChangedMessage): void {
       const { conversationId, status, workspaceId } = msg;
@@ -2001,6 +2027,34 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       }).catch((err) => {
         reportError("Failed to rename conversation", err);
       });
+    },
+
+    setTabGroup(conversationId: string, parentId: string | null): void {
+      const previous =
+        tabsStore.tabs.find((t) => t.conversationId === conversationId)?.tabGroupParentId ?? null;
+      tabsStore.setTabGroupParent(conversationId, parentId);
+      void (async () => {
+        try {
+          const res = await fetchImpl(
+            `${httpBase}/conversations/${encodeURIComponent(conversationId)}/tab-group`,
+            {
+              method: "PUT",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ parentId } satisfies SetTabGroupRequest),
+            },
+          );
+          if (!res.ok) {
+            const err = (await res.json().catch(() => null)) as { error?: string } | null;
+            throw new Error(err?.error ?? `HTTP ${res.status}`);
+          }
+          const body = (await res.json()) as TabGroupResponse;
+          tabsStore.setTabGroupParent(conversationId, body.tabGroupParentId);
+        } catch (err) {
+          // Revert the optimistic move, then surface the failure.
+          tabsStore.setTabGroupParent(conversationId, previous);
+          reportError("Failed to update the tab's subagent group", err);
+        }
+      })();
     },
 
     invoke(surfaceId: string, actionId: string, payload?: unknown): void {

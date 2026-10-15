@@ -4,6 +4,7 @@ import type {
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
+  ConversationTabGroupChangedMessage,
   ExtensionsChangedMessage,
   LayoutChangedMessage,
   TileLayoutChangedMessage,
@@ -30,6 +31,8 @@ export interface SurfaceSocketOptions {
   onConversationStatusChanged?: (msg: ConversationStatusChangedMessage) => void;
   /** Broadcast when a conversation's history has been compacted (reload needed). */
   onConversationCompacted?: (msg: ConversationCompactedMessage) => void;
+  /** Broadcast when a conversation's (visual) tab group parent changes. */
+  onConversationTabGroupChanged?: (msg: ConversationTabGroupChangedMessage) => void;
   /**
    * Broadcast after every plugin-manager mutation (plan 05 §11): every
    * connected frontend refetches its extension list (the server re-pushes the
@@ -93,6 +96,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
           opts.onConversationOpen?.(msg as ConversationOpenMessage);
         } else if (msg.type === "conversation.statusChanged") {
           opts.onConversationStatusChanged?.(msg as ConversationStatusChangedMessage);
+        } else if (msg.type === "conversation.tabGroupChanged") {
+          opts.onConversationTabGroupChanged?.(msg as ConversationTabGroupChangedMessage);
         } else if (msg.type === "conversation.compacted") {
           opts.onConversationCompacted?.(msg as ConversationCompactedMessage);
         } else if (msg.type === "extensions-changed") {

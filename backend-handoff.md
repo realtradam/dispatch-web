@@ -18,6 +18,21 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Agent tab grid + subagent groups (`feature/agent-tab-grid`, 2026-10-15)
+- FE: the tabs view is now a 2-column grid of identical fixed-height cards (`TabCard`); a tab with
+  visible subagents is double-width and wrapped with them in a darker, nestable box
+  (`TabGroupBox`, recursive). Boxes bleed outward (negative margin + equal padding) so every card
+  stays on the same two columns at any depth. Pure model in `features/tabs/tab-groups.ts`
+  (forest build, cycle-tolerant, candidates, bleed/gutter).
+- Tab menu (`TabMenu`): right-click / touch-and-hold (500 ms, 10 px tolerance) / ContextMenu key →
+  "Remove from group", "Ungroup N subagents", "Add to group under…" (excludes self, descendants,
+  current parent). `AppStore.setTabGroup` is optimistic → `PUT /conversations/:id/tab-group`
+  → reconciles to the response; reverts + reports on failure.
+- CONSUMED (backend, same branch — plan `../backend/notes/agent-tab-grid-plan.md`):
+  `ConversationMeta.tabGroupParentId?` (effective), `ConversationOpenMessage.tabGroupParentId?`,
+  `ConversationTabGroupChangedMessage` (`conversation.tabGroupChanged`, null = ungrouped),
+  `SetTabGroupRequest` / `TabGroupResponse`.
+
 ## Milestone: Tool-call cards final visual follow-up (`feature/tool-call-cards`, 2026-10-14)
 
 **Slice status:** COMPLETE (frontend-only).

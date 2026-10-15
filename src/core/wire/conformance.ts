@@ -91,6 +91,8 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "conversation.statusChanged";
     case "conversation.compacted":
       return "conversation.compacted";
+    case "conversation.tabGroupChanged":
+      return "conversation.tabGroupChanged";
     case "extensions-changed":
       return "extensions-changed";
     case "layout":
