@@ -184,12 +184,33 @@ function addCopyButtons(html: string): string {
     .replace(/<\/pre>/g, "</pre></div>");
 }
 
+/**
+ * A DEDICATED DOMPurify instance (not the shared default export) so the
+ * link hook below only applies to chat Markdown, never to any other sanitizer
+ * user. Every link opens in a NEW TAB: after DOMPurify has allowlisted the
+ * attributes, each `<a href>` gets `target="_blank"` + `rel="noopener
+ * noreferrer"` (the opened page can't reach `window.opener` or see a referrer).
+ * Applied in the hook, so it covers marked links, autolinks, AND raw-HTML
+ * anchors alike — and the hook overwrites any author-supplied target/rel.
+ */
+const purify = DOMPurify();
+purify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A" && node.hasAttribute("href")) {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer");
+  }
+});
+
+function sanitize(html: string): string {
+  return purify.sanitize(html);
+}
+
 /** Render Markdown to sanitized HTML. Returns `""` if parsing ever throws. */
 export function renderMarkdown(text: string, opts?: { streaming?: boolean }): string {
   const src = opts?.streaming === true ? closeOpenDelimiters(text) : text;
   try {
     const raw = md.parse(src) as string;
-    return DOMPurify.sanitize(addCopyButtons(raw));
+    return sanitize(addCopyButtons(raw));
   } catch {
     return "";
   }
@@ -208,7 +229,7 @@ export function renderMarkdownTail(text: string, seed: DelimiterCounts = ZERO_CO
   const src = closeOpenDelimiters(text, seed);
   try {
     const raw = md.parse(src) as string;
-    return DOMPurify.sanitize(addCopyButtons(raw));
+    return sanitize(addCopyButtons(raw));
   } catch {
     return "";
   }
@@ -238,7 +259,7 @@ export function renderOpenFence(info: string, code: string): string {
   const cls = lang === "" ? "hljs" : `hljs language-${escapeHtml(lang)}`;
   const html = `<pre><code class="${cls}">${escapeCode(code)}</code></pre>`;
   try {
-    return DOMPurify.sanitize(addCopyButtons(html));
+    return sanitize(addCopyButtons(html));
   } catch {
     return "";
   }

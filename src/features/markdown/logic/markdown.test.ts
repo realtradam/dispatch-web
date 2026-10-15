@@ -25,6 +25,46 @@ describe("renderMarkdown", () => {
     expect(html).toContain("&lt;b&gt;");
   });
 
+  describe("links open in a new tab", () => {
+    function anchors(html: string): HTMLAnchorElement[] {
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      return Array.from(doc.querySelectorAll("a"));
+    }
+
+    it.each([
+      ["a markdown link", "See [the docs](https://example.com/docs)."],
+      ["a GFM autolink", "Visit https://example.com today"],
+      ["an angle-bracket autolink", "<https://example.com>"],
+      ["a raw-HTML anchor", 'Raw <a href="https://example.com">link</a>'],
+      ["a relative link", "[home](/settings)"],
+    ])("%s gets target=_blank + rel=noopener noreferrer", (_label, src) => {
+      const links = anchors(renderMarkdown(src));
+      expect(links).toHaveLength(1);
+      expect(links[0]?.getAttribute("target")).toBe("_blank");
+      expect(links[0]?.getAttribute("rel")).toBe("noopener noreferrer");
+    });
+
+    it("overrides an author-supplied target/rel", () => {
+      const [link] = anchors(
+        renderMarkdown('<a href="https://example.com" target="_self" rel="opener">x</a>'),
+      );
+      expect(link?.getAttribute("target")).toBe("_blank");
+      expect(link?.getAttribute("rel")).toBe("noopener noreferrer");
+    });
+
+    it("applies while streaming too", () => {
+      const [link] = anchors(
+        renderMarkdown("partial [link](https://example.com) **bo", { streaming: true }),
+      );
+      expect(link?.getAttribute("target")).toBe("_blank");
+    });
+
+    it("still strips javascript: hrefs", () => {
+      const html = renderMarkdown('<a href="javascript:alert(1)">x</a>');
+      expect(html).not.toContain("javascript:");
+    });
+  });
+
   it("sanitizes dangerous HTML", () => {
     const html = renderMarkdown("Hi <script>alert(1)</script> there");
     expect(html).not.toContain("<script>");
