@@ -383,9 +383,9 @@ describe("TabList", () => {
           s?.paddingLeft,
         ]);
       }
-      // Every box paints a 20% lavender tint, so nested boxes compound per level.
-      expect(outer).toHaveClass("bg-secondary/20");
-      expect(inner).toHaveClass("bg-secondary/20");
+      // Every box paints a 15% lavender tint, so nested boxes compound per level.
+      expect(outer).toHaveClass("bg-secondary/15");
+      expect(inner).toHaveClass("bg-secondary/15");
       expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${outer?.style.paddingLeft}`);
     });
 
