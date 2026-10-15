@@ -86,6 +86,9 @@
           visible panel.
         -->
         <!-- svelte-ignore a11y_no_static_element_interactions -->
+        <!-- Viewport padding: top/right/bottom always; LEFT only in overlay mode
+             (< lg) — inline (≥ lg) the chat column's gutter already separates the
+             views, but the overlay's left edge is the panel's own edge. -->
         <aside
           class="flex shrink-0 flex-col overflow-x-hidden transition-[width] duration-300 ease-out max-lg:absolute max-lg:inset-y-0 max-lg:right-0 max-lg:z-30 lg:relative"
           style="width: {open ? (child.basis ?? 320) : 0}px"
@@ -93,7 +96,7 @@
           data-open={open}
         >
           <div
-            class="flex h-full flex-col gap-2 overflow-y-auto bg-base-100 pt-3 pr-3 pb-3 transition-transform duration-300 ease-out"
+            class="flex h-full flex-col gap-2 overflow-y-auto bg-base-100 pt-3 pr-3 pb-3 max-lg:pl-3 transition-transform duration-300 ease-out"
             style={scrollViewportStyle(child.basis, open, child.node.marker)}
             data-testid="sidebar-scroll-viewport"
           >

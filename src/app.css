@@ -364,10 +364,14 @@ body {
    while they're showing the bottom of the app sits underneath them (the
    sidebar's last item / the composer looked flush against the bottom edge).
    100dvh tracks the visible viewport as the toolbars show/hide; 100vh stays as
-   the fallback for engines without dvh (the cascade drops the unknown unit). */
+   the fallback for engines without dvh. */
 .h-app {
   height: 100vh;
-  height: 100dvh;
+}
+@supports (height: 100dvh) {
+  .h-app {
+    height: 100dvh;
+  }
 }
 
 /* Transcript rows: skip layout + paint for rows scrolled out of view. A long
