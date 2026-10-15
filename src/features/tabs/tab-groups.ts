@@ -129,6 +129,30 @@ export function directGroupChildren(tabs: readonly Tab[], conversationId: string
 }
 
 /**
+ * Whether a group box's LAST grid row is a nested group box (rather than a
+ * card). Mirrors the grid's `row dense` auto-placement: the group parent's
+ * double-width card fills row 0; a card takes the first free half-row (or
+ * opens a new row); a nested group (spans both columns) always opens a new
+ * row. Used to trim the outer box's bottom padding so the gap below a
+ * nested box matches the gap at its sides (an even-looking box).
+ */
+export function lastRowIsGroup(children: readonly TabGroupNode[]): boolean {
+  let openHalfRows = 0; // rows with exactly one free cell
+  let lastIsGroup = false; // the row-0 parent card is not a group row
+  for (const child of children) {
+    if (child.children.length > 0) {
+      lastIsGroup = true; // opens a new (last) row
+    } else if (openHalfRows > 0) {
+      openHalfRows -= 1; // back-fills an earlier half row; last row unchanged
+    } else {
+      openHalfRows += 1; // opens a new (last) row, half-filled
+      lastIsGroup = false;
+    }
+  }
+  return lastIsGroup;
+}
+
+/**
  * Horizontal bleed (px) of a group box at nesting `level` (1 = outermost)
  * when the deepest box is `maxDepth`. A box bleeds OUTWARD by this much (a
  * negative margin + equal padding), so the cards inside every box sit on

@@ -1,7 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { TabGroupNode } from "../tab-groups";
-  import { groupBleedPx } from "../tab-groups";
+  import { groupBleedPx, lastRowIsGroup } from "../tab-groups";
   import type { Tab } from "../tabs";
   import TabGroupBox from "./TabGroupBox.svelte";
 
@@ -12,8 +12,9 @@
    * outward (negative margin + equal padding, `groupBleedPx`) so the cards
    * inside stay on the same two columns as top-level cards: every card keeps
    * identical dimensions at every depth. The padding is EQUAL on all four
-   * sides (= the bleed) so the box looks even. The 50%-black background
-   * compounds, so each nesting level reads darker than the one around it.
+   * sides (= the bleed) so the box looks even — except below a nested box on
+   * the last row, where it is trimmed to match that box's side gaps. Every box paints 20% black,
+   * which compounds: each nesting level reads darker than the one around it.
    */
   let {
     node,
@@ -30,12 +31,18 @@
   } = $props();
 
   const bleed = $derived(groupBleedPx(level, maxDepth));
+  // Even spacing: when the last row is a nested box, the gap below it would
+  // be this box's full padding while its side gaps are only the DIFFERENCE
+  // in bleed (the nested box bleeds outward too) — trim the bottom to match.
+  const padBottom = $derived(
+    lastRowIsGroup(node.children) ? bleed - groupBleedPx(level + 1, maxDepth) : bleed,
+  );
 </script>
 
 <div
-  class="col-span-2 rounded-lg bg-black/50"
+  class="col-span-2 rounded-lg bg-black/20"
   style:margin-inline="-{bleed}px"
-  style:padding="{bleed}px"
+  style:padding="{bleed}px {bleed}px {padBottom}px"
   role="group"
   aria-label={`Subagents of ${node.tab.title}`}
   data-tab-group={node.tab.conversationId}

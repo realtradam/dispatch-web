@@ -6,6 +6,7 @@ export {
   groupDescendants,
   groupGutterPx,
   groupParentCandidates,
+  lastRowIsGroup,
   visibleGroupParents,
 } from "./tab-groups";
 export type { Tab, TabsState } from "./tabs";

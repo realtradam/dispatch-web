@@ -6,6 +6,7 @@ import {
   groupDescendants,
   groupGutterPx,
   groupParentCandidates,
+  lastRowIsGroup,
   visibleGroupParents,
 } from "./tab-groups";
 import type { Tab } from "./tabs";
@@ -120,5 +121,30 @@ describe("groupBleedPx / groupGutterPx", () => {
   it("keeps the gutter bounded for deep nesting", () => {
     expect(groupGutterPx(12)).toBeLessThanOrEqual(24);
     expect(groupBleedPx(12, 12)).toBeGreaterThan(0);
+  });
+});
+
+describe("lastRowIsGroup (mirrors grid row-dense placement)", () => {
+  const leaf = (id: string) => ({ tab: tab(id), children: [] });
+  const group = (id: string) => ({ tab: tab(id), children: [leaf(`${id}-kid`)] });
+
+  it("is false with only cards", () => {
+    expect(lastRowIsGroup([])).toBe(false);
+    expect(lastRowIsGroup([leaf("a"), leaf("b"), leaf("c")])).toBe(false);
+  });
+
+  it("is true when a nested group comes last", () => {
+    expect(lastRowIsGroup([leaf("a"), group("g")])).toBe(true);
+    expect(lastRowIsGroup([group("g")])).toBe(true);
+  });
+
+  it("stays true when a later card back-fills an earlier half row", () => {
+    // [a, _] then [g, g]; b fills a's half row → g is still the last row.
+    expect(lastRowIsGroup([leaf("a"), group("g"), leaf("b")])).toBe(true);
+  });
+
+  it("is false when a later card has to open a new row below the group", () => {
+    expect(lastRowIsGroup([group("g"), leaf("a")])).toBe(false);
+    expect(lastRowIsGroup([leaf("a"), leaf("b"), group("g"), leaf("c")])).toBe(false);
   });
 });

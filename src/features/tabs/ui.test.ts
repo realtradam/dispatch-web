@@ -382,8 +382,10 @@ describe("TabList", () => {
           s?.paddingLeft,
           s?.paddingLeft,
         ]);
-        expect(box).toHaveClass("bg-black/50");
       }
+      // Every box paints 20% black, so nested boxes compound darker per level.
+      expect(outer).toHaveClass("bg-black/20");
+      expect(inner).toHaveClass("bg-black/20");
       expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${outer?.style.paddingLeft}`);
     });
 
@@ -428,6 +430,36 @@ describe("TabList", () => {
       expect(card("c1")).not.toHaveClass("col-span-2");
       expect(document.querySelector('[data-tab-group="c1"]')).toBeNull();
       expect(card("p")).toHaveClass("col-span-2");
+    });
+
+    it("trims the bottom padding under a nested box on the last row to match its side gaps", () => {
+      // p's children: c2 (card) then c1 (nested group) → c1's box is the last row.
+      const lastIsGroup: readonly Tab[] = [
+        { conversationId: "p", model: "m", title: "Parent", workspaceId: "w" },
+        { conversationId: "c2", model: "m", title: "C2", workspaceId: "w", tabGroupParentId: "p" },
+        { conversationId: "c1", model: "m", title: "C1", workspaceId: "w", tabGroupParentId: "p" },
+        { conversationId: "g", model: "m", title: "G", workspaceId: "w", tabGroupParentId: "c1" },
+      ];
+      render(TabList, {
+        props: {
+          tabs: lastIsGroup,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose: vi.fn(),
+          onNewDraft: vi.fn(),
+        },
+      });
+      const outer = document.querySelector<HTMLElement>('[data-tab-group="p"]');
+      const inner = document.querySelector<HTMLElement>('[data-tab-group="c1"]');
+      const px = (v: string | undefined) => Number.parseFloat(v ?? "");
+      const outerSide = px(outer?.style.paddingLeft);
+      const innerBleed = px(inner?.style.paddingLeft);
+      // Side gap between the two box edges = outer bleed − inner bleed; the
+      // bottom gap must equal it.
+      expect(px(outer?.style.paddingBottom)).toBe(outerSide - innerBleed);
+      expect(px(outer?.style.paddingTop)).toBe(outerSide);
+      // The inner box ends in a card → untouched, even on all sides.
+      expect(px(inner?.style.paddingBottom)).toBe(innerBleed);
     });
 
     it("right-click opens the menu; 'Remove from group' ungroups the tab", async () => {
