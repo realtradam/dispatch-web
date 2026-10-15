@@ -371,11 +371,63 @@ describe("TabList", () => {
       expect(inner?.contains(card("g"))).toBe(true);
       // Inner boxes bleed less than outer ones, so nested edges stay visible
       // while the cards keep identical widths.
-      const pad = (el: HTMLElement | null) => el?.style.getPropertyValue("padding-inline") ?? "";
-      const bleed = (el: HTMLElement | null) => Number.parseFloat(pad(el));
+      const bleed = (el: HTMLElement | null) => Number.parseFloat(el?.style.paddingLeft ?? "");
       expect(bleed(inner)).toBeGreaterThan(0);
       expect(bleed(outer)).toBeGreaterThan(bleed(inner));
-      expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${pad(outer)}`);
+      // Equal internal padding on all four sides (an even-looking box).
+      for (const box of [outer, inner]) {
+        const s = box?.style;
+        expect([s?.paddingTop, s?.paddingRight, s?.paddingBottom]).toEqual([
+          s?.paddingLeft,
+          s?.paddingLeft,
+          s?.paddingLeft,
+        ]);
+        expect(box).toHaveClass("bg-black/50");
+      }
+      expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${outer?.style.paddingLeft}`);
+    });
+
+    it("returns the group parent to a half-width card once all its subagent tabs close", async () => {
+      const props = {
+        tabs: grouped,
+        activeConversationId: "p",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+        onSetTabGroup: vi.fn(),
+      };
+      const { rerender } = render(TabList, { props });
+      expect(card("p")).toHaveClass("col-span-2");
+
+      // Close one subagent: still a group (1 left).
+      await rerender({ ...props, tabs: grouped.filter((t) => t.conversationId !== "c2") });
+      expect(card("p")).toHaveClass("col-span-2");
+      expect(card("p")).toHaveTextContent("1 subagent");
+
+      // Close the rest (c1 + its own subagent g): back to a plain half-width card.
+      await rerender({
+        ...props,
+        tabs: grouped.filter((t) => ["p", "solo"].includes(t.conversationId)),
+      });
+      expect(card("p")).not.toHaveClass("col-span-2");
+      expect(card("p")).not.toHaveTextContent("subagent");
+      expect(document.querySelector("[data-tab-group]")).toBeNull();
+    });
+
+    it("keeps the parent wide while a nested descendant's own parent remains open", async () => {
+      const props = {
+        tabs: grouped,
+        activeConversationId: "p",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+      };
+      const { rerender } = render(TabList, { props });
+      // Close the grandchild only: c1 goes back to half width, p stays a group.
+      await rerender({ ...props, tabs: grouped.filter((t) => t.conversationId !== "g") });
+      expect(card("c1")).not.toHaveClass("col-span-2");
+      expect(document.querySelector('[data-tab-group="c1"]')).toBeNull();
+      expect(card("p")).toHaveClass("col-span-2");
     });
 
     it("right-click opens the menu; 'Remove from group' ungroups the tab", async () => {

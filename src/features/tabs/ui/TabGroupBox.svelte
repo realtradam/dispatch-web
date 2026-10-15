@@ -11,7 +11,8 @@
    * a subagent with its own subagents renders a nested box. The box BLEEDS
    * outward (negative margin + equal padding, `groupBleedPx`) so the cards
    * inside stay on the same two columns as top-level cards: every card keeps
-   * identical dimensions at every depth. The translucent black background
+   * identical dimensions at every depth. The padding is EQUAL on all four
+   * sides (= the bleed) so the box looks even. The 50%-black background
    * compounds, so each nesting level reads darker than the one around it.
    */
   let {
@@ -32,9 +33,9 @@
 </script>
 
 <div
-  class="col-span-2 rounded-lg border border-black/50 bg-black/40 py-1.5 shadow-inner"
+  class="col-span-2 rounded-lg bg-black/50"
   style:margin-inline="-{bleed}px"
-  style:padding-inline="{bleed}px"
+  style:padding="{bleed}px"
   role="group"
   aria-label={`Subagents of ${node.tab.title}`}
   data-tab-group={node.tab.conversationId}
