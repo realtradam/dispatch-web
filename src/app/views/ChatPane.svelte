@@ -63,9 +63,15 @@
   });
 </script>
 
-<div class="relative h-full pr-4">
+<div class="relative h-full">
+  <!-- The right gutter lives INSIDE the scroller (on the content), not outside
+       it: overlay scrollbars (iOS/iPadOS WebKit — Safari, Vivaldi, …; macOS)
+       take no layout space and paint over the scroller's right edge, so with
+       the gutter outside they drew on top of the tool/thinking cards. Now the
+       scroller spans to the pane edge and its scrollbar sits in the empty
+       gutter, clear of the content (classic scrollbars likewise). -->
   <div bind:this={transcriptEl} class="h-full overflow-y-auto">
-    <div bind:this={transcriptContentEl}>
+    <div bind:this={transcriptContentEl} class="pr-4">
       {#key store.activeConversationId}
         <ChatView
           chunks={store.activeChat.chunks}
