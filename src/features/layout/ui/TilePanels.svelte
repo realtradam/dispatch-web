@@ -7,6 +7,7 @@
    * decides persistence.
    */
   import type { LayoutOp, PanelsNode, Path } from "@dispatch/layout-contract";
+  import PlusIcon from "phosphor-svelte/lib/PlusIcon";
   import { viewRegistry } from "../logic/registry";
   import { addPanelOp, firstPanelView, removePanelOp, swapPanelOp } from "../logic/panels-edit";
   import { markerStyle } from "../logic/marker";
@@ -39,8 +40,11 @@
   const addView = $derived(firstPanelView(panelViews));
 </script>
 
+<!-- `shrink-0`: this column is the sidebar's SCROLLED content, so it keeps its
+     natural height — if it shrank to the scroller (min-h-0 in a flex column),
+     its children overflowed it and the trailing margin was never scrollable. -->
 <div
-  class="flex min-h-0 flex-col gap-2"
+  class="flex min-h-0 shrink-0 flex-col gap-2"
   style={renderMarker ? markerStyle(node.marker) : undefined}
 >
   {#each node.panels as panel, idx (idx)}
@@ -78,13 +82,18 @@
   {/each}
 
   {#if addView !== null}
+    <!-- `.raised-btn` (app.css): the mirror of the view wells above it —
+         pops out where they sink in; pressed, it sinks in like them. Height =
+         DaisyUI's default button size (`--size-field` × 10), as the `btn` it
+         replaced; `shrink-0` so the column can never squash it. `mb-2` = the
+         gap between views (`gap-2`), so it doesn't sit tight to the end. -->
     <button
       type="button"
-      class="btn w-full border-none bg-base-200 text-lg hover:bg-base-300"
+      class="raised-btn mb-2 h-[calc(var(--size-field,0.25rem)*10)] w-full shrink-0"
       aria-label="Add view"
       onclick={() => addView !== null && onEdit([addPanelOp(path, addView)])}
     >
-      +
+      <PlusIcon size={18} weight="bold" aria-hidden="true" />
     </button>
   {/if}
 </div>

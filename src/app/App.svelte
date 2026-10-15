@@ -88,7 +88,7 @@
   }
 </script>
 
-<main class="relative flex h-screen flex-col overflow-hidden">
+<main class="h-app relative flex flex-col overflow-hidden">
   <!-- Slim header: the tab bar moved into the sidebar (the "Tabs" view), so
        the top row now shows the active tab's title on the left (or "New Tab"
        for an unstarted draft), with the build version + sidebar toggle on

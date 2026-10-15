@@ -249,7 +249,7 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
-<div class="flex h-screen w-full flex-col">
+<div class="h-app flex w-full flex-col">
   <HomeHeader
     compact={geometry.mode === "tall"}
     withPlugins={plugins !== undefined}
