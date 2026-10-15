@@ -23,7 +23,8 @@
     "gsap": "^3.15.0",
     "highlight.js": "^11.11.1",
     "marked": "^18.0.4",
-    "marked-highlight": "^2.2.4"
+    "marked-highlight": "^2.2.4",
+    "phosphor-svelte": "^3.1.0"
   },
   "overrides": {
     "@dispatch/ui-contract": "file:../backend/packages/ui-contract",

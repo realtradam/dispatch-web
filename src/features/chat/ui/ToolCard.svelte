@@ -2,9 +2,11 @@
   import type { ToolEntry } from "../index";
   import { viewToolEntry } from "../logic/tool-summary";
   import LazyCollapse from "./LazyCollapse.svelte";
+  import { TOOL_ICON_COMPONENTS } from "./tool-icons";
 
   let { entry }: { entry: ToolEntry } = $props();
   const card = $derived(viewToolEntry(entry));
+  const ToolIcon = $derived(TOOL_ICON_COMPONENTS[card.icon]);
   let showAll = $state(false);
 </script>
 
@@ -25,21 +27,8 @@
             aria-label="Succeeded">✓</span
           >
         {/if}
-        <svg
-          class="h-4 w-4 shrink-0 opacity-60"
-          xmlns="http://www.w3.org/2000/svg"
-          viewBox="0 0 24 24"
-          fill="none"
-          stroke="currentColor"
-          stroke-width="2"
-          stroke-linecap="round"
-          stroke-linejoin="round"
-          aria-hidden="true"
-        >
-          <path
-            d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
-          />
-        </svg>
+        <!-- Per-tool Phosphor icon (key chosen by the pure view-model). -->
+        <ToolIcon size={16} class="shrink-0 opacity-70" aria-hidden="true" />
         <span class="tool-name truncate" title={card.name}>{card.label}</span>
         <span
           class="tool-summary truncate font-normal text-base-content/60"

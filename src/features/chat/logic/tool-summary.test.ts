@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolEntry } from "../../../core/chunks";
-import { toolLabel, viewToolEntry } from "./tool-summary";
+import { toolIcon, toolLabel, viewToolEntry } from "./tool-summary";
 
 function entry(
   name: string,
@@ -58,6 +58,45 @@ describe("tool labels", () => {
     ["toString", "To string"],
   ])("unknown %s is humanized → %s", (name, label) => {
     expect(toolLabel(name)).toBe(label);
+  });
+});
+
+describe("tool icons", () => {
+  const builtIns = [
+    "run_shell",
+    "read_file",
+    "edit_file",
+    "write_file",
+    "web_search",
+    "lsp",
+    "todo_write",
+    "load_skill",
+    "consult_vision",
+    "read_image",
+    "youtube_transcript",
+    "summon_agent",
+    "send_agent_message",
+    "read_agent",
+    "open_agent",
+    "cancel_agent_message",
+    "list_agents",
+    "list_agent_models",
+  ];
+  it("gives every built-in tool its own distinct icon", () => {
+    const icons = builtIns.map(toolIcon);
+    expect(icons).not.toContain("tool");
+    expect(icons).not.toContain("mcp");
+    expect(new Set(icons).size).toBe(builtIns.length);
+    expect(view("run_shell", {}).icon).toBe("terminal");
+  });
+  it.each([
+    ["github__create_issue", "mcp"],
+    ["mcp__github__create_issue", "mcp"],
+    ["scaffold_echo", "tool"],
+    ["__proto__", "tool"],
+    ["constructor", "tool"],
+  ])("%s → %s", (name, icon) => {
+    expect(toolIcon(name)).toBe(icon);
   });
 });
 

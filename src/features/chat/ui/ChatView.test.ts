@@ -470,3 +470,30 @@ it("shows an argument-less call without `{}` — empty header summary, 'No argum
   expect(screen.getByText("No arguments")).toBeInTheDocument();
   expect(container).not.toHaveTextContent("{}");
 });
+
+it("renders a per-tool Phosphor icon in the header", () => {
+  const chunks: RenderedChunk[] = [
+    {
+      seq: 1,
+      role: "assistant",
+      provisional: false,
+      chunk: {
+        type: "tool-call",
+        toolCallId: "s",
+        toolName: "run_shell",
+        input: { command: "ls" },
+      },
+    },
+    {
+      seq: 2,
+      role: "assistant",
+      provisional: false,
+      chunk: { type: "tool-call", toolCallId: "r", toolName: "read_file", input: { path: "a.ts" } },
+    },
+  ];
+  const { container } = render(ChatView, { props: { chunks } });
+  const icons = Array.from(container.querySelectorAll(".tool-header svg[aria-hidden='true']"));
+  expect(icons).toHaveLength(2);
+  // Different tools → different glyphs.
+  expect(icons[0]?.innerHTML).not.toBe(icons[1]?.innerHTML);
+});

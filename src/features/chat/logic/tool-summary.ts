@@ -5,6 +5,8 @@ export interface ToolCardView {
   readonly name: string;
   /** English display name, e.g. `run_shell` → "Run command" (see {@link toolLabel}). */
   readonly label: string;
+  /** Which icon the card shows — a semantic key; the UI maps it to a Phosphor icon. */
+  readonly icon: ToolIconKey;
   readonly status: "pending" | "ok" | "error";
   readonly callSummary: string;
   readonly callBadges: readonly {
@@ -156,6 +158,60 @@ const TOOL_LABELS: Readonly<Record<string, string>> = {
   list_agents: "List agents",
   list_agent_models: "List agent models",
 };
+
+/**
+ * Semantic icon keys (Svelte-free; `ui/tool-icons.ts` maps each to a Phosphor
+ * component). Unknown tools get `mcp` when namespaced `<server>__<tool>`,
+ * else the generic `tool` wrench.
+ */
+export type ToolIconKey =
+  | "terminal"
+  | "file-read"
+  | "file-edit"
+  | "file-write"
+  | "search"
+  | "code"
+  | "todos"
+  | "skill"
+  | "vision"
+  | "image"
+  | "youtube"
+  | "agent-summon"
+  | "agent-send"
+  | "agent-read"
+  | "agent-open"
+  | "agent-cancel"
+  | "agents"
+  | "models"
+  | "mcp"
+  | "tool";
+
+const TOOL_ICONS: Readonly<Record<string, ToolIconKey>> = {
+  run_shell: "terminal",
+  read_file: "file-read",
+  edit_file: "file-edit",
+  write_file: "file-write",
+  web_search: "search",
+  lsp: "code",
+  todo_write: "todos",
+  load_skill: "skill",
+  consult_vision: "vision",
+  read_image: "image",
+  youtube_transcript: "youtube",
+  summon_agent: "agent-summon",
+  send_agent_message: "agent-send",
+  read_agent: "agent-read",
+  open_agent: "agent-open",
+  cancel_agent_message: "agent-cancel",
+  list_agents: "agents",
+  list_agent_models: "models",
+};
+
+/** The icon key for a tool (built-in table, else MCP plug / generic wrench). */
+export function toolIcon(name: string): ToolIconKey {
+  if (Object.hasOwn(TOOL_ICONS, name)) return TOOL_ICONS[name] ?? "tool";
+  return name.split("__").filter((p) => p !== "").length >= 2 ? "mcp" : "tool";
+}
 
 /** `create_issue` / `createIssue` / `create-issue` → "Create issue". */
 function sentenceCase(raw: string): string {
@@ -352,6 +408,7 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
   return {
     name: entry.toolName,
     label: toolLabel(entry.toolName),
+    icon: toolIcon(entry.toolName),
     status: result === null ? "pending" : result.isError ? "error" : "ok",
     callSummary,
     callBadges,
