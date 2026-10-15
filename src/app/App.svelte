@@ -103,6 +103,12 @@
     >
       {topBarTitle}
     </span>
+    <span
+      class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-primary/70"
+      title="Build version (git short hash)"
+    >
+      build: {__APP_VERSION__}
+    </span>
     <a
       href="/"
       class="btn btn-ghost btn-sm shrink-0 px-2 text-primary"
@@ -129,12 +135,6 @@
         />
       </svg>
     </a>
-    <span
-      class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-secondary"
-      title="Build version (git short hash)"
-    >
-      build: {__APP_VERSION__}
-    </span>
     {#if collapseKey !== null}
       <button
         class="btn btn-square btn-ghost btn-sm mx-1 shrink-0 text-primary"
