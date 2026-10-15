@@ -1,4 +1,8 @@
 <script lang="ts">
+  import ArchiveIcon from "phosphor-svelte/lib/ArchiveIcon";
+  import DotsThreeIcon from "phosphor-svelte/lib/DotsThreeIcon";
+  import PlusIcon from "phosphor-svelte/lib/PlusIcon";
+  import PuzzlePieceIcon from "phosphor-svelte/lib/PuzzlePieceIcon";
   import { isValidSlug } from "../logic/route";
 
   /** The create outcome the page reports back to the popover. */
@@ -78,68 +82,65 @@
     </span>
   </div>
 
-  <div class="flex items-center gap-2" class:gap-1={compact}>
+  <!-- Navbar actions (app.css): "New workspace" is the one raised button
+       (`.navbar-btn`, primary-tinted); the secondary actions are plain text
+       links (`.navbar-link`) — the light-blue colour + spacing say clickable
+       without button chrome. Compact: labels collapse to Phosphor icons. -->
+  <div class="flex items-center gap-1" class:gap-3={!compact}>
     <!-- New workspace -->
     <button
       type="button"
-      class="btn btn-primary btn-sm"
-      class:btn-circle={compact}
+      class="navbar-btn navbar-btn-primary"
+      class:navbar-btn-icon={compact}
       aria-label="New workspace"
       title="New workspace"
       onclick={() => (popoverOpen ? closePopover() : openPopover())}
     >
-      {#if compact}
-        <span aria-hidden="true" class="text-lg leading-none">+</span>
-      {:else}
-        New workspace
-      {/if}
+      <PlusIcon size={16} weight="bold" aria-hidden="true" />
+      {#if !compact}<span>New workspace</span>{/if}
     </button>
 
     {#if withPlugins}
       <button
         type="button"
-        class="btn btn-outline btn-sm"
-        class:btn-circle={compact}
+        class="navbar-link"
         aria-label="Plugins"
         title="Open the plugin manager (load/unload plugins globally)"
         onclick={onOpenPlugins}
       >
-        {#if compact}
-          <span aria-hidden="true">⚡</span>
-        {:else}
-          Plugins
-        {/if}
+        {#if compact}<PuzzlePieceIcon size={18} aria-hidden="true" />{:else}<span>Plugins</span>{/if}
       </button>
     {/if}
 
+    <!-- Archived workspaces -->
+    <button
+      type="button"
+      class="navbar-link"
+      aria-label="Archived workspaces"
+      title="View archived workspaces"
+      onclick={onOpenArchived}
+    >
+      {#if compact}<ArchiveIcon size={18} aria-hidden="true" />{:else}<span>Archived</span>{/if}
+    </button>
+
     {#if withSort}
+      <!-- Overflow last, like a navbar's trailing menu. -->
       <div class="dropdown dropdown-end">
-        <button type="button" class="btn btn-ghost btn-sm" aria-label="More actions" title="More">
-          ⋯
+        <button
+          type="button"
+          class="navbar-link"
+          aria-label="More actions"
+          title="More"
+        >
+          <DotsThreeIcon size={20} weight="bold" aria-hidden="true" />
         </button>
-        <ul class="dropdown-content menu z-50 w-52 rounded-box border border-base-content/15 bg-base-100 p-2 shadow-xl">
+        <ul class="dropdown-content menu z-50 mt-1 w-52 rounded-box border border-base-content/15 bg-base-100 p-2 shadow-xl">
           <li>
             <button type="button" onclick={onSort}>Reset arrangement by recent activity</button>
           </li>
         </ul>
       </div>
     {/if}
-
-    <!-- Archived workspaces -->
-    <button
-      type="button"
-      class="btn btn-ghost btn-sm"
-      class:btn-circle={compact}
-      aria-label="Archived workspaces"
-      title="View archived workspaces"
-      onclick={onOpenArchived}
-    >
-      {#if compact}
-        <span aria-hidden="true">🗄</span>
-      {:else}
-        Archived
-      {/if}
-    </button>
   </div>
 </header>
 

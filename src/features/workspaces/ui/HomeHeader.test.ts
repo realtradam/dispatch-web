@@ -86,6 +86,9 @@ describe("HomeHeader", () => {
   it("compact mode collapses the primary button to an icon", () => {
     const p = props();
     render(HomeHeader, { props: { ...p, compact: true } });
-    expect(screen.getByRole("button", { name: "New workspace" })).toHaveTextContent("+");
+    const button = screen.getByRole("button", { name: "New workspace" });
+    expect(button).toHaveClass("navbar-btn-icon");
+    expect(button).toHaveTextContent(""); // icon only — the label collapses
+    expect(button.querySelector("svg")).not.toBeNull();
   });
 });
