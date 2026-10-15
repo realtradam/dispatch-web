@@ -6,15 +6,16 @@
   import TabGroupBox from "./TabGroupBox.svelte";
 
   /**
-   * A subagent group: a darker box spanning both grid columns that wraps the
+   * A subagent group: a tinted box spanning both grid columns that wraps the
    * group parent's (double-width) card + its subagents' cards. Recursive —
    * a subagent with its own subagents renders a nested box. The box BLEEDS
    * outward (negative margin + equal padding, `groupBleedPx`) so the cards
    * inside stay on the same two columns as top-level cards: every card keeps
    * identical dimensions at every depth. The padding is EQUAL on all four
    * sides (= the bleed) so the box looks even — except below a nested box on
-   * the last row, where it is trimmed to match that box's side gaps. Every box paints 20% black,
-   * which compounds: each nesting level reads darker than the one around it.
+   * the last row, where it is trimmed to match that box's side gaps. Every
+   * box paints a 20% secondary (lavender) tint, which compounds: each
+   * nesting level reads a little stronger than the one around it.
    */
   let {
     node,
@@ -40,7 +41,7 @@
 </script>
 
 <div
-  class="col-span-2 rounded-lg bg-black/20"
+  class="col-span-2 rounded-lg bg-secondary/20"
   style:margin-inline="-{bleed}px"
   style:padding="{bleed}px {bleed}px {padBottom}px"
   role="group"
