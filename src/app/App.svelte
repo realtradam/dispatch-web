@@ -223,14 +223,15 @@
 
 <style>
   /* The Artix wiki's navbar (darkstrap `.navbar-inner` on a fixed-top bar):
-     a top-to-bottom gradient (#444 → #222), a 1px near-black bottom border
-     (#030303), a soft drop shadow under the bar (0 1px 10px), and text
+     a top-to-bottom gradient (#444 → #222), a soft drop shadow under the bar
+     (0 1px 10px), and text
      engraved with a 1px black text-shadow. Ported onto the active daisyUI
      theme so it always matches. darkstrap's bar is LIGHTER than its near-black
      page (that's what makes the border + shadow read), so the gradient is
      shifted to keep that relationship on our lighter page: it runs from the
      page colour (base-100) lifted 20% toward the text colour down to base-100
-     lifted 3%; the border is base-100 darkened 90%. The shadow is 0.5
+     lifted 3%. No bottom border (darkstrap has a 1px #030303 one — removed by
+     user request; the gradient + shadow carry the edge). The shadow is 0.5
      (darkstrap: 0.1 — invisible on our lighter page).
      Positioned + z-indexed so the shadow paints over the content below. */
   .app-navbar {
@@ -243,7 +244,6 @@
       color-mix(in srgb, var(--color-base-100) 80%, var(--color-base-content)),
       color-mix(in srgb, var(--color-base-100) 97%, var(--color-base-content))
     );
-    border-bottom: 1px solid color-mix(in srgb, var(--color-base-100) 10%, black);
     box-shadow: 0 1px 10px rgb(0 0 0 / 0.5);
   }
   /* Engraved text — the title only; on the tiny faint build label it muddies. */
