@@ -135,8 +135,8 @@ describe("ChatView — duplicate toolCallIds", () => {
     expect(container.querySelectorAll(".chat-bubble")).toHaveLength(2);
 
     // Both unique tool names shown; each result rendered once (deduped).
-    expect(screen.getByText("read_file")).toBeInTheDocument();
-    expect(screen.getByText("list_dir")).toBeInTheDocument();
+    expect(screen.getByText("Read file")).toBeInTheDocument();
+    expect(screen.getByText("List dir")).toBeInTheDocument();
     expect(screen.getByText("contents-of-a")).toBeInTheDocument();
     expect(screen.getByText("contents-of-b")).toBeInTheDocument();
   });
@@ -159,10 +159,11 @@ describe("ChatView — lazy collapse bodies", () => {
       },
     ];
     const { container } = render(ChatView, { props: { chunks } });
-    expect(screen.getByText("run_shell")).toBeInTheDocument();
+    // English display name; the raw wire name stays available as the tooltip.
+    expect(screen.getByText("Run command")).toHaveAttribute("title", "run_shell");
     expect(screen.queryByText("HUGE-OUTPUT")).toBeNull();
 
-    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call Run command" });
     await userEvent.click(box);
     expect(screen.getByText("HUGE-OUTPUT")).toBeInTheDocument();
 
@@ -211,7 +212,7 @@ describe("ChatView — tool cards", () => {
     expect(screen.getByText("bun run test")).toBeInTheDocument();
     expect(screen.getByText("→ 2 lines")).toBeInTheDocument();
     expect(screen.getByLabelText("Succeeded")).toHaveTextContent("✓");
-    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call Run command" });
     expect(box).not.toBeChecked();
     expect(container.querySelector("pre")).toBeNull();
     await userEvent.click(box);
@@ -221,19 +222,19 @@ describe("ChatView — tool cards", () => {
   });
   it("transitions pending → result → sealed without losing open state", async () => {
     const { rerender } = render(ChatView, { props: { chunks: shellChunks(null) } });
-    expect(screen.getByLabelText("Running")).toHaveClass("loading-spinner");
+    expect(screen.getByLabelText("Running")).toHaveClass("loading-dots", "loading-sm");
     expect(screen.getByText("→ running…")).toHaveClass("tool-result", "text-base-content/60");
-    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call Run command" });
     await userEvent.click(box);
     expect(screen.getByText("running…")).toBeInTheDocument();
     await rerender({ chunks: shellChunks("done") });
     expect(screen.queryByLabelText("Running")).toBeNull();
     expect(screen.queryByText("→ running…")).toBeNull();
     expect(screen.getByLabelText("Succeeded")).toBeInTheDocument();
-    expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
+    expect(screen.getByRole("checkbox", { name: "Toggle tool call Run command" })).toBe(box);
     expect(box).toBeChecked();
     await rerender({ chunks: shellChunks("done", false, true) });
-    expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
+    expect(screen.getByRole("checkbox", { name: "Toggle tool call Run command" })).toBe(box);
     expect(box).toBeChecked();
     expect(screen.getByText("done")).toBeInTheDocument();
   });
@@ -241,7 +242,7 @@ describe("ChatView — tool cards", () => {
     const { container } = render(ChatView, {
       props: { chunks: shellChunks("Permission denied", true) },
     });
-    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call Run command" });
     expect(box).not.toBeChecked();
     expect(screen.getByLabelText("Failed")).toHaveClass("text-error");
     expect(screen.getByLabelText("Failed")).toHaveTextContent("✗");
@@ -257,7 +258,7 @@ describe("ChatView — tool cards", () => {
     expect(container.querySelectorAll(".chat-bubble")).toHaveLength(1);
     expect(screen.getByText("Call in earlier history")).toHaveClass("earlier-history");
     expect(screen.getByLabelText("Succeeded")).toHaveClass("opacity-60");
-    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call Run command" });
     await userEvent.click(box);
     expect(screen.getByRole("note")).toHaveTextContent(
       "This call is earlier in the conversation. Show earlier messages to see it.",
@@ -266,14 +267,14 @@ describe("ChatView — tool cards", () => {
     expect(screen.queryByRole("heading", { name: "Call" })).toBeNull();
     expect(screen.getByText("contents")).toBeInTheDocument();
     await rerender({ chunks });
-    expect(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" })).toBe(box);
+    expect(screen.getByRole("checkbox", { name: "Toggle tool call Run command" })).toBe(box);
     expect(box).toBeChecked();
     expect(screen.getByText("$ bun run test")).toBeInTheDocument();
   });
   it("folds 13 output lines as 6 + toggle + 6, expands and collapses without closing the card", async () => {
     const output = Array.from({ length: 13 }, (_, i) => `output-${i + 1}`).join("\n");
     const { rerender } = render(ChatView, { props: { chunks: shellChunks(output) } });
-    const box = screen.getByRole("checkbox", { name: "Toggle tool call run_shell" });
+    const box = screen.getByRole("checkbox", { name: "Toggle tool call Run command" });
     await userEvent.click(box);
     const response = screen.getByRole("region", { name: "Response" });
     expect(response).toHaveTextContent("output-1");
@@ -315,7 +316,7 @@ describe("ChatView — tool cards", () => {
   it("shows 12 output lines without an inner toggle", async () => {
     const output = Array.from({ length: 12 }, (_, i) => `output-${i + 1}`).join("\n");
     render(ChatView, { props: { chunks: shellChunks(output) } });
-    await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call run_shell" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call Run command" }));
     expect(screen.queryByRole("button", { name: /more lines|fewer lines/ })).toBeNull();
     expect(screen.getByRole("region", { name: "Response" })).toHaveTextContent("output-12");
   });
@@ -349,7 +350,7 @@ describe("ChatView — tool cards", () => {
     expect(screen.getByText("+2")).toHaveClass("text-success");
     expect(screen.getByText("−1")).toHaveClass("text-error");
     expect(screen.getByText("→ 1 replacement · diagnostics")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call edit_file" }));
+    await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call Edit file" }));
     // Unified diff: one tinted row per line, each with its own −/+ gutter marker.
     const diff = screen.getByRole("group", { name: "Edit diff" });
     const removed = diff.querySelectorAll(".edit-diff-del");
@@ -383,7 +384,7 @@ it("renders compact, aligned generic fields with legible headings and inline sca
   ];
   const { container } = render(ChatView, { props: { chunks } });
   await userEvent.click(
-    screen.getByRole("checkbox", { name: "Toggle tool call mcp__github__create_issue" }),
+    screen.getByRole("checkbox", { name: "Toggle tool call Github: Create issue" }),
   );
   for (const name of ["Call", "Response"]) {
     expect(screen.getByRole("heading", { name })).toHaveClass("font-semibold", "text-base-content");
@@ -427,7 +428,7 @@ it("removes a pending edit's diffstat when it fails, without hiding the attempte
   expect(screen.getByText("+1")).toBeInTheDocument();
   expect(screen.getByText("−1")).toBeInTheDocument();
   expect(screen.getByText("→ running…")).toBeInTheDocument();
-  await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call edit_file" }));
+  await userEvent.click(screen.getByRole("checkbox", { name: "Toggle tool call Edit file" }));
   await rerender({ chunks: [call, result] });
   expect(screen.queryByText("+1")).toBeNull();
   expect(screen.queryByText("−1")).toBeNull();
@@ -437,4 +438,35 @@ it("removes a pending edit's diffstat when it fails, without hiding the attempte
   expect(screen.getByText("foo")).toBeInTheDocument();
   expect(screen.getByText("bar")).toBeInTheDocument();
   expect(screen.getByText("Error: oldString not found")).toBeInTheDocument();
+});
+
+it("shows an argument-less call without `{}` — empty header summary, 'No arguments' in the body", async () => {
+  const chunks: RenderedChunk[] = [
+    {
+      seq: 1,
+      role: "assistant",
+      provisional: false,
+      chunk: { type: "tool-call", toolCallId: "m", toolName: "list_agent_models", input: {} },
+    },
+    {
+      seq: 2,
+      role: "tool",
+      provisional: false,
+      chunk: {
+        type: "tool-result",
+        toolCallId: "m",
+        toolName: "list_agent_models",
+        content: "Available named agents (3)",
+        isError: false,
+      },
+    },
+  ];
+  const { container } = render(ChatView, { props: { chunks } });
+  expect(screen.getByText("List agent models")).toBeInTheDocument();
+  expect(container).not.toHaveTextContent("{}");
+  await userEvent.click(
+    screen.getByRole("checkbox", { name: "Toggle tool call List agent models" }),
+  );
+  expect(screen.getByText("No arguments")).toBeInTheDocument();
+  expect(container).not.toHaveTextContent("{}");
 });

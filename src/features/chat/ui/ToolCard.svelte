@@ -9,16 +9,18 @@
 </script>
 
 <div class="tool-card">
-  <LazyCollapse label={`Toggle tool call ${card.name}`} titleClass="pe-4">
+  <LazyCollapse label={`Toggle tool call ${card.label}`} titleClass="pe-4">
     {#snippet title()}
       <div class="tool-header" class:has-earlier-call={card.callDetail.kind === "unavailable"}>
         {#if card.status === "pending"}
-          <span class="loading loading-spinner loading-xs shrink-0" aria-label="Running"></span>
+          <!-- Same in-progress animation as the streaming thinking block. All three
+               status icons share a fixed w-5 slot so the row never shifts on settle. -->
+          <span class="loading loading-dots loading-sm w-5 shrink-0" aria-label="Running"></span>
         {:else if card.status === "error"}
-          <span class="shrink-0 text-error" aria-label="Failed">✗</span>
+          <span class="w-5 shrink-0 text-center text-error" aria-label="Failed">✗</span>
         {:else}
           <span
-            class="shrink-0 text-success"
+            class="w-5 shrink-0 text-center text-success"
             class:opacity-60={card.callDetail.kind === "unavailable"}
             aria-label="Succeeded">✓</span
           >
@@ -38,9 +40,9 @@
             d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"
           />
         </svg>
-        <span class="tool-name truncate" title={card.name}>{card.name}</span>
+        <span class="tool-name truncate" title={card.name}>{card.label}</span>
         <span
-          class="tool-summary truncate text-base-content/90"
+          class="tool-summary truncate font-normal text-base-content/60"
           class:earlier-history={card.callDetail.kind === "unavailable"}
           title={card.callDetail.kind === "unavailable" ? card.callDetail.text : card.callSummary}
         >
@@ -86,7 +88,9 @@
             Call
           </h3>
         {/if}
-        {#if card.callDetail.kind === "command"}
+        {#if card.callDetail.kind === "none"}
+          <p class="italic text-base-content/60">No arguments</p>
+        {:else if card.callDetail.kind === "command"}
           <pre class="overflow-x-auto">$ {card.callDetail.text}</pre>
         {:else if card.callDetail.kind === "edit"}
           <div class="mb-2 break-all font-mono">{card.callDetail.path}</div>
@@ -172,9 +176,11 @@
     width: 100%;
     min-width: 0;
   }
+  /* English names are short phrases: keep them whole and let the call
+     summary absorb the squeeze. The cap only bites on long MCP names. */
   .tool-name {
-    flex: 0 1 auto;
-    max-width: 30%;
+    flex: 0 0 auto;
+    max-width: 60%;
   }
   .tool-summary {
     flex: 1;
@@ -256,9 +262,6 @@
   @container (max-width: 40rem) {
     .tool-badges {
       display: none;
-    }
-    .tool-name {
-      max-width: 32%;
     }
     .has-earlier-call .tool-result {
       display: none;

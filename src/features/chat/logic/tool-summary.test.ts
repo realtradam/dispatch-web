@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ToolEntry } from "../../../core/chunks";
-import { viewToolEntry } from "./tool-summary";
+import { toolLabel, viewToolEntry } from "./tool-summary";
 
 function entry(
   name: string,
@@ -22,6 +22,44 @@ function entry(
 const view = (name: string, input: unknown, content: string | null = "ok", isError = false) =>
   viewToolEntry(entry(name, input, content, isError));
 const lines = (n: number) => Array.from({ length: n }, (_, i) => `line ${i + 1}`);
+
+describe("tool labels", () => {
+  it.each([
+    ["run_shell", "Run command"],
+    ["read_file", "Read file"],
+    ["edit_file", "Edit file"],
+    ["write_file", "Write file"],
+    ["web_search", "Web search"],
+    ["lsp", "Code intelligence"],
+    ["todo_write", "Update to-dos"],
+    ["load_skill", "Load skill"],
+    ["consult_vision", "Ask vision model"],
+    ["read_image", "Read image"],
+    ["youtube_transcript", "YouTube transcript"],
+    ["summon_agent", "Summon agent"],
+    ["send_agent_message", "Message agent"],
+    ["read_agent", "Read agent reply"],
+    ["open_agent", "Open agent"],
+    ["cancel_agent_message", "Cancel agent message"],
+    ["list_agents", "List agents"],
+    ["list_agent_models", "List agent models"],
+  ])("built-in %s → %s", (name, label) => {
+    expect(toolLabel(name)).toBe(label);
+    expect(view(name, {}).label).toBe(label);
+    expect(view(name, {}).name).toBe(name);
+  });
+  it.each([
+    ["github__create_issue", "Github: Create issue"],
+    ["mcp__github__create_issue", "Github: Create issue"],
+    ["playwright__browserTakeScreenshot", "Playwright: Browser take screenshot"],
+    ["scaffold_echo", "Scaffold echo"],
+    ["fetchUrl", "Fetch url"],
+    ["some-kebab-tool", "Some kebab tool"],
+    ["toString", "To string"],
+  ])("unknown %s is humanized → %s", (name, label) => {
+    expect(toolLabel(name)).toBe(label);
+  });
+});
 
 describe("tool summaries", () => {
   it.each([
@@ -156,25 +194,37 @@ describe("tool summaries", () => {
   ])("generic fallback recognizes %s", (key) => {
     expect(view("mcp__foo", { [key]: "target" }).callSummary).toBe("target");
   });
-  it("generic fallback prefers the first meaningful argument, else compact JSON", () => {
+  it("generic fallback prefers the first meaningful argument, else readable key: value pairs", () => {
     expect(view("mcp__foo", { command: " ", path: "a", query: "b" }).callSummary).toBe("a");
-    expect(view("mcp__foo", { a: 1, b: "x" }).callSummary).toBe('{"a":1,"b":"x"}');
+    expect(view("mcp__foo", { a: 1, b: "x" }).callSummary).toBe("a: 1 · b: x");
+    // Only nested values → no summary rather than a JSON dump.
+    expect(view("mcp__foo", { opts: { deep: true } }).callSummary).toBe("");
   });
   it.each([
     "not JSON",
     "{bad",
-    null,
-    undefined,
     42,
     true,
     [1, "a"],
-    {},
-    "null",
     '"hi"',
   ])("tolerates malformed/non-object input %j", (input) => {
     expect(() => view("read_file", input)).not.toThrow();
     expect(view("read_file", input).callSummary).not.toBe("");
     expect(view("read_file", input).callDetail.kind).toBe("fields");
+  });
+  it.each([
+    null,
+    undefined,
+    {},
+    [],
+    "",
+    "  ",
+    "null",
+    "{}",
+  ])("an argument-less call (%j) shows no summary and a 'no arguments' detail — never `{}`", (input) => {
+    const card = view("list_agent_models", input);
+    expect(card.callSummary).toBe("");
+    expect(card.callDetail).toEqual({ kind: "none" });
   });
   it.each([
     "run_shell",
@@ -190,10 +240,12 @@ describe("tool summaries", () => {
     "summon_agent",
     "read_agent",
   ])("%s falls back safely for missing arguments", (name) => {
-    for (const input of [null, undefined, {}, "{bad"]) {
+    for (const input of [null, undefined, {}]) {
       expect(() => view(name, input)).not.toThrow();
-      expect(view(name, input).callSummary.trim()).not.toBe("");
+      expect(view(name, input).callSummary).toBe("");
+      expect(view(name, input).callDetail).toEqual({ kind: "none" });
     }
+    expect(view(name, "{bad").callSummary).toBe("{bad");
   });
   it("parses JSON-string inputs", () => {
     const card = view("run_shell", '{"command":"bun run test"}');
@@ -201,10 +253,11 @@ describe("tool summaries", () => {
     expect(card.callDetail).toEqual({ kind: "command", text: "bun run test" });
   });
   it("handles unexpected built-in argument types and prototype-looking tool names", () => {
-    expect(view("todo_write", { todos: "wrong" }).callSummary).toBe('{"todos":"wrong"}');
+    expect(view("todo_write", { todos: "wrong" }).callSummary).toBe("todos: wrong");
     expect(view("run_shell", { command: { nested: true } }).callDetail.kind).toBe("fields");
     expect(view("constructor", { path: "a" }).callSummary).toBe("a");
-    expect(view("__proto__", {}).callSummary).toBe("{}");
+    expect(view("__proto__", {}).callSummary).toBe("");
+    expect(view("__proto__", {}).label).toBe("Proto");
     expect(
       view("mcp", JSON.parse('{"__proto__":{"command":"bad"},"path":"good"}')).callSummary,
     ).toBe("good");
@@ -212,7 +265,11 @@ describe("tool summaries", () => {
   it("does not throw on unserializable input", () => {
     const cyclic: Record<string, unknown> = {};
     cyclic.self = cyclic;
-    expect(view("mcp", cyclic).callSummary).toBe("[unserializable input]");
+    expect(view("mcp", cyclic).callSummary).toBe("");
+    expect(view("mcp", cyclic).callDetail).toEqual({
+      kind: "fields",
+      fields: [{ key: "self", value: "[unserializable input]", multiline: false }],
+    });
     expect(() => view("mcp", { integer: 1n })).not.toThrow();
   });
   it("caps and whitespace-collapses header strings but retains full detail", () => {

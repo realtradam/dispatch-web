@@ -1,7 +1,10 @@
 import type { ToolEntry } from "../../../core/chunks";
 
 export interface ToolCardView {
+  /** The raw wire tool name (tooltip / debugging). */
   readonly name: string;
+  /** English display name, e.g. `run_shell` → "Run command" (see {@link toolLabel}). */
+  readonly label: string;
   readonly status: "pending" | "ok" | "error";
   readonly callSummary: string;
   readonly callBadges: readonly {
@@ -12,6 +15,8 @@ export interface ToolCardView {
   readonly compactResultSummary: string | null;
   readonly callDetail:
     | { readonly kind: "unavailable"; readonly text: string }
+    /** The call took no arguments (`{}` / absent input) — rendered as a muted note. */
+    | { readonly kind: "none" }
     | { readonly kind: "command"; readonly text: string }
     | {
         readonly kind: "edit";
@@ -130,6 +135,77 @@ function todoSummary(args: Args): string {
 const summarizeAgent: CallSummary = (args) => arg(args, "title", "task", "agent", "model");
 const summarizeConversation: CallSummary = (args) => arg(args, "conversationId", "message");
 
+/** English names for Dispatch's built-in tools; anything else goes through {@link humanize}. */
+const TOOL_LABELS: Readonly<Record<string, string>> = {
+  run_shell: "Run command",
+  read_file: "Read file",
+  edit_file: "Edit file",
+  write_file: "Write file",
+  web_search: "Web search",
+  lsp: "Code intelligence",
+  todo_write: "Update to-dos",
+  load_skill: "Load skill",
+  consult_vision: "Ask vision model",
+  read_image: "Read image",
+  youtube_transcript: "YouTube transcript",
+  summon_agent: "Summon agent",
+  send_agent_message: "Message agent",
+  read_agent: "Read agent reply",
+  open_agent: "Open agent",
+  cancel_agent_message: "Cancel agent message",
+  list_agents: "List agents",
+  list_agent_models: "List agent models",
+};
+
+/** `create_issue` / `createIssue` / `create-issue` → "Create issue". */
+function sentenceCase(raw: string): string {
+  const words = raw
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .split(/[\s_\-.]+/)
+    .filter((w) => w !== "")
+    .map((w) => w.toLowerCase());
+  if (words.length === 0) return raw;
+  const text = words.join(" ");
+  return text.charAt(0).toUpperCase() + text.slice(1);
+}
+
+/**
+ * Generic English name for an unknown tool. MCP tools arrive namespaced as
+ * `<serverId>__<toolName>` (backend `mcp/registry.ts`), shown as "Server: Tool name".
+ */
+function humanize(name: string): string {
+  const parts = name.split("__").filter((p) => p !== "");
+  if (parts[0]?.toLowerCase() === "mcp" && parts.length > 1) parts.shift();
+  if (parts.length >= 2) {
+    const server = sentenceCase(parts[0] ?? "");
+    return `${server}: ${sentenceCase(parts.slice(1).join(" "))}`;
+  }
+  return sentenceCase(name);
+}
+
+/** The English display name for a tool (built-in table, else humanized). */
+export function toolLabel(name: string): string {
+  return Object.hasOwn(TOOL_LABELS, name) ? (TOOL_LABELS[name] ?? name) : humanize(name);
+}
+
+/** True for input that carries no arguments at all (absent, `null`, `{}`, `[]`, blank string). */
+function isEmptyInput(input: unknown): boolean {
+  if (input === undefined || input === null) return true;
+  if (typeof input === "string") return input.trim() === "";
+  if (Array.isArray(input)) return input.length === 0;
+  return typeof input === "object" && Object.keys(input).length === 0;
+}
+
+/** Fallback summary: scalar args as `key: value` (never raw JSON braces). */
+function scalarPairs(args: Args): string {
+  return Object.entries(args)
+    .filter(
+      ([, v]) => ["string", "number", "boolean"].includes(typeof v) && String(v).trim() !== "",
+    )
+    .map(([k, v]) => `${k}: ${String(v)}`)
+    .join(" · ");
+}
+
 /** Optional built-in polish; all unknown/MCP names use the same generic path. */
 const summaries: Readonly<Record<string, CallSummary>> = {
   run_shell: (args) => arg(args, "command"),
@@ -163,6 +239,7 @@ function detail(name: string, input: unknown, args: Args): ToolCardView["callDet
       newText: typeof args.newString === "string" ? args.newString : "",
     };
   }
+  if (isEmptyInput(input)) return { kind: "none" };
   const entries = Object.entries(args);
   return {
     kind: "fields",
@@ -249,7 +326,16 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
   const callSummary =
     entry.call === null
       ? "Call in earlier history"
-      : oneLine(builtInSummary || generic || serialize(input));
+      : isEmptyInput(input)
+        ? ""
+        : oneLine(
+            builtInSummary ||
+              generic ||
+              scalarPairs(args) ||
+              // Non-object input (e.g. a bare string); objects with only nested
+              // values stay unsummarized rather than dumping JSON braces.
+              (Object.keys(args).length === 0 ? serialize(input) : ""),
+          );
   const callBadges: ToolCardView["callBadges"][number][] = [];
   if (entry.toolName === "edit_file" && entry.call !== null && !entry.result?.isError) {
     if (typeof args.oldString === "string" && typeof args.newString === "string") {
@@ -265,6 +351,7 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
     result === null ? null : responseSummary(entry.toolName, result.content, result.isError);
   return {
     name: entry.toolName,
+    label: toolLabel(entry.toolName),
     status: result === null ? "pending" : result.isError ? "error" : "ok",
     callSummary,
     callBadges,

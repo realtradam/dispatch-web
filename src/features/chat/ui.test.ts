@@ -108,7 +108,7 @@ describe("ChatView", () => {
     const { container } = render(ChatView, { props: { chunks } });
     await openAllCollapses(container);
 
-    expect(screen.getByText("read_file")).toBeInTheDocument();
+    expect(screen.getByText("Read file")).toBeInTheDocument();
     const pre = screen.getByText((content, element) => {
       return element?.tagName === "PRE" && content.includes("/tmp/test.txt");
     });
@@ -134,7 +134,7 @@ describe("ChatView", () => {
     const { container } = render(ChatView, { props: { chunks } });
     await openAllCollapses(container);
 
-    expect(screen.getByText("read_file")).toBeInTheDocument();
+    expect(screen.getByText("Read file")).toBeInTheDocument();
     expect(screen.getByText("file contents here")).toBeInTheDocument();
   });
 
@@ -262,8 +262,8 @@ describe("ChatView", () => {
 
     // Both call names + the available result are shown; the result is absorbed
     // (no standalone tool-result card).
-    expect(screen.getByText("read_file")).toBeInTheDocument();
-    expect(screen.getByText("list_dir")).toBeInTheDocument();
+    expect(screen.getByText("Read file")).toBeInTheDocument();
+    expect(screen.getByText("List dir")).toBeInTheDocument();
     expect(screen.getByText("contents-of-a")).toBeInTheDocument();
   });
 
@@ -781,7 +781,7 @@ describe("ChatView", () => {
     const { container } = render(ChatView, { props: { chunks } });
     await openAllCollapses(container);
 
-    expect(screen.getAllByText("consult_vision").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Ask vision model").length).toBeGreaterThan(0);
     expect(screen.getByText("a red square on a white background")).toBeInTheDocument();
   });
 
