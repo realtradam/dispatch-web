@@ -31,7 +31,9 @@
   });
 </script>
 
-<div class="collapse w-full rounded-box bg-base-200 text-sm">
+<!-- `.inset-well` (app.css): the recessed panel shared by thinking/tool blocks
+     and the sidebar views. -->
+<div class="collapse inset-well w-full text-sm">
   <input type="checkbox" aria-label={label} bind:checked={open} />
   <div class="collapse-title flex min-h-0 min-w-0 items-center gap-2 py-2 whitespace-nowrap font-medium {titleClass}">
     {@render title()}

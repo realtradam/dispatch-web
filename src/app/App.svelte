@@ -88,14 +88,15 @@
   }
 </script>
 
-<main class="relative flex h-screen flex-col overflow-hidden pt-[5px]">
+<main class="relative flex h-screen flex-col overflow-hidden">
   <!-- Slim header: the tab bar moved into the sidebar (the "Tabs" view), so
        the top row now shows the active tab's title on the left (or "New Tab"
        for an unstarted draft), with the build version + sidebar toggle on
-       the right. CHROME — stays outside the tree (layout-00 decision 2). -->
-  <div class="flex items-center justify-between gap-2 px-2 py-2">
+       the right. CHROME — stays outside the tree (layout-00 decision 2).
+       `.app-navbar` (below): the Artix wiki's darkstrap navbar look. -->
+  <div class="app-navbar flex items-center justify-between gap-2 px-2 py-2">
     <span
-      class="min-w-0 flex-1 shrink truncate pl-2 text-sm font-medium opacity-70"
+      class="min-w-0 flex-1 shrink truncate pl-2 text-sm font-semibold text-primary"
       data-testid="top-bar-title"
       title={topBarTitle}
       aria-label="Active conversation title"
@@ -104,7 +105,7 @@
     </span>
     <a
       href="/"
-      class="btn btn-ghost btn-sm shrink-0 px-2"
+      class="btn btn-ghost btn-sm shrink-0 px-2 text-primary"
       aria-label="Back to dashboard"
       title="Back to dashboard"
       onclick={(e) => {
@@ -129,14 +130,14 @@
       </svg>
     </a>
     <span
-      class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-base-content/30"
+      class="shrink-0 select-none px-1 font-mono text-[10px] leading-none text-secondary"
       title="Build version (git short hash)"
     >
       build: {__APP_VERSION__}
     </span>
     {#if collapseKey !== null}
       <button
-        class="btn btn-square btn-ghost btn-sm mx-1 shrink-0"
+        class="btn btn-square btn-ghost btn-sm mx-1 shrink-0 text-primary"
         aria-label={sidebarOpen ? "Close sidebar" : "Open sidebar"}
         aria-expanded={sidebarOpen}
         onclick={toggleSidebar}
@@ -219,3 +220,34 @@
     />
   {/key}
 {/if}
+
+<style>
+  /* The Artix wiki's navbar (darkstrap `.navbar-inner` on a fixed-top bar):
+     a top-to-bottom gradient (#444 → #222), a 1px near-black bottom border
+     (#030303), a soft drop shadow under the bar (0 1px 10px), and text
+     engraved with a 1px black text-shadow. Ported onto the active daisyUI
+     theme so it always matches. darkstrap's bar is LIGHTER than its near-black
+     page (that's what makes the border + shadow read), so the gradient is
+     shifted to keep that relationship on our lighter page: it runs from the
+     page colour (base-100) lifted 20% toward the text colour down to base-100
+     lifted 3%; the border is base-100 darkened 90%. The shadow is 0.5
+     (darkstrap: 0.1 — invisible on our lighter page).
+     Positioned + z-indexed so the shadow paints over the content below. */
+  .app-navbar {
+    position: relative;
+    z-index: 10;
+    flex-shrink: 0;
+    padding-top: calc(0.5rem + 5px);
+    background-image: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--color-base-100) 80%, var(--color-base-content)),
+      color-mix(in srgb, var(--color-base-100) 97%, var(--color-base-content))
+    );
+    border-bottom: 1px solid color-mix(in srgb, var(--color-base-100) 10%, black);
+    box-shadow: 0 1px 10px rgb(0 0 0 / 0.5);
+  }
+  /* Engraved text — the title only; on the tiny faint build label it muddies. */
+  .app-navbar :global([data-testid="top-bar-title"]) {
+    text-shadow: 0 1px 0 black;
+  }
+</style>

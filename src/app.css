@@ -12,6 +12,30 @@
   themes: monokai --default;
 }
 
+/* Inset "well" — the Artix wiki's code blocks (darkstrap `pre`): a panel that
+   reads as pressed INTO the page — the page colour darkened, a dark inner
+   shadow under the top edge, a faint light catch-line under the bottom edge.
+   Shared by the chat's thinking/tool blocks (LazyCollapse) and the sidebar
+   views (TilePanels). darkstrap: background rgba(0,0,0,.3); box-shadow
+   rgba(255,255,255,.1) 0 1px 0, rgba(0,0,0,.8) 0 1px 7px 0 inset; radius 4px.
+   Ported onto the active daisyUI theme so it always matches, and toned down a
+   step: the fill is the theme's page colour (base-100 — both the chat and the
+   sidebar sit on it) darkened 18% (darkstrap: 30%), computed OPAQUE and exposed
+   as --inset-well-bg so sticky children can paint the same colour; the inner
+   shadow is 0.6 (darkstrap: 0.8); the catch-line is the theme's text colour at
+   10% instead of plain white. In @layer components so utilities can override. */
+@layer components {
+  .inset-well {
+    --inset-well-bg: color-mix(in srgb, var(--color-base-100) 82%, black);
+    background-color: var(--inset-well-bg);
+    border: 0;
+    border-radius: var(--radius-box);
+    box-shadow:
+      0 1px 0 color-mix(in srgb, var(--color-base-content) 10%, transparent),
+      inset 0 1px 7px 0 rgb(0 0 0 / 0.6);
+  }
+}
+
 /* Rendered-Markdown (assistant messages) typography — scoped to .markdown-body
    so it never leaks into the rest of the app. */
 .markdown-body {

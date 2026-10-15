@@ -285,8 +285,7 @@ describe("ChatView", () => {
     expect(collapse).not.toHaveClass("collapse-arrow"); // no indicator icon
     expect(collapse).not.toHaveClass("collapse-plus");
     // Visible bubble, like tool cards.
-    expect(collapse).toHaveClass("bg-base-200");
-    expect(collapse).toHaveClass("rounded-box");
+    expect(collapse).toHaveClass("inset-well"); // shared recessed panel (app.css)
     expect(screen.getByRole("checkbox", { name: "Toggle thoughts" })).toBeInTheDocument();
   });
 

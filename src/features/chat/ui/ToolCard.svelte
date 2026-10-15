@@ -231,7 +231,9 @@
   .output-controls {
     padding-block: 0.5rem;
     color: var(--color-base-content);
-    background: var(--color-base-200);
+    /* Same fill as the LazyCollapse inset well this sits in (opaque, so
+       scrolled output never shows through the sticky bar). */
+    background: var(--inset-well-bg, var(--color-base-200));
   }
   .sticky-controls {
     position: sticky;

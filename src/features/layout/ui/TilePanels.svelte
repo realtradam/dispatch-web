@@ -44,7 +44,9 @@
   style={renderMarker ? markerStyle(node.marker) : undefined}
 >
   {#each node.panels as panel, idx (idx)}
-    <div class="flex flex-col rounded-lg bg-base-200 p-3">
+    <!-- `.inset-well` (app.css): recessed into the sidebar, like the chat's
+         thinking/tool blocks. -->
+    <div class="inset-well flex flex-col p-3">
       <div class="flex items-center gap-1">
         <select
           class="select select-bordered select-sm flex-1"
