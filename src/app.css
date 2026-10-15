@@ -36,6 +36,58 @@
   }
 }
 
+/* App navbar — the Artix wiki's navbar (darkstrap `.navbar-inner` on a
+   fixed-top bar): a top-to-bottom gradient (#444 → #222), a soft drop shadow
+   under the bar (0 1px 10px), and engraved text (1px black text-shadow).
+   Shared by the workspace top bar (App) and the home page header. Ported onto
+   the active daisyUI theme so it always matches. darkstrap's bar is LIGHTER
+   than its near-black page (that's what makes the shadow read), so the
+   gradient is shifted to keep that relationship on our lighter page: it runs
+   from the page colour (base-100) lifted 20% toward the text colour down to
+   base-100 lifted 3%. No bottom border (darkstrap has a 1px #030303 one —
+   removed by user request; the gradient + shadow carry the edge). The shadow
+   is 0.5 (darkstrap: 0.1 — invisible on our lighter page). Positioned +
+   z-indexed so the shadow paints over the content below. */
+@layer components {
+  .app-navbar {
+    position: relative;
+    z-index: 10;
+    flex-shrink: 0;
+    background-image: linear-gradient(
+      to bottom,
+      color-mix(in srgb, var(--color-base-100) 80%, var(--color-base-content)),
+      color-mix(in srgb, var(--color-base-100) 97%, var(--color-base-content))
+    );
+    box-shadow: 0 1px 10px rgb(0 0 0 / 0.5);
+  }
+  /* Engraved navbar text — titles only; on tiny faint labels it muddies. */
+  .app-navbar-engraved {
+    text-shadow: 0 1px 0 black;
+  }
+}
+
+/* Raised — the INVERSE of `.inset-well`, for things that pop OUT of the page
+   (the home page's workspace tiles). Where the well has a dark shadow INSIDE
+   under its top edge and a light catch-line OUTSIDE below it, a raised surface
+   has a light highlight INSIDE along its top edge, a soft shadow OUTSIDE below
+   it, and a faint top-lit gradient over its own colour (lighter top → darker
+   bottom — convex, where the well is concave). Built on Tailwind's shadow
+   variables (not a bare box-shadow) so it COMPOSES with the ring / shadow
+   utilities: the inner highlight rides --tw-inset-shadow (kept by
+   `hover:shadow-xl`, rings, drag), the drop rides --tw-shadow (which
+   `hover:shadow-xl` / `shadow-2xl` swap for a bigger lift). Works on any
+   background colour (the tiles' tone colours), so it always matches the theme. */
+@layer components {
+  .raised {
+    --tw-inset-shadow: inset 0 1px 0 rgb(255 255 255 / 0.45), inset 0 -1px 0 rgb(0 0 0 / 0.25);
+    --tw-shadow: 0 2px 9px 0 rgb(0 0 0 / 0.7);
+    box-shadow:
+      var(--tw-inset-shadow), var(--tw-inset-ring-shadow, 0 0 #0000),
+      var(--tw-ring-offset-shadow, 0 0 #0000), var(--tw-ring-shadow, 0 0 #0000), var(--tw-shadow);
+    background-image: linear-gradient(to bottom, rgb(255 255 255 / 0.14), rgb(0 0 0 / 0.14));
+  }
+}
+
 /* Rendered-Markdown (assistant messages) typography — scoped to .markdown-body
    so it never leaks into the rest of the app. */
 .markdown-body {

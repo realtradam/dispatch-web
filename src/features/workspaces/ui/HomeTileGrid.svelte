@@ -499,7 +499,7 @@
           <!-- svelte-ignore a11y_no_static_element_interactions, a11y_click_events_have_key_events -->
           <div
             data-tile-id={placement.id}
-            class={`flex select-none flex-col overflow-hidden rounded-box border transition-[box-shadow] duration-150 ${
+            class={`raised flex select-none flex-col overflow-hidden rounded-box border transition-[box-shadow] duration-150 ${
               TONE_CLASSES[tileTone(placement.id)]
             } ${
               selectedId === placement.id
@@ -508,7 +508,7 @@
             } ${
               isDragged
                 ? "pointer-events-none relative z-40 shadow-2xl"
-                : "shadow-md hover:-translate-y-0.5 hover:shadow-xl"
+                : "hover:-translate-y-0.5 hover:shadow-xl"
             }`}
             style={`${wrapperStyle(placement)} ${isDragged ? followStyle(placement) : ""} scroll-snap-align: start;`}
             role="button"

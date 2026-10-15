@@ -93,10 +93,10 @@
        the top row now shows the active tab's title on the left (or "New Tab"
        for an unstarted draft), with the build version + sidebar toggle on
        the right. CHROME — stays outside the tree (layout-00 decision 2).
-       `.app-navbar` (below): the Artix wiki's darkstrap navbar look. -->
-  <div class="app-navbar flex items-center justify-between gap-2 px-2 py-2">
+       `.app-navbar` (app.css): the Artix wiki's darkstrap navbar look. -->
+  <div class="app-navbar flex items-center justify-between gap-2 px-2 pt-[calc(0.5rem+5px)] pb-2">
     <span
-      class="min-w-0 flex-1 shrink truncate pl-2 text-sm font-semibold text-primary"
+      class="app-navbar-engraved min-w-0 flex-1 shrink truncate pl-2 text-sm font-semibold text-primary"
       data-testid="top-bar-title"
       title={topBarTitle}
       aria-label="Active conversation title"
@@ -220,34 +220,3 @@
     />
   {/key}
 {/if}
-
-<style>
-  /* The Artix wiki's navbar (darkstrap `.navbar-inner` on a fixed-top bar):
-     a top-to-bottom gradient (#444 → #222), a soft drop shadow under the bar
-     (0 1px 10px), and text
-     engraved with a 1px black text-shadow. Ported onto the active daisyUI
-     theme so it always matches. darkstrap's bar is LIGHTER than its near-black
-     page (that's what makes the border + shadow read), so the gradient is
-     shifted to keep that relationship on our lighter page: it runs from the
-     page colour (base-100) lifted 20% toward the text colour down to base-100
-     lifted 3%. No bottom border (darkstrap has a 1px #030303 one — removed by
-     user request; the gradient + shadow carry the edge). The shadow is 0.5
-     (darkstrap: 0.1 — invisible on our lighter page).
-     Positioned + z-indexed so the shadow paints over the content below. */
-  .app-navbar {
-    position: relative;
-    z-index: 10;
-    flex-shrink: 0;
-    padding-top: calc(0.5rem + 5px);
-    background-image: linear-gradient(
-      to bottom,
-      color-mix(in srgb, var(--color-base-100) 80%, var(--color-base-content)),
-      color-mix(in srgb, var(--color-base-100) 97%, var(--color-base-content))
-    );
-    box-shadow: 0 1px 10px rgb(0 0 0 / 0.5);
-  }
-  /* Engraved text — the title only; on the tiny faint build label it muddies. */
-  .app-navbar :global([data-testid="top-bar-title"]) {
-    text-shadow: 0 1px 0 black;
-  }
-</style>
