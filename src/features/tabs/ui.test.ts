@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { Tab } from "./tabs";
@@ -543,6 +543,78 @@ describe("TabList", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe("closing a tab with subagents (confirm + cascade)", () => {
+      const dialog = (): HTMLElement =>
+        screen.getByRole("dialog", { name: "Close subagents too?" });
+
+      async function clickCloseOn(id: string): Promise<void> {
+        await fireEvent.click(within(card(id)).getByRole("button", { name: "Close tab" }));
+      }
+
+      function renderClosable(onClose = vi.fn()) {
+        render(TabList, {
+          props: {
+            tabs: grouped,
+            activeConversationId: "p",
+            onSelect: vi.fn(),
+            onClose,
+            onNewDraft: vi.fn(),
+          },
+        });
+        return onClose;
+      }
+
+      it("closes a tab WITHOUT subagents directly — no confirm dialog", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("solo");
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledWith("solo");
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("shows ONE confirm dialog for a group parent (never one per descendant)", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        // 3 subagent tabs: c1, c2 and the nested grandchild g.
+        expect(dialog()).toHaveTextContent("3 subagent tabs");
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      it("'No, keep them open' closes only the tab itself", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        await fireEvent.click(screen.getByRole("button", { name: /No, keep them open/ }));
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledWith("p");
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("'Yes, close all' cascades to every descendant — no further prompts", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        await fireEvent.click(screen.getByRole("button", { name: /Yes, close all/ }));
+        // p first, then its transitive descendants in tab order (c1, c2, g).
+        expect(onClose.mock.calls.map((c) => c[0])).toEqual(["p", "c1", "c2", "g"]);
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("cascades from a mid-level subagent, taking only its own subtree", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("c1");
+        expect(dialog()).toHaveTextContent("1 subagent tab");
+        await fireEvent.click(screen.getByRole("button", { name: /Yes, close all/ }));
+        expect(onClose.mock.calls.map((c) => c[0])).toEqual(["c1", "g"]);
+      });
+
+      it("Escape dismisses the dialog without closing anything", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        await fireEvent.keyDown(window, { key: "Escape" });
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
     });
   });
 });

@@ -1,6 +1,7 @@
 export type { TabGroupForest, TabGroupNode } from "./tab-groups";
 export {
   buildTabGroups,
+  cascadeCloseIds,
   directGroupChildren,
   groupBleedPx,
   groupDescendants,

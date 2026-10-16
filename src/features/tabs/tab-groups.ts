@@ -104,6 +104,22 @@ export function groupDescendants(tabs: readonly Tab[], conversationId: string): 
 }
 
 /**
+ * The tabs removed by a CASCADING close of `conversationId` (the user chose
+ * "also close its subagents"): the tab itself first, then its transitive
+ * visible-group descendants in tab order. ONE decision covers the whole
+ * subtree — closing never re-prompts per level. A single-element result (the
+ * tab alone) means the tab has no subagents and closes without a prompt.
+ */
+export function cascadeCloseIds(tabs: readonly Tab[], conversationId: string): string[] {
+  const descendants = groupDescendants(tabs, conversationId);
+  const ids = [conversationId];
+  for (const tab of tabs) {
+    if (descendants.has(tab.conversationId)) ids.push(tab.conversationId);
+  }
+  return ids;
+}
+
+/**
  * The tabs `conversationId` may be moved under (the "Add to group" menu):
  * every other tab EXCEPT itself, its descendants (that would form a cycle),
  * and its current visible group parent (already there). Tab order preserved.
