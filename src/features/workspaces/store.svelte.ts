@@ -1,6 +1,7 @@
 import type { EnsureWorkspaceRequest } from "@dispatch/transport-contract";
 import type { Workspace, WorkspaceEntry } from "@dispatch/wire";
 import type { WorkspaceHttp, WorkspaceResult } from "./adapter/http";
+import { gateCreate } from "./logic/create";
 import { applyArchived, applyStarred, sortWorkspaces } from "./logic/view-model";
 
 /**
@@ -27,6 +28,14 @@ export interface WorkspaceStore {
   refreshArchived(): Promise<void>;
   /** `PUT /workspaces/:id` (create-on-miss). Returns the workspace or an error. */
   ensure(id: string, body?: EnsureWorkspaceRequest): Promise<WorkspaceResult<Workspace>>;
+  /**
+   * Create a workspace via the New-workspace flow. Probes `GET /workspaces/:id`
+   * first and refuses a slug that belongs to an ARCHIVED workspace (the
+   * idempotent `ensure` would otherwise silently resurrect an invisible tile).
+   * A failed probe is refused too (see `gateCreate`). On success it falls
+   * through to `ensure`, unchanged.
+   */
+  create(id: string, body?: EnsureWorkspaceRequest): Promise<WorkspaceResult<Workspace>>;
   /** Rename a workspace (display only; id unchanged). */
   rename(id: string, title: string): Promise<WorkspaceResult<Workspace>>;
   /** Set/clear a workspace's default cwd. */
@@ -100,6 +109,12 @@ export function createWorkspaceStore(http: WorkspaceHttp): WorkspaceStore {
       } finally {
         archivedLoading = false;
       }
+    },
+
+    async create(id, body): Promise<WorkspaceResult<Workspace>> {
+      const gate = gateCreate(id, await http.get(id));
+      if (!gate.ok) return { ok: false, error: gate.error };
+      return this.ensure(id, body);
     },
 
     async ensure(id, body): Promise<WorkspaceResult<Workspace>> {

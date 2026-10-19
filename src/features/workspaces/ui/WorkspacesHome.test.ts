@@ -5,6 +5,7 @@ import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceHttp, WorkspaceResult } from "../adapter/http";
 import type { TileLayoutHttp } from "../adapter/tile-layout-http";
+import type { WorkspaceLookup } from "../logic/create";
 import { createTileLayoutStore } from "../tile-layout-store.svelte";
 import WorkspacesHome from "./WorkspacesHome.svelte";
 
@@ -24,7 +25,10 @@ function ws(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
 }
 
 /** A fake WorkspaceHttp edge with a controllable list (no mocks of our modules). */
-function fakeHttp(list: WorkspaceEntry[] = [ws()]): WorkspaceHttp {
+function fakeHttp(
+  list: WorkspaceEntry[] = [ws()],
+  lookup: (id: string) => Promise<WorkspaceLookup> = async () => ({ kind: "missing" }),
+): WorkspaceHttp {
   return {
     list: vi.fn(async (): Promise<WorkspaceEntry[]> => list),
     // Create-on-miss: the backend persists the new workspace, so the next
@@ -33,7 +37,7 @@ function fakeHttp(list: WorkspaceEntry[] = [ws()]): WorkspaceHttp {
       if (!list.some((w) => w.id === id)) list.push(ws({ id, title: id }));
       return { ok: true, value: ws({ id, title: id }) };
     }),
-    get: vi.fn(),
+    get: vi.fn(lookup),
     setTitle: vi.fn(),
     setDefaultCwd: vi.fn(),
     setDefaultComputer: vi.fn(),
@@ -138,6 +142,36 @@ describe("WorkspacesHome (tile canvas)", () => {
     expect(onNavigate).not.toHaveBeenCalled();
     // The backend was asked to create it (create-on-miss).
     expect(store.list.map((w) => w.id)).toContain("fresh-ws");
+  });
+
+  it("refuses to create an archived slug: message in the popover, form stays open, no tile", async () => {
+    const user = userEvent.setup();
+    const list = [ws({ id: "a", title: "A" })];
+    const http = fakeHttp(list, async (id) => ({
+      kind: "found",
+      workspace: ws({ id, title: id, archived: true }),
+    }));
+    const store = (await import("../store.svelte")).createWorkspaceStore(http);
+    render(WorkspacesHome, {
+      props: {
+        store,
+        onNavigate: vi.fn(),
+        computers: [],
+        tiles: createTileLayoutStore({ http: memoryLayout() }),
+      },
+    });
+
+    await screen.findByRole("button", { name: "Open workspace A" });
+    await user.click(screen.getByRole("button", { name: "New workspace" }));
+    await user.type(screen.getByRole("textbox", { name: "New workspace" }), "old-ws{Enter}");
+
+    expect(await screen.findByText(/already exists and is archived/)).toBeInTheDocument();
+    // The popover stays open (the form/input is still mounted).
+    expect(screen.getByRole("textbox", { name: "New workspace" })).toBeInTheDocument();
+    // Nothing was ensured, no tile appeared, and no rename mode was entered.
+    expect(http.ensure).not.toHaveBeenCalled();
+    expect(store.list.map((w) => w.id)).toEqual(["a"]);
+    expect(screen.queryByLabelText("Workspace title")).toBeNull();
   });
 
   it("right-clicking a tile opens the action bar; Delete keeps the confirm + store call", async () => {

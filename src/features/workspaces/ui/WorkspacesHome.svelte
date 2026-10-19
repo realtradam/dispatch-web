@@ -215,12 +215,13 @@
     if (result.ok) deselect();
   }
 
-  // ── Create (header popover): create on the backend — do NOT navigate —
-  // place the new tile in the first empty slot, and go straight into rename.
+  // ── Create (header popover): check the slug resolves to no archived
+  // workspace, create on the backend — do NOT navigate — place the new tile in
+  // the first empty slot, and go straight into rename.
   async function createWorkspace(
     slug: string,
   ): Promise<{ ok: true } | { ok: false; error: string }> {
-    const result = await store.ensure(slug);
+    const result = await store.create(slug);
     if (!result.ok) return { ok: false, error: result.error };
     await store.refresh();
     // Idempotent: if the list refresh's sync already appended the id, this

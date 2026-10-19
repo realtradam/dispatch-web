@@ -1,6 +1,12 @@
 export type { WorkspaceHttp, WorkspaceResult } from "./adapter/http";
 export { createWorkspaceHttp } from "./adapter/http";
 export { createTileLayoutHttp, type TileLayoutHttp } from "./adapter/tile-layout-http";
+export type { CreateGate, WorkspaceLookup } from "./logic/create";
+export {
+  archivedCreateMessage,
+  checkFailedCreateMessage,
+  gateCreate,
+} from "./logic/create";
 export type {
   DragEmit,
   DragEvent as DragControllerEvent,
