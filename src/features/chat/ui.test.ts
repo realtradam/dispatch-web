@@ -9,6 +9,7 @@ import {
   type TurnMetricsEntry,
 } from "../../core/metrics";
 import type { ConvertedJpeg } from "./adapter/image-encode";
+import CacheTimerBadge from "./ui/CacheTimerBadge.svelte";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
 import ModelSelector from "./ui/ModelSelector.svelte";
@@ -1664,6 +1665,9 @@ describe("ChatView — cache timer", () => {
     });
     const stamp = screen.getByTestId("cache-timer-stamp");
     expect(stamp).toHaveTextContent("1:05");
+    // Sized to match the step's (xs) cache badge.
+    expect(stamp).toHaveClass("badge-xs");
+    expect(stamp).not.toHaveClass("badge-sm");
     // Same line as the step's cache badge.
     expect(stamp.parentElement).toContainElement(screen.getByTestId("step-cache-badge"));
     expect(screen.queryByTestId("cache-timer-tools")).toBeNull();
@@ -1682,9 +1686,38 @@ describe("ChatView — cache timer", () => {
     });
     const live = screen.getByTestId("cache-timer-live");
     expect(live.closest(".chat-bubble")).toHaveTextContent(/turn 2/);
+    expect(live).toHaveClass("badge-sm");
     const stamp = screen.getByTestId("cache-timer-stamp");
     expect(stamp).toHaveTextContent("10+ min");
     expect(stamp.closest(".chat-bubble")).toHaveTextContent(/turn 1/);
+  });
+
+  it("a live timer mounts without re-running its effect on a moving clock (no render stall)", async () => {
+    // Regression: the badge's effect once READ the `current` state it wrote, so
+    // with a real (always-advancing) clock it re-ran itself until Svelte threw
+    // `effect_update_depth_exceeded` — aborting the flush, so turn data showed late.
+    let calls = 0;
+    const now = () => {
+      calls++;
+      return 1_000_000 + calls;
+    };
+    render(CacheTimerBadge, { props: { since: 1_000_000, now } });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(calls).toBeLessThan(5);
+    expect(screen.getByTestId("cache-timer-live")).toHaveTextContent("0:00");
+  });
+
+  it("renders the turn's metrics alongside a live turn timer", () => {
+    render(ChatView, {
+      props: {
+        chunks: exchange("t1", 1),
+        turnMetrics: [turn("t1")],
+        cacheTimer: state({ running: { kind: "turn", turnId: "t1", startedAt: Date.now() } }),
+      },
+    });
+    expect(screen.getByText(/turn 1 · 10 tok out/)).toBeInTheDocument();
+    expect(screen.getByText("a-t1")).toBeInTheDocument();
+    expect(screen.getByTestId("cache-timer-live")).toHaveTextContent(/^0:00$/);
   });
 
   it("puts a SEEDED turn gap (no turnId) on the most recent turn's row", () => {

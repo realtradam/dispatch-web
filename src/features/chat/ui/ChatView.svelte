@@ -242,7 +242,7 @@
               data-testid="step-cache-badge">{stepCache.pct}%</span
             >
             {#if stepStamp !== undefined}
-              <CacheTimerBadge elapsedMs={stepStamp} />
+              <CacheTimerBadge elapsedMs={stepStamp} size="xs" />
             {/if}
           </div>
         </div>
@@ -307,7 +307,7 @@
       <div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
         <div class="flex items-center gap-1 text-xs" data-testid="cache-timer-tools">
           <span class="opacity-70">Running tools</span>
-          <CacheTimerBadge since={liveStepGap.startedAt} />
+          <CacheTimerBadge since={liveStepGap.startedAt} size="xs" />
         </div>
       </div>
     </div>
