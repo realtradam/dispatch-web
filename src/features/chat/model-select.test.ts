@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  isClaudeSubscriptionModel,
   isNamedAgentSelection,
   isVisionModel,
   joinModelName,
@@ -190,5 +191,25 @@ describe("named-agent provider helpers", () => {
 
   it("namedAgentSelectionLabel renders 'Named Agents -> <name>'", () => {
     expect(namedAgentSelectionLabel("Coding")).toBe("Named Agents -> Coding");
+  });
+});
+
+describe("isClaudeSubscriptionModel", () => {
+  it("is true for claude/<model> (the Claude Code subscription credential)", () => {
+    expect(isClaudeSubscriptionModel("claude/claude-opus-4-6")).toBe(true);
+    expect(isClaudeSubscriptionModel("claude/claude-sonnet-4-6")).toBe(true);
+  });
+
+  it("is false for Claude models served through other credentials", () => {
+    expect(isClaudeSubscriptionModel("opencode-1/claude-sonnet-4.5")).toBe(false);
+    expect(isClaudeSubscriptionModel("openrouter/anthropic/claude-opus-4")).toBe(false);
+    expect(isClaudeSubscriptionModel("openai/gpt-4o")).toBe(false);
+  });
+
+  it("is false for a bare key, a lookalike key, or undefined", () => {
+    expect(isClaudeSubscriptionModel("claude")).toBe(false);
+    expect(isClaudeSubscriptionModel("claude/")).toBe(false);
+    expect(isClaudeSubscriptionModel("claude-2/claude-opus-4-6")).toBe(false);
+    expect(isClaudeSubscriptionModel(undefined)).toBe(false);
   });
 });

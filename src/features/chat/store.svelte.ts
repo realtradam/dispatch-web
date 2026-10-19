@@ -25,13 +25,17 @@ import {
   unloadCount,
   windowTranscript,
 } from "../../core/chunks";
-import type { MetricsState, TurnMetricsEntry } from "../../core/metrics";
+import type { CacheTimerState, MetricsState, TurnMetricsEntry } from "../../core/metrics";
 import {
   applyDurableMetrics,
+  foldCacheTimerEvent,
   foldMetricsEvent,
+  initialCacheTimerState,
   initialMetricsState,
+  seedTurnGap,
   selectCurrentContextSize,
   selectOrderedTurnMetrics,
+  stopTurnGap,
 } from "../../core/metrics";
 import type { ConversationCache } from "../conversation-cache";
 import type { NamedAgentSelectionSnapshot } from "../named-agents";
@@ -78,6 +82,8 @@ export interface ChatStoreDependencies {
    * folded synchronously (the original behavior; used by tests).
    */
   readonly scheduleFlush?: (flush: () => void) => void;
+  /** Wall clock (epoch ms) — times the cache-timer gaps. Absent → `Date.now`. */
+  readonly now?: () => number;
 }
 
 export interface ChatStore {
@@ -122,6 +128,20 @@ export interface ChatStore {
    * a trim (see `TranscriptState.hiddenThinkingCount`).
    */
   readonly thinkingKeyBase: number;
+  /**
+   * The cache timer (see `core/metrics/cache-timer.ts`): the running gap
+   * between model requests (a step's tools executing, or the wait after a turn
+   * ended) plus the stamped durations of finished gaps, keyed by `stepId` /
+   * `turnId`. Timed with the local clock from live events; in-memory only (a
+   * reload keeps just a turn gap seeded via `noteLastActivity`).
+   */
+  readonly cacheTimer: CacheTimerState;
+  /**
+   * Seed the turn gap from an authoritative activity timestamp (the
+   * conversation list's `lastActivityAt`) — call only for an IDLE conversation.
+   * Ignored while a turn is generating; a running turn gap keeps the later start.
+   */
+  noteLastActivity(at: number): void;
   handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
   /**
    * Send a user message (start a turn via `chat.send`). Optimistically echoes
@@ -200,7 +220,15 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
   let _error = $state<string | null>(null);
   let _model = $state<string | undefined>(deps.model);
   let _namedAgent = $state<NamedAgentSelectionSnapshot | null>(null);
+  let cacheTimer = $state<CacheTimerState>(initialCacheTimerState());
+  const now = deps.now ?? Date.now;
   let disposed = false;
+
+  /** The most recent turn's id (resolves a seeded turn gap when it is stamped). */
+  function lastTurnIdOf(m: MetricsState): string | undefined {
+    const entries = selectOrderedTurnMetrics(m);
+    return entries[entries.length - 1]?.turnId;
+  }
 
   let chatLimit = normalizeChatLimit(deps.chatLimit);
 
@@ -242,14 +270,19 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     let m = metrics;
     let sealed = false;
     let failed = false;
+    let c = cacheTimer;
+    const at = now();
     for (const event of events) {
       t = foldEvent(t, event);
       m = foldMetricsEvent(m, event);
+      const mNow = m;
+      c = foldCacheTimerEvent(c, event, at, () => lastTurnIdOf(mNow));
       if (t.sealedTurnId !== null) sealed = true;
       else if (event.type === "error") failed = true;
     }
     transcript = t;
     metrics = m;
+    cacheTimer = c;
     maybeTrim();
     if (sealed) {
       void syncTail();
@@ -390,6 +423,14 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     get thinkingKeyBase(): number {
       return transcript.hiddenThinkingCount;
     },
+    get cacheTimer(): CacheTimerState {
+      return cacheTimer;
+    },
+
+    noteLastActivity(at: number): void {
+      if (selectGenerating(transcript)) return;
+      cacheTimer = seedTurnGap(cacheTimer, at);
+    },
 
     handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void {
       if (msg.type === "chat.error") {
@@ -415,6 +456,8 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
     send(text: string, images?: readonly ImageInput[]): void {
       flushEvents();
+      // Sending ends the wait since the last turn: stamp it on that turn.
+      cacheTimer = stopTurnGap(cacheTimer, now(), () => lastTurnIdOf(metrics));
       transcript = appendUserMessage(transcript, text, images);
       maybeTrim();
       const msg: ChatSendMessage = {

@@ -1789,3 +1789,106 @@ describe("createChatStore — batched delta application (scheduleFlush)", () => 
     expect(store.chunks).toHaveLength(0);
   });
 });
+
+describe("createChatStore — cacheTimer", () => {
+  function makeStore(now: () => number) {
+    return createChatStore({
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: createFakeHistorySync().impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+      now,
+    });
+  }
+  const call = (stepId: string, toolCallId: string) =>
+    deltaEvent({
+      type: "tool-call",
+      conversationId: CONV_ID,
+      turnId: "t1",
+      stepId: stepId as StepId,
+      toolCallId,
+      toolName: "read_file",
+      input: {},
+    });
+  const result = (stepId: string, toolCallId: string) =>
+    deltaEvent({
+      type: "tool-result",
+      conversationId: CONV_ID,
+      turnId: "t1",
+      stepId: stepId as StepId,
+      toolCallId,
+      toolName: "read_file",
+      content: "ok",
+      isError: false,
+    });
+  const stepComplete = (stepId: string) =>
+    deltaEvent({
+      type: "step-complete",
+      conversationId: CONV_ID,
+      turnId: "t1",
+      stepId: stepId as StepId,
+    });
+  const done = (turnId: string) =>
+    deltaEvent({ type: "done", conversationId: CONV_ID, turnId, reason: "end-turn" });
+
+  it("is idle until something happens", () => {
+    const store = makeStore(() => 1000);
+    expect(store.cacheTimer.running).toBeNull();
+    store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+    expect(store.cacheTimer.running).toBeNull();
+    store.dispose();
+  });
+
+  it("times a step's tool execution with the injected clock and stamps it", () => {
+    let clock = 0;
+    const store = makeStore(() => clock);
+    store.handleDelta(call("t1#0", "a"));
+    clock = 1_000;
+    store.handleDelta(stepComplete("t1#0"));
+    expect(store.cacheTimer.running).toMatchObject({ kind: "step", startedAt: 1_000 });
+    clock = 31_000;
+    store.handleDelta(result("t1#0", "a"));
+    expect(store.cacheTimer.running).toBeNull();
+    expect(store.cacheTimer.stepStamps.get("t1#0")).toBe(30_000);
+    store.dispose();
+  });
+
+  it("starts a turn gap on done and stamps it on send", () => {
+    let clock = 5_000;
+    const store = makeStore(() => clock);
+    store.handleDelta(done("t1"));
+    expect(store.cacheTimer.running).toEqual({ kind: "turn", turnId: "t1", startedAt: 5_000 });
+    clock = 125_000;
+    store.send("next");
+    expect(store.cacheTimer.running).toBeNull();
+    expect(store.cacheTimer.turnStamps.get("t1")).toBe(120_000);
+    store.dispose();
+  });
+
+  it("ignores another conversation's events", () => {
+    const store = makeStore(() => 5_000);
+    store.handleDelta(
+      deltaEvent({ type: "done", conversationId: "other", turnId: "t1", reason: "end-turn" }),
+    );
+    expect(store.cacheTimer.running).toBeNull();
+    store.dispose();
+  });
+
+  it("noteLastActivity seeds a turn gap, keeps the later start, and is ignored while generating", () => {
+    const store = makeStore(() => 5_000);
+    store.noteLastActivity(3_000);
+    expect(store.cacheTimer.running).toEqual({ kind: "turn", turnId: null, startedAt: 3_000 });
+    store.handleDelta(done("t1"));
+    expect(store.cacheTimer.running).toEqual({ kind: "turn", turnId: "t1", startedAt: 5_000 });
+    store.noteLastActivity(4_000); // an older seed never rewinds it
+    expect(store.cacheTimer.running).toMatchObject({ startedAt: 5_000 });
+    store.dispose();
+
+    const busy = makeStore(() => 5_000);
+    busy.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t2" }));
+    busy.noteLastActivity(4_000);
+    expect(busy.cacheTimer.running).toBeNull();
+    busy.dispose();
+  });
+});

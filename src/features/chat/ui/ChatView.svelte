@@ -2,7 +2,9 @@
   import type { TurnProviderRetryEvent } from "@dispatch/wire";
   import { groupRenderedChunks, resolveImageUrl, type RenderedChunk, viewProviderRetry } from "../index";
   import {
+    type CacheTimerState,
     interleaveTurnMetrics,
+    lastTurnRowIndex,
     viewCacheRate,
     viewExpectedCache,
     viewStepMetrics,
@@ -10,6 +12,7 @@
     type TurnMetricsEntry,
   } from "../../../core/metrics";
   import { Markdown } from "../../markdown";
+  import CacheTimerBadge from "./CacheTimerBadge.svelte";
   import LazyCollapse from "./LazyCollapse.svelte";
   import ToolCard from "./ToolCard.svelte";
 
@@ -27,6 +30,7 @@
     thinkingKeyBase = 0,
     providerRetry = null,
     apiBaseUrl = "",
+    cacheTimer = null,
   }: {
     chunks: readonly RenderedChunk[];
     turnMetrics?: readonly TurnMetricsEntry[];
@@ -55,6 +59,14 @@
      * "" (root-relative — a browser resolves `/images/…` against its origin).
      */
     apiBaseUrl?: string;
+    /**
+     * The cache timer (gaps between model requests): a running step gap shows
+     * live at the bottom (under the executing tools), a running turn gap live
+     * on that turn's metrics row; finished gaps are stamped on their step /
+     * turn metrics line. `null` (the default) hides it entirely — the caller
+     * gates on the model.
+     */
+    cacheTimer?: CacheTimerState | null;
   } = $props();
 
   // True while a show-earlier page-in is awaited (disables the button).
@@ -73,6 +85,31 @@
   const groups = $derived(groupRenderedChunks(chunks));
 
   const rows = $derived(interleaveTurnMetrics(groups, turnMetrics));
+
+  // A SEEDED turn gap (no turnId — e.g. after a reload) renders on the most
+  // recent turn's row (when no user message follows it).
+  const seededTurnRow = $derived(
+    cacheTimer?.running?.kind === "turn" && cacheTimer.running.turnId === null
+      ? lastTurnRowIndex(rows)
+      : null,
+  );
+
+  /** Start of the running turn gap if it belongs on this turn row, else undefined. */
+  function liveTurnSince(turnId: string, rowIndex: number): number | undefined {
+    const r = cacheTimer?.running;
+    if (r?.kind !== "turn") return undefined;
+    if (r.turnId === turnId || (r.turnId === null && rowIndex === seededTurnRow)) {
+      return r.startedAt;
+    }
+    return undefined;
+  }
+
+  // A running step gap with tool calls → the live timer under the executing tools.
+  const liveStepGap = $derived(
+    cacheTimer?.running?.kind === "step" && cacheTimer.running.toolCount > 0
+      ? cacheTimer.running
+      : null,
+  );
 
   // Tool cards use toolCallId keys across pending/result/seal and orphan page-in.
   // Stable per-row keys. Thinking blocks get an ordinal key (`think<n>`) that
@@ -180,13 +217,14 @@
       </button>
     </div>
   {/if}
-  {#each keyedRows as { row, key } (key)}
+  {#each keyedRows as { row, key }, i (key)}
     <!-- `.chat-row`: content-visibility:auto — the browser skips layout/paint
          for rows outside the viewport (see app.css). -->
     <div class="chat-row">
     {#if row.kind === "step-metrics"}
       {@const sv = viewStepMetrics(row.step, row.index)}
       {@const stepCache = viewCacheRate(row.step.usage)}
+      {@const stepStamp = cacheTimer?.stepStamps.get(row.step.stepId)}
       <div class="chat chat-start">
         <div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
           <div class="flex flex-wrap items-center gap-x-1 text-xs">
@@ -203,6 +241,9 @@
               class="badge badge-xs {badgeClass[stepCache.level]}"
               data-testid="step-cache-badge">{stepCache.pct}%</span
             >
+            {#if stepStamp !== undefined}
+              <CacheTimerBadge elapsedMs={stepStamp} />
+            {/if}
           </div>
         </div>
       </div>
@@ -211,6 +252,8 @@
       {@const lastCache = viewCacheRate(row.turn.usage)}
       {@const chatCache = viewCacheRate(row.cumulativeUsage)}
       {@const retention = viewExpectedCache(row.turn.steps[0]?.usage, row.prevLastStepUsage)}
+      {@const turnLive = liveTurnSince(row.turn.turnId, i)}
+      {@const turnStamp = cacheTimer?.turnStamps.get(row.turn.turnId)}
       <div class="chat chat-start">
         <div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
           <div class="flex flex-col gap-1 text-xs">
@@ -236,6 +279,11 @@
                   <span class="badge badge-sm {badgeClass[retention.level]}">{retention.pct}%</span>
                 </span>
               {/if}
+              {#if turnLive !== undefined}
+                <CacheTimerBadge since={turnLive} />
+              {:else if turnStamp !== undefined}
+                <CacheTimerBadge elapsedMs={turnStamp} />
+              {/if}
             </div>
           </div>
         </div>
@@ -252,6 +300,18 @@
     {/if}
     </div>
   {/each}
+  {#if liveStepGap}
+    <!-- Live cache timer while the last step's tools execute; stamped onto that
+         step's metrics line once they return (or the next step starts). -->
+    <div class="chat chat-start">
+      <div class="chat-bubble w-full max-w-5xl bg-transparent p-0">
+        <div class="flex items-center gap-1 text-xs" data-testid="cache-timer-tools">
+          <span class="opacity-70">Running tools</span>
+          <CacheTimerBadge since={liveStepGap.startedAt} />
+        </div>
+      </div>
+    </div>
+  {/if}
   {#if providerRetry}
     {@const rv = viewProviderRetry(providerRetry)}
     <!-- Transient yellow warning: a provider error is being retried with backoff.

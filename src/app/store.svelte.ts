@@ -1474,6 +1474,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           const model = conv.model ?? activeModel;
           const store = createChatFor(conv.id, model, conv.workspaceId);
           chatStores.set(conv.id, store);
+          // Seed the cache timer's turn gap (only an idle conversation is waiting on the user).
+          if (conv.status === "idle") store.noteLastActivity(conv.lastActivityAt);
           void store.load();
           subscribeChat(conv.id);
           tabsStore.openTab({
@@ -1492,6 +1494,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           // authoritative conversation record is the source of truth, so a
           // differing tab workspace is corrected here.
           tabsStore.setTitle(conv.id, conv.title);
+          // Seed the cache timer's turn gap from the backend (a tab restored
+          // from localStorage at boot has no live `done` to go by). Only an
+          // idle conversation is waiting on the user.
+          if (conv.status === "idle")
+            chatStores.get(conv.id)?.noteLastActivity(conv.lastActivityAt);
           const tab = tabsStore.tabs.find((t) => t.conversationId === conv.id);
           if (tab?.workspaceId !== conv.workspaceId) {
             tabsStore.setWorkspaceId(conv.id, conv.workspaceId);

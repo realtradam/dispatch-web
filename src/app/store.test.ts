@@ -855,6 +855,54 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("fetchOpenConversations seeds the chat store's cache-timer turn gap from an idle conversation's lastActivityAt", async () => {
+    const ws = fakeSocket();
+    const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/conversations?status=")) {
+        return new Response(
+          JSON.stringify({
+            conversations: [
+              {
+                id: "conv-seed",
+                createdAt: 1000,
+                lastActivityAt: 7777,
+                title: "Seed conv",
+                status: "idle",
+                workspaceId: "default",
+                model: "claude/claude-opus-4-6",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/metrics")) {
+        return new Response(JSON.stringify({ turns: [] }), { status: 200 });
+      }
+      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+    };
+
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    await vi.waitFor(() => {
+      expect(store.tabs.some((t) => t.conversationId === "conv-seed")).toBe(true);
+    });
+    store.selectTab("conv-seed");
+    expect(store.activeChat.cacheTimer.running).toEqual({
+      kind: "turn",
+      turnId: null,
+      startedAt: 7777,
+    });
+
+    store.dispose();
+  });
+
   it("conversation.open WS message carrying a model stamps the tab with it", async () => {
     const ws = fakeSocket();
     const store = createAppStore({

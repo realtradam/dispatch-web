@@ -3,7 +3,11 @@ import { render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { RenderedChunk } from "../../core/chunks";
-import type { TurnMetricsEntry } from "../../core/metrics";
+import {
+  type CacheTimerState,
+  initialCacheTimerState,
+  type TurnMetricsEntry,
+} from "../../core/metrics";
 import type { ConvertedJpeg } from "./adapter/image-encode";
 import ChatView from "./ui/ChatView.svelte";
 import Composer from "./ui/Composer.svelte";
@@ -1540,5 +1544,162 @@ describe("ReasoningEffortSelector", () => {
     await vi.waitFor(() => {
       expect(screen.getByRole("combobox", { name: "Reasoning effort" })).toBeEnabled();
     });
+  });
+});
+
+describe("ChatView — cache timer", () => {
+  const usage = { inputTokens: 1000, outputTokens: 10, cacheReadTokens: 900 };
+  function step(stepId: string) {
+    return { stepId: stepId as StepId, usage, decodeMs: 100 };
+  }
+  function turn(turnId: string, stepIds: string[] = [`${turnId}#0`]): TurnMetricsEntry {
+    const steps = stepIds.map(step);
+    return { turnId, steps, total: { turnId, usage, steps } };
+  }
+  function exchange(turnId: string, base: number): RenderedChunk[] {
+    return [
+      {
+        seq: base,
+        role: "user",
+        chunk: { type: "text", text: `q-${turnId}` },
+        provisional: false,
+        turnId,
+      },
+      {
+        seq: base + 1,
+        role: "assistant",
+        chunk: { type: "text", text: `a-${turnId}` },
+        provisional: false,
+        turnId,
+      },
+    ];
+  }
+  function toolChunk(turnId: string, stepId: string, seq: number): RenderedChunk {
+    return {
+      seq,
+      role: "assistant",
+      chunk: {
+        type: "tool-call",
+        toolCallId: `call-${stepId}`,
+        toolName: "read_file",
+        input: {},
+        stepId: stepId as StepId,
+      },
+      provisional: false,
+      turnId,
+    };
+  }
+  function state(partial: Partial<CacheTimerState>): CacheTimerState {
+    return { ...initialCacheTimerState(), ...partial };
+  }
+
+  it("renders nothing when the feature is off (cacheTimer null)", () => {
+    render(ChatView, { props: { chunks: exchange("t1", 1), turnMetrics: [turn("t1")] } });
+    expect(screen.queryByTestId("cache-timer-live")).toBeNull();
+    expect(screen.queryByTestId("cache-timer-stamp")).toBeNull();
+  });
+
+  it("shows a live timer under executing tools, counting up to 10+ min", async () => {
+    vi.useFakeTimers();
+    try {
+      const chunks = [exchange("t1", 1)[0] as RenderedChunk, toolChunk("t1", "t1#0", 2)];
+      render(ChatView, {
+        props: {
+          chunks,
+          turnMetrics: [{ turnId: "t1", steps: [step("t1#0")], total: null }],
+          cacheTimer: state({
+            running: {
+              kind: "step",
+              turnId: "t1",
+              stepId: "t1#0",
+              startedAt: Date.now(),
+              toolCount: 1,
+              pending: new Set(["call-t1#0"]),
+              maxToolMs: 0,
+            },
+          }),
+        },
+      });
+      const row = screen.getByTestId("cache-timer-tools");
+      expect(row).toHaveTextContent(/Running tools/);
+      expect(screen.getByTestId("cache-timer-live")).toHaveTextContent("0:00");
+      await vi.advanceTimersByTimeAsync(5 * 60_000 + 30_000);
+      expect(screen.getByTestId("cache-timer-live")).toHaveTextContent("5:30");
+      await vi.advanceTimersByTimeAsync(5 * 60_000);
+      expect(screen.getByTestId("cache-timer-live")).toHaveTextContent("10+ min");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("hides the live tools row for a step with no tool calls", () => {
+    render(ChatView, {
+      props: {
+        chunks: exchange("t1", 1),
+        turnMetrics: [{ turnId: "t1", steps: [step("t1#0")], total: null }],
+        cacheTimer: state({
+          running: {
+            kind: "step",
+            turnId: "t1",
+            stepId: "t1#0",
+            startedAt: Date.now(),
+            toolCount: 0,
+            pending: new Set(),
+            maxToolMs: 0,
+          },
+        }),
+      },
+    });
+    expect(screen.queryByTestId("cache-timer-tools")).toBeNull();
+  });
+
+  it("stamps a finished step gap on that step's line, next to its cache badge", () => {
+    const chunks = [exchange("t1", 1)[0] as RenderedChunk, toolChunk("t1", "t1#0", 2)];
+    render(ChatView, {
+      props: {
+        chunks,
+        turnMetrics: [{ turnId: "t1", steps: [step("t1#0")], total: null }],
+        cacheTimer: state({ stepStamps: new Map([["t1#0", 65_000]]) }),
+      },
+    });
+    const stamp = screen.getByTestId("cache-timer-stamp");
+    expect(stamp).toHaveTextContent("1:05");
+    // Same line as the step's cache badge.
+    expect(stamp.parentElement).toContainElement(screen.getByTestId("step-cache-badge"));
+    expect(screen.queryByTestId("cache-timer-tools")).toBeNull();
+  });
+
+  it("runs a turn gap live on that turn's row, and shows stamps on earlier turns", () => {
+    render(ChatView, {
+      props: {
+        chunks: [...exchange("t1", 1), ...exchange("t2", 3)],
+        turnMetrics: [turn("t1"), turn("t2")],
+        cacheTimer: state({
+          running: { kind: "turn", turnId: "t2", startedAt: Date.now() },
+          turnStamps: new Map([["t1", 11 * 60_000]]),
+        }),
+      },
+    });
+    const live = screen.getByTestId("cache-timer-live");
+    expect(live.closest(".chat-bubble")).toHaveTextContent(/turn 2/);
+    const stamp = screen.getByTestId("cache-timer-stamp");
+    expect(stamp).toHaveTextContent("10+ min");
+    expect(stamp.closest(".chat-bubble")).toHaveTextContent(/turn 1/);
+  });
+
+  it("puts a SEEDED turn gap (no turnId) on the most recent turn's row", () => {
+    render(ChatView, {
+      props: {
+        chunks: [...exchange("t1", 1), ...exchange("t2", 3)],
+        turnMetrics: [turn("t1"), turn("t2")],
+        cacheTimer: state({
+          running: { kind: "turn", turnId: null, startedAt: Date.now() - 2 * 60_000 },
+        }),
+      },
+    });
+    const badges = screen.getAllByTestId("cache-timer-live");
+    expect(badges).toHaveLength(1);
+    expect(badges[0]).toHaveTextContent("2:00");
+    expect(badges[0]?.closest(".chat-bubble")).toHaveTextContent(/turn 2/);
   });
 });

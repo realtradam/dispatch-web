@@ -7,12 +7,17 @@
    * preservation, the ScrollToBottom affordance, and the empty-state
    * watermark. Keyed on the active conversation exactly like today's ChatView.
    */
-  import { ChatView } from "../../features/chat";
+  import { ChatView, isClaudeSubscriptionModel } from "../../features/chat";
   import { createSmartScrollController, ScrollToBottom } from "../../features/smart-scroll";
   import { preserveViewportAcross, type AppViewPorts } from "../view-ports";
 
   let { ports }: { ports: AppViewPorts } = $props();
   const store = $derived(ports.store);
+
+  // Cache timer: Claude Code subscription models only (5-minute prompt-cache expiry).
+  const cacheTimer = $derived(
+    isClaudeSubscriptionModel(store.activeModel) ? store.activeChat.cacheTimer : null,
+  );
 
   // One controller owns the chat scroll region; the effects below feed it the
   // edges (identical to the App.svelte wiring this moved out of).
@@ -81,6 +86,7 @@
           thinkingKeyBase={store.activeChat.thinkingKeyBase}
           providerRetry={store.activeChat.providerRetry}
           apiBaseUrl={store.httpBase}
+          {cacheTimer}
         />
       {/key}
     </div>

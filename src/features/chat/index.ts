@@ -8,6 +8,8 @@ export { groupRenderedChunks, resolveImageUrl, viewProviderRetry } from "../../c
 export type { TurnMetricsEntry } from "../../core/metrics";
 export type { NamedAgentLike, NamedAgentSnapshotLike } from "./model-select";
 export {
+  CLAUDE_SUBSCRIPTION_KEY,
+  isClaudeSubscriptionModel,
   isNamedAgentSelection,
   isNumberedOpenCode,
   isVisionModel,
