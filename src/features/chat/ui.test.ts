@@ -56,6 +56,25 @@ describe("ChatView", () => {
     expect(screen.getByText("Hello!")).toBeInTheDocument();
   });
 
+  it("renders local-path Markdown images through the backend image route", () => {
+    const chunks: RenderedChunk[] = [
+      {
+        seq: 1,
+        role: "assistant",
+        chunk: { type: "text", text: "![pic](/home/u/pic.png)" },
+        provisional: false,
+      },
+    ];
+
+    const { container } = render(ChatView, {
+      props: { chunks, apiBaseUrl: "http://localhost:24203", cwd: "/w/foo" },
+    });
+
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "http://localhost:24203/local-image?path=%2Fhome%2Fu%2Fpic.png",
+    );
+  });
+
   it("shows the show-earlier button only when earlier history is unloaded, and pages it in", async () => {
     const chunks: RenderedChunk[] = [
       { seq: 26, role: "user", chunk: { type: "text", text: "later" }, provisional: false },

@@ -18,6 +18,30 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Local-path images in Markdown (`feature/local-image-markdown`, 2026-10-19)
+
+**Slice status:** COMPLETE (frontend half; the backend route is implemented in parallel in
+`../backend` from the same pinned contract).
+
+- `features/markdown/logic/markdown.ts`: `renderMarkdown` / `renderMarkdownTail` accept per-conversation
+  `image: { apiBase, cwd? }`. A custom marked renderer rewrites Markdown image token hrefs:
+  `file://…` → decoded absolute path, `/abs/path` → itself, relative → joined to `cwd`, `~/…` passed
+  through for backend expansion; `http(s)://`, `data:`, and other schemes are untouched. Local paths
+  become `${apiBase}/local-image?path=<encodeURIComponent>` via `resolveImageUrl` (empty `apiBase` →
+  root-relative). Rewriting happens on the token stream, so fenced/inline code is never touched.
+- `logic/streaming-markdown.ts`: `advance(state, text, opts)` threads the same options through the
+  settled, tail, and open-fence pipelines. The cache is keyed on `apiBase`/`cwd` so an async cwd load
+  invalidates and re-renders settled blocks; string identity is preserved while the options are stable.
+- `ui/Markdown.svelte`: new optional `image` prop. `ChatView` gains `cwd` and passes
+  `image={{ apiBase: apiBaseUrl, cwd }}`; `ChatPane` supplies `store.httpBase` + `store.cwd`.
+- Tests: `file://`, absolute, relative-with/without-cwd, empty-`apiBase`, http(s), `data:`, fenced-code
+  exemption, streaming tail + settled prefix + options-change invalidation, and ChatView threading.
+- Backend contract: expects `GET /local-image?path=` exactly as pinned in `PLAN.md` (absolute path,
+  `~` expansion, raster whitelist, magic-byte sniff). No FE contract/type changes; **no backend asks**.
+- Verification: typecheck **0 errors / 0 warnings**; tests **2,070 passed** (114 files);
+  `bun run check` clean; build succeeds (existing bundle-size warning only). No wire/browser-effect
+  adapter changes → no live probe required for this slice; manual inline-image smoke remains user-run.
+
 ## Milestone: Agent tab grid + subagent groups (`feature/agent-tab-grid`, 2026-10-15)
 - FE: the tabs view is now a 2-column grid of identical fixed-height cards (`TabCard`); a tab with
   visible subagents is double-width and wrapped with them in a darker, nestable box

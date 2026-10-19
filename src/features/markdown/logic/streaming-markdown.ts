@@ -31,6 +31,8 @@
 import {
   countDelimiters,
   type DelimiterCounts,
+  type MarkdownImageOptions,
+  type MarkdownRenderOptions,
   renderMarkdown,
   renderMarkdownTail,
   renderOpenFence,
@@ -90,6 +92,13 @@ export interface StreamingMarkdownState {
   blankRunStart: number | null;
   /** INTERNAL — the best settle candidate found by the current scan pass. */
   pendingSettle: number;
+  /**
+   * INTERNAL — identity of the image-render options (apiBase + cwd) the cache
+   * was rendered with. The options can arrive asynchronously (the cwd loads
+   * after mount), so a change invalidates the settled cache: image srcs in the
+   * prefix would otherwise keep the stale resolution.
+   */
+  imageKey: string;
 }
 
 /** Fresh state for one streaming message. */
@@ -109,7 +118,20 @@ export function createStreamingMarkdown(): StreamingMarkdownState {
     linkRefSeen: false,
     blankRunStart: null,
     pendingSettle: -1,
+    imageKey: "",
   };
+}
+
+/** Identity of the image options, so an async cwd appearing invalidates the cache. */
+function imageKeyOf(image: MarkdownImageOptions | undefined): string {
+  return image === undefined ? "" : JSON.stringify([image.apiBase, image.cwd ?? null]);
+}
+
+/** Build per-render options without setting `image: undefined` (exactOptionalPropertyTypes). */
+function renderOptionsOf(
+  image: MarkdownImageOptions | undefined,
+): MarkdownRenderOptions | undefined {
+  return image === undefined ? undefined : { image };
 }
 
 // ── Scanner helpers (CommonMark block starts, mirroring what marked does) ──
@@ -382,9 +404,13 @@ function scan(s: StreamingMarkdownState): void {
 }
 
 /** Render the newly-settled span once and fold it into the prefix cache. */
-function commitSettle(s: StreamingMarkdownState, end: number): void {
+function commitSettle(
+  s: StreamingMarkdownState,
+  end: number,
+  image: MarkdownImageOptions | undefined,
+): void {
   const chunk = s.source.slice(s.settledOffset, end);
-  s.prefixHtml += renderMarkdown(chunk);
+  s.prefixHtml += renderMarkdown(chunk, renderOptionsOf(image));
   s.seed = addCounts(s.seed, countDelimiters(chunk));
   s.settledOffset = end;
 }
@@ -395,13 +421,24 @@ function commitSettle(s: StreamingMarkdownState, end: number): void {
  * string identity is what lets Svelte skip settled DOM). Resets itself when
  * the text shrinks or is otherwise not an append-extension.
  */
-export function advance(state: StreamingMarkdownState, textSoFar: string): StreamingMarkdownResult {
-  if (textSoFar === state.source && state.last !== null) return state.last;
-  if (!textSoFar.startsWith(state.source)) {
+export function advance(
+  state: StreamingMarkdownState,
+  textSoFar: string,
+  opts?: MarkdownRenderOptions,
+): StreamingMarkdownResult {
+  const image = opts?.image;
+  const imageKey = imageKeyOf(image);
+  if (textSoFar === state.source && state.last !== null && state.imageKey === imageKey) {
+    return state.last;
+  }
+  // A changed render option (e.g. the cwd loading after mount) invalidates the
+  // settled cache — its image srcs were resolved with the old options.
+  if (state.imageKey !== imageKey || !textSoFar.startsWith(state.source)) {
     resetTo(state, textSoFar);
   } else {
     state.source = textSoFar;
   }
+  state.imageKey = imageKey;
 
   // A PARTIAL trailing line that starts a `[…]:` definition already changes
   // how the whole-text parse resolves shortrefs (marked parses the truncated
@@ -418,10 +455,10 @@ export function advance(state: StreamingMarkdownState, textSoFar: string): Strea
 
   scan(state);
   if (!state.linkRefSeen && state.pendingSettle > state.settledOffset) {
-    commitSettle(state, state.pendingSettle);
+    commitSettle(state, state.pendingSettle, image);
   }
 
-  const result = renderTail(state);
+  const result = renderTail(state, image);
   state.last = result;
   return result;
 }
@@ -434,7 +471,10 @@ export function advance(state: StreamingMarkdownState, textSoFar: string): Strea
  *     between the marker's arrival and the line's completion);
  *  3. otherwise prose → today's pipeline, seeded with the settled parity.
  */
-function renderTail(s: StreamingMarkdownState): StreamingMarkdownResult {
+function renderTail(
+  s: StreamingMarkdownState,
+  image: MarkdownImageOptions | undefined,
+): StreamingMarkdownResult {
   // 1. Open top-level fence: everything from its opening line is code content.
   if (s.fence !== null && s.fence.start >= s.settledOffset) {
     let code = s.source.slice(s.fence.contentStart);
@@ -467,7 +507,8 @@ function renderTail(s: StreamingMarkdownState): StreamingMarkdownResult {
       const prose = s.source.slice(s.settledOffset, s.scanOffset);
       return {
         prefixHtml: s.prefixHtml,
-        tailHtml: renderMarkdownTail(prose, s.seed) + renderOpenFence(info, ""),
+        tailHtml:
+          renderMarkdownTail(prose, s.seed, renderOptionsOf(image)) + renderOpenFence(info, ""),
       };
     }
   }
@@ -475,6 +516,6 @@ function renderTail(s: StreamingMarkdownState): StreamingMarkdownResult {
   // 3. Prose tail.
   return {
     prefixHtml: s.prefixHtml,
-    tailHtml: renderMarkdownTail(s.source.slice(s.settledOffset), s.seed),
+    tailHtml: renderMarkdownTail(s.source.slice(s.settledOffset), s.seed, renderOptionsOf(image)),
   };
 }

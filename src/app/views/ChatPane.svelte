@@ -86,6 +86,7 @@
           thinkingKeyBase={store.activeChat.thinkingKeyBase}
           providerRetry={store.activeChat.providerRetry}
           apiBaseUrl={store.httpBase}
+          cwd={store.cwd}
           {cacheTimer}
         />
       {/key}

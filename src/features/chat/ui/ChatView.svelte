@@ -30,6 +30,7 @@
     thinkingKeyBase = 0,
     providerRetry = null,
     apiBaseUrl = "",
+    cwd = null,
     cacheTimer = null,
   }: {
     chunks: readonly RenderedChunk[];
@@ -59,6 +60,12 @@
      * "" (root-relative — a browser resolves `/images/…` against its origin).
      */
     apiBaseUrl?: string;
+    /**
+     * The active conversation's working directory (null when unset). Relative
+     * Markdown image srcs (`![x](shot.png)`) resolve against it; local absolute
+     * and `file://` paths do not need it. Passed to `Markdown` with `apiBaseUrl`.
+     */
+    cwd?: string | null;
     /**
      * The cache timer (gaps between model requests): a running step gap shows
      * live at the bottom (under the executing tools), a running turn gap live
@@ -187,7 +194,11 @@
     <div class="chat chat-start [&>.chat-bubble]:max-w-5xl">
       <div class="chat-bubble w-full bg-transparent">
         {#if rendered.chunk.type === "text"}
-          <Markdown text={rendered.chunk.text} streaming={rendered.streaming ?? false} />
+          <Markdown
+            text={rendered.chunk.text}
+            streaming={rendered.streaming ?? false}
+            image={{ apiBase: apiBaseUrl, cwd }}
+          />
         {:else if rendered.chunk.type === "error"}
           <div class="text-error" role="alert">
             {rendered.chunk.message}

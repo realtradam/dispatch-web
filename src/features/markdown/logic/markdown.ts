@@ -36,6 +36,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
+import { resolveImageUrl } from "../../../core/chunks";
 
 // Hot set: registered eagerly so common code blocks highlight on first paint.
 const HOT_LANGUAGES: Record<string, LanguageFn> = {
@@ -205,12 +206,106 @@ function sanitize(html: string): string {
   return purify.sanitize(html);
 }
 
+/**
+ * Per-conversation context for rendering local-path images inline. `apiBase`
+ * is the backend HTTP base (may be `""` → a root-relative `/local-image?…`);
+ * `cwd` resolves RELATIVE Markdown image srcs against the conversation's
+ * working directory (the same machine the backend serves files from).
+ */
+export interface MarkdownImageOptions {
+  readonly apiBase: string;
+  readonly cwd?: string | null;
+}
+
+/** Render options shared by all three render paths. */
+export interface MarkdownRenderOptions {
+  /** Balance dangling delimiters while the message is still generating. */
+  readonly streaming?: boolean;
+  /** Rewrite local-path image srcs through the backend's `/local-image` route. */
+  readonly image?: MarkdownImageOptions;
+}
+
+/** Decode a URL-ish path, tolerating malformed `%` escapes. */
+function safeDecode(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Rewrite one image `src` for the local-image feature. Pure: `input → output`.
+ *
+ * - `file:///path` → local absolute path (scheme stripped).
+ * - `/absolute/path` → local absolute path.
+ * - a relative path (no scheme, no leading `/`) → joined to the conversation
+ *   `cwd` (no `cwd` → left untouched).
+ * - `http(s)://…`, `data:`, and any other scheme → left untouched.
+ *
+ * Local paths become `${apiBase}/local-image?path=<encoded>`, reusing
+ * `resolveImageUrl`'s join-without-double-slash semantics (an empty `apiBase`
+ * yields a root-relative path).
+ */
+function rewriteImageSrc(src: string, image: MarkdownImageOptions): string {
+  const trimmed = src.trim();
+  if (trimmed.length === 0) return src;
+  // Remote images and inline data URLs already work — never touch them.
+  if (/^(?:data:|https?:\/\/)/i.test(trimmed)) return src;
+
+  let path: string;
+
+  if (/^file:\/\//i.test(trimmed)) {
+    // file:///abs/path (and file://localhost/abs/path) → /abs/path.
+    const match = /^file:\/\/([^/]*)(\/.*)?$/i.exec(trimmed);
+    if (match === null) return src;
+    const host = match[1] ?? "";
+    const filePath = match[2] ?? "/";
+    path = host === "" || host.toLowerCase() === "localhost" ? filePath : `/${host}${filePath}`;
+    path = safeDecode(path);
+  } else if (trimmed.startsWith("/")) {
+    path = safeDecode(trimmed);
+  } else if (trimmed.startsWith("~/")) {
+    // The backend expands a leading `~`; pass it through un-joined.
+    path = trimmed;
+  } else if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+    // Some other scheme (mailto:, ftp:, …) — leave it alone.
+    return src;
+  } else {
+    const cwd = image.cwd ?? null;
+    if (cwd === null || cwd.length === 0) return src;
+    const base = cwd.replace(/\/+$/, "");
+    path = `${base}/${safeDecode(trimmed.replace(/^\.\//, ""))}`;
+  }
+
+  return resolveImageUrl(`/local-image?path=${encodeURIComponent(path)}`, image.apiBase);
+}
+
+/**
+ * Parse with marked, optionally rewriting image token `href`s just before
+ * rendering. Doing it on the token stream (not the Markdown source) means
+ * fenced/inline code is never touched, and reference-style images resolve
+ * through marked's normal link resolution. When `image` is absent the parse is
+ * byte-identical to today's.
+ */
+function parseMarkdown(src: string, image?: MarkdownImageOptions): string {
+  if (image === undefined) return md.parse(src) as string;
+
+  const renderer = new md.Renderer();
+  const imageRenderer = renderer.image;
+  renderer.image = (token) =>
+    imageRenderer.call(renderer, {
+      ...token,
+      href: rewriteImageSrc(token.href, image),
+    });
+  return md.parse(src, { renderer }) as string;
+}
+
 /** Render Markdown to sanitized HTML. Returns `""` if parsing ever throws. */
-export function renderMarkdown(text: string, opts?: { streaming?: boolean }): string {
+export function renderMarkdown(text: string, opts?: MarkdownRenderOptions): string {
   const src = opts?.streaming === true ? closeOpenDelimiters(text) : text;
   try {
-    const raw = md.parse(src) as string;
-    return sanitize(addCopyButtons(raw));
+    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)));
   } catch {
     return "";
   }
@@ -225,11 +320,14 @@ export function renderMarkdown(text: string, opts?: { streaming?: boolean }): st
  * degenerate case (nothing settled yet) is exactly today's behavior.
  * Returns `""` if parsing ever throws.
  */
-export function renderMarkdownTail(text: string, seed: DelimiterCounts = ZERO_COUNTS): string {
+export function renderMarkdownTail(
+  text: string,
+  seed: DelimiterCounts = ZERO_COUNTS,
+  opts?: MarkdownRenderOptions,
+): string {
   const src = closeOpenDelimiters(text, seed);
   try {
-    const raw = md.parse(src) as string;
-    return sanitize(addCopyButtons(raw));
+    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)));
   } catch {
     return "";
   }
