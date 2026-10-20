@@ -27,7 +27,7 @@
 
 <Composer
   onSend={(text, images) => store.send(text, images)}
-  onQueue={(text) => store.queueMessage(text)}
+  onQueue={(text, images) => store.queueMessage(text, images)}
   onStop={() => store.stopGeneration()}
   contextSize={store.activeChat.currentContextSize}
   contextWindow={store.modelInfo[store.activeModel]?.contextWindow}

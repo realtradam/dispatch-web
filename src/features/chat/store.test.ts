@@ -255,7 +255,40 @@ describe("createChatStore", () => {
       expect(transport.sentQueue[0]?.type).toBe("chat.queue");
       expect(transport.sentQueue[0]?.conversationId).toBe(CONV_ID);
       expect(transport.sentQueue[0]?.text).toBe("steer left");
+      expect(transport.sentQueue[0]).not.toHaveProperty("images");
 
+      store.dispose();
+    });
+
+    it.each(["  describe this  ", "", "   "])("queues images with text %j", (text) => {
+      const transport = createFakeTransport();
+      const store = createChatStore({
+        conversationId: CONV_ID,
+        workspaceId: "images-workspace",
+        transport: transport.impl,
+        historySync: createFakeHistorySync().impl,
+        metricsSync: createFakeMetricsSync().impl,
+        cache: createFakeCache().impl,
+      });
+      const images: readonly ImageInput[] = [
+        { url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+        { url: "https://example.com/photo.jpg" },
+      ];
+
+      store.queueMessage(text, images);
+
+      expect(transport.sentQueue).toEqual([
+        {
+          type: "chat.queue",
+          conversationId: CONV_ID,
+          workspaceId: "images-workspace",
+          text: text.trim(),
+          images,
+        },
+      ]);
+      expect(transport.sentQueue[0]?.images).not.toBe(images);
+      expect(transport.sent).toHaveLength(0);
+      expect(store.chunks).toHaveLength(0);
       store.dispose();
     });
 
@@ -294,6 +327,7 @@ describe("createChatStore", () => {
 
       store.queueMessage("   ");
       store.queueMessage("");
+      store.queueMessage("", []);
 
       expect(transport.sentQueue).toHaveLength(0);
 

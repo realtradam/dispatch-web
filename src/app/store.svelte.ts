@@ -257,7 +257,7 @@ export interface AppStore {
    * auto-starts a turn (equivalent to `send`). Safe to offer whenever the user
    * wants to add input — the server owns the idle-vs-generating decision.
    */
-  queueMessage(text: string): void;
+  queueMessage(text: string, images?: readonly ImageInput[]): void;
   /**
    * Cancel (remove) a single queued steering message by id so it never runs
    * (`chat.queue.cancel` WS op). Fire-and-forget + idempotent: the
@@ -1983,13 +1983,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       }
     },
 
-    queueMessage(text: string): void {
+    queueMessage(text: string, images?: readonly ImageInput[]): void {
       // Only offered while generating (Composer switches to `chat.queue`
       // when `status === "running"`), so a draft (never generating) never
       // reaches here. `chat.queue` auto-starts a turn if idle, so even a race
       // (turn sealed between the status read and the send) is safe — the
       // server starts a fresh turn with the message as its opening prompt.
-      activeChat.queueMessage(text);
+      activeChat.queueMessage(text, images);
     },
 
     cancelQueuedMessage(messageId: string): void {

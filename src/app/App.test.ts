@@ -434,6 +434,53 @@ describe("App component interaction tests", () => {
     store.dispose();
   });
 
+  it.each([
+    "look at this",
+    "",
+  ])("queues staged images through the full UI with text %j", async (text) => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
+    });
+    ws.resolveOpen();
+    const { container } = render(App, { props: { store, onNavigate: vi.fn() } });
+    const user = userEvent.setup();
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(textarea, "start");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const conversationId = activeConversationId(store);
+    ws.feedServerMessage({
+      type: "chat.delta",
+      event: { type: "turn-start", conversationId, turnId: "t1" },
+    });
+    if (text) await user.type(textarea, text);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      value: [new File(["GIF"], "shot.gif", { type: "image/gif" })],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await screen.findByRole("button", { name: "Remove image" });
+    ws.sent.length = 0;
+
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(sentMessages(ws).filter((m: { type: string }) => m.type.startsWith("chat."))).toEqual([
+      {
+        type: "chat.queue",
+        conversationId,
+        workspaceId: "default",
+        text,
+        images: [{ url: "data:image/gif;base64,R0lG", mimeType: "image/gif" }],
+      },
+    ]);
+    expect(textarea).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+    store.dispose();
+  });
+
   it("incoming chat.delta renders text in the chat transcript", async () => {
     const ws = fakeSocket();
     const store = createAppStore({

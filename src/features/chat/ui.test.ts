@@ -1029,17 +1029,28 @@ describe("Composer", () => {
     expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
   });
 
-  it("queues (steers) text-only and never forwards images", async () => {
-    // While running, the Send button becomes "Queue"; steering is text-only.
+  it("still queues text-only with images omitted", async () => {
     const onQueue = vi.fn();
     const onSend = vi.fn();
     const user = userEvent.setup();
-    const { container } = render(Composer, { props: { onSend, onQueue, status: "running" } });
+    render(Composer, { props: { onSend, onQueue, status: "running" } });
+    await user.type(screen.getByRole("textbox", { name: "Message input" }), "steer{Enter}");
+    expect(onQueue).toHaveBeenCalledExactlyOnceWith("steer", undefined);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("queues text and images while running and clears the composer", async () => {
+    const onQueue = vi.fn();
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, {
+      props: { onSend, onQueue, status: "running", encodeJpeg: async () => null },
+    });
 
     const textarea = screen.getByRole("textbox", { name: "Message input" });
     await user.type(textarea, "steer here");
 
-    // Also stage an image — it must NOT be forwarded on a queue.
+    // Stage an image along with the steering text.
     const file = new File(["PNG"], "shot.png", { type: "image/png" });
     const input = container.querySelector('input[type="file"]') as HTMLInputElement;
     Object.defineProperty(input, "files", { value: [file], writable: false });
@@ -1049,8 +1060,66 @@ describe("Composer", () => {
     });
 
     await user.click(screen.getByRole("button", { name: "Queue" }));
-    expect(onQueue).toHaveBeenCalledWith("steer here");
+    expect(onQueue).toHaveBeenCalledExactlyOnceWith("steer here", [
+      { url: "data:image/png;base64,UE5H", mimeType: "image/png" },
+    ]);
     expect(onSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+  });
+
+  it.each(["running", "queued"] as const)("queues images-only while %s", async (status) => {
+    const onQueue = vi.fn();
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container } = render(Composer, { props: { onSend, onQueue, status } });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      value: [new File(["GIF"], "shot.gif", { type: "image/gif" })],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await screen.findByRole("button", { name: "Remove image" });
+
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(onQueue).toHaveBeenCalledExactlyOnceWith("", [
+      { url: "data:image/gif;base64,R0lG", mimeType: "image/gif" },
+    ]);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+  });
+
+  it.each([
+    "running",
+    "queued",
+  ] as const)("keeps images and text staged while %s without onQueue", async (status) => {
+    const onSend = vi.fn();
+    const user = userEvent.setup();
+    const { container, rerender } = render(Composer, { props: { onSend, status } });
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      value: [new File(["GIF"], "shot.gif", { type: "image/gif" })],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await screen.findByRole("button", { name: "Remove image" });
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(textarea, "{Enter}"); // image-only: no queue callback
+    await user.type(textarea, "keep this{Enter}");
+    container
+      .querySelector("form")
+      ?.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+
+    expect(onSend).not.toHaveBeenCalled();
+    expect(textarea).toHaveValue("keep this");
+    expect(screen.getByRole("button", { name: "Remove image" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Queue" })).toBeDisabled();
+    // Once idle, the same staged input can actually be sent.
+    await rerender({ status: "idle" });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    expect(onSend).toHaveBeenCalledExactlyOnceWith("keep this", [
+      { url: "data:image/gif;base64,R0lG", mimeType: "image/gif" },
+    ]);
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
   });
 });
 

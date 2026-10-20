@@ -159,9 +159,10 @@ export interface ChatStore {
    * auto-starts a turn with the message as its opening prompt (equivalent to
    * `chat.send`). No optimistic transcript echo — the queue SURFACE carries the
    * pending message until drain; the `steering` event places it in the
-   * transcript. `text` must be non-empty (the server 400/errors otherwise).
+   * transcript. Empty `text` is allowed when images are supplied. WS delivery
+   * is fire-and-forget; transport send is not a persistence acknowledgement.
    */
-  queueMessage(text: string): void;
+  queueMessage(text: string, images?: readonly ImageInput[]): void;
   /**
    * Cancel (remove) a single queued steering message by id so it never runs
    * (`chat.queue.cancel` WS op). Fire-and-forget + idempotent: success is
@@ -539,13 +540,14 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       deps.transport.send(msg);
     },
 
-    queueMessage(text: string): void {
+    queueMessage(text: string, images?: readonly ImageInput[]): void {
       const trimmed = text.trim();
-      if (trimmed.length === 0) return;
+      if (trimmed.length === 0 && !images?.length) return;
       const msg: ChatQueueMessage = {
         type: "chat.queue",
         conversationId: deps.conversationId,
         text: trimmed,
+        ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
       };
       deps.transport.send(msg);

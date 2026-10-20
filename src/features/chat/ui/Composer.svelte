@@ -70,10 +70,10 @@
     /**
      * Enqueue a steering message (`chat.queue`). When provided AND the status
      * is `running`, the send button becomes a "Queue" button that steers the
-     * in-flight turn instead of starting a new one. Steering is text-only —
-     * it never carries images (a mid-turn injection has no image surface).
+     * in-flight turn instead of starting a new one. Carries staged images just
+     * like onSend; without this callback, in-flight input stays staged.
      */
-    onQueue?: (text: string) => void;
+    onQueue?: (text: string, images?: ImageInput[]) => void;
     /** Stop the in-flight generation (`POST /conversations/:id/stop`). */
     onStop?: () => void;
     /**
@@ -107,23 +107,20 @@
 
   const hasText = $derived(text.trim().length > 0);
   const hasImages = $derived(images.length > 0);
-  const canSend = $derived(hasText || hasImages);
+  const inFlight = $derived(status === "running" || status === "queued");
+  const canSend = $derived((hasText || hasImages) && (!inFlight || onQueue !== undefined));
   const effectiveMax = $derived(contextWindow ?? FALLBACK_CONTEXT_WINDOW);
   const usage = $derived(computeContextUsage(contextSize, effectiveMax));
 
   // One button, three modes:
   // - idle → "Send" (starts a turn via chat.send)
-  // - running/queued + text → "Queue" (steers via chat.queue — text only)
+  // - running/queued + text/images → "Queue" (steers via chat.queue)
   // - running/queued + empty → "Stop" (aborts via POST /stop)
   // (`queued` behaves like `running` — the turn is in flight, just waiting for a
   // concurrency slot; the user can still steer or stop it.)
-  // Steering never carries images: when running with images staged but no text,
-  // the images stay staged (queue is text-only). Images-without-text while running
-  // is an unusual case that still sends (the server auto-starts/resolves).
-  const inFlight = $derived(status === "running" || status === "queued");
   const buttonMode = $derived.by<"send" | "queue" | "stop">(() => {
     if (inFlight && !hasText && !hasImages && onStop !== undefined) return "stop";
-    if (inFlight && hasText && onQueue !== undefined) return "queue";
+    if (inFlight) return "queue";
     return "send";
   });
   const placeholder = $derived(
@@ -283,15 +280,15 @@
     const trimmed = text.trim();
     // Allow a send with images even when text is empty (an image-only turn).
     if (trimmed.length === 0 && !hasImages) return;
-    if (buttonMode === "queue") {
-      // Steering is text-only — never forward images.
-      onQueue?.(trimmed);
+    const toSend = hasImages ? images.map((img) => imageInput(img)) : undefined;
+    if (inFlight) {
+      if (onQueue === undefined) return; // Keep staged input if no queue port is wired.
+      onQueue(trimmed, toSend);
     } else {
-      const toSend: ImageInput[] | undefined = hasImages
-        ? images.map((img) => imageInput(img))
-        : undefined;
       onSend(trimmed, toSend);
     }
+    // Clear only after handing the complete input to a callback. WS is still
+    // fire-and-forget: this does not imply backend storage has completed.
     text = "";
     images = [];
   }
