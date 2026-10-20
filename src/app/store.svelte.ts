@@ -903,6 +903,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   const metricsSync = createMetricsSync(httpBase, fetchImpl);
 
   const chatStores = new Map<string, ChatStore>();
+  // Includes in-flight loads: repeated activation must not start a second load.
+  const loadedConversationIds = new Set<string>();
 
   // Ephemeral chat stores for MODAL viewers (the heartbeat run-chat modal): a
   // watch on a conversation's live turn stream WITHOUT opening a tab. Separate
@@ -1141,7 +1143,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     return chatStores.get(activeId) ?? draftStore;
   }
 
+  function ensureLoaded(conversationId: string): void {
+    if (loadedConversationIds.has(conversationId)) return;
+    const store = chatStores.get(conversationId) ?? watchStores.get(conversationId);
+    if (store === undefined) return;
+    loadedConversationIds.add(conversationId);
+    void store.load();
+  }
+
   function refreshActiveChat(): void {
+    const activeId = tabsStore.activeConversationId;
+    if (activeId !== null) ensureLoaded(activeId);
     activeChat = getActiveChat();
   }
 
@@ -1199,12 +1211,15 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   function watchConversation(conversationId: string): ChatStore {
     // An open tab already has a live store + subscription — reuse it.
     const tabStore = chatStores.get(conversationId);
-    if (tabStore !== undefined) return tabStore;
+    if (tabStore !== undefined) {
+      ensureLoaded(conversationId);
+      return tabStore;
+    }
     const existing = watchStores.get(conversationId);
     if (existing !== undefined) return existing;
     const store = createChatFor(conversationId, activeModel, activeWorkspaceId);
     watchStores.set(conversationId, store);
-    void store.load();
+    ensureLoaded(conversationId);
     subscribeChat(conversationId);
     return store;
   }
@@ -1222,6 +1237,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     if (store === undefined) return;
     store.dispose();
     watchStores.delete(conversationId);
+    loadedConversationIds.delete(conversationId);
     unsubscribeChat(conversationId);
   }
 
@@ -1355,7 +1371,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
    * Open a conversation tab — used by the `conversation.open` WS broadcast
    * (CLI `--open` flag) and by `conversation.statusChanged` when a new active
    * conversation is discovered. If the conversation is already open, this is a
-   * no-op; otherwise create a chat store, load its history, subscribe to its live
+   * no-op; otherwise create a chat store, subscribe to its live
    * turns, and add the tab WITHOUT switching the active conversation (the user
    * stays on their current tab; the new tab appears in the strip). The tab is
    * stamped with the conversation's actual `workspaceId`, NOT the viewer's
@@ -1373,9 +1389,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     // never let the globally-active model overwrite a conversation's real one
     // (fix-toolcall-duplicate-keys plan Part 4).
     const tabModel = model ?? activeModel;
-    const store = createChatFor(conversationId, tabModel, workspaceId);
+    const store =
+      watchStores.get(conversationId) ?? createChatFor(conversationId, tabModel, workspaceId);
+    watchStores.delete(conversationId);
+    store.setModel(tabModel);
     chatStores.set(conversationId, store);
-    void store.load();
     subscribeChat(conversationId);
     tabsStore.openTab({
       conversationId,
@@ -1397,6 +1415,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       store.dispose();
       chatStores.delete(conversationId);
     }
+    loadedConversationIds.delete(conversationId);
     void cache.delete(conversationId);
     tabsStore.closeTab(conversationId);
     conversationStatuses.delete(conversationId);
@@ -1472,11 +1491,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           // tabs showing/overwriting the wrong model
           // (fix-toolcall-duplicate-keys plan Part 4).
           const model = conv.model ?? activeModel;
-          const store = createChatFor(conv.id, model, conv.workspaceId);
+          const store = watchStores.get(conv.id) ?? createChatFor(conv.id, model, conv.workspaceId);
+          watchStores.delete(conv.id);
+          store.setModel(model);
           chatStores.set(conv.id, store);
           // Seed the cache timer's turn gap (only an idle conversation is waiting on the user).
           if (conv.status === "idle") store.noteLastActivity(conv.lastActivityAt);
-          void store.load();
           subscribeChat(conv.id);
           tabsStore.openTab({
             conversationId: conv.id,
@@ -1605,14 +1625,20 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // history (dispose stale store + cache + re-fetch).
       const cid = msg.conversationId;
       const wasActive = tabsStore.activeConversationId === cid;
+      void cache.delete(cid);
+      if (!chatStores.has(cid) || !loadedConversationIds.delete(cid)) return;
       const store = chatStores.get(cid);
       if (store !== undefined) {
         store.dispose();
       }
-      void cache.delete(cid);
-      const fresh = createChatFor(cid, activeModel, activeWorkspaceId);
+      const tab = tabsStore.tabs.find((t) => t.conversationId === cid);
+      const fresh = createChatFor(
+        cid,
+        tab?.model ?? activeModel,
+        tab?.workspaceId ?? activeWorkspaceId,
+      );
       chatStores.set(cid, fresh);
-      void fresh.load();
+      ensureLoaded(cid);
       if (wasActive) {
         refreshActiveChat();
       }
@@ -1636,15 +1662,18 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // running while we were disconnected resumes streaming (server replays it
       // from `turn-start`); one that sealed while we were gone is committed from
       // history by `resync()` (which also clears a now-stale "generating").
+      // Unloaded tabs stay lazy — only their cheap live subscription is restored.
       for (const tab of tabsStore.tabs) {
         subscribeChat(tab.conversationId);
-        chatStores.get(tab.conversationId)?.resync();
+        if (loadedConversationIds.has(tab.conversationId)) {
+          chatStores.get(tab.conversationId)?.resync();
+        }
       }
       // Re-attach to every MODAL watch too (a run-chat modal open across a
       // reconnect keeps streaming). Watch stores are separate from tabs.
       for (const [watchId, watchStore] of watchStores) {
         subscribeChat(watchId);
-        watchStore.resync();
+        if (loadedConversationIds.has(watchId)) watchStore.resync();
       }
     },
     onExtensionsChanged(_msg: ExtensionsChangedMessage) {
@@ -1753,7 +1782,6 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       }
       const store = createChatFor(tab.conversationId, model, tab.workspaceId);
       chatStores.set(tab.conversationId, store);
-      void store.load();
       // Watch each restored conversation's live turns: after a reload mid-turn the
       // server replays the in-flight turn so we keep rendering it. Queued until the
       // socket opens.
@@ -1919,7 +1947,6 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           ...(snapshot ? { snapshot } : {}),
         });
         chatStores.set(conversationId, draftStore);
-        void draftStore.load();
 
         // Prepare next draft
         const nextDraftId = randomId();
@@ -3048,6 +3075,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         store.dispose();
       }
       watchStores.clear();
+      loadedConversationIds.clear();
       draftStore.dispose();
       socket?.close();
       socket = null;

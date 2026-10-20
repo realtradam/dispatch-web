@@ -1,6 +1,7 @@
 import type { ConversationHistoryResponse, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import type { NamedAgent } from "@dispatch/wire";
+import { IDBFactory } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
 import { createAppStore } from "./store.svelte";
@@ -1484,7 +1485,7 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
-  it("re-subscribes chat (and resyncs) for every open conversation on reconnect", async () => {
+  it("re-subscribes and resyncs a loaded conversation on reconnect", async () => {
     const fetchedUrls: string[] = [];
     const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
@@ -2578,5 +2579,257 @@ describe("createAppStore — Named Agents", () => {
     expect(store.activeModel).toBe("openai/gpt-4o");
     expect(store.namedAgentSnapshot).toBeNull();
     store.dispose();
+  });
+});
+
+describe("conversation load-on-demand", () => {
+  async function setup(
+    ws: WebSocketLike,
+    count = 3,
+    activeConversationId: string | null = "lazy-0",
+  ) {
+    const storage = createFakeStorage();
+    const conversations = Array.from({ length: count }, (_, i) => ({
+      id: `lazy-${i}`,
+      title: `Conversation ${i}`,
+      model: "openai/gpt-4o",
+      workspaceId: "default",
+      status: i === 1 ? "active" : "idle",
+      lastActivityAt: 1234,
+    }));
+    storage.setItem(
+      "dispatch.tabs",
+      JSON.stringify({
+        tabs: conversations.slice(0, Math.ceil(count / 2)).map((c) => ({
+          conversationId: c.id,
+          title: c.title,
+          model: c.model,
+          workspaceId: c.workspaceId,
+        })),
+        activeConversationId,
+      }),
+    );
+    const base = fakeFetchImpl();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/conversations?status=")) {
+        return Response.json({ conversations });
+      }
+      if (/\/conversations\/[^/?]+\?sinceSeq=/.test(url)) {
+        return Response.json({
+          chunks: [
+            { seq: 1, role: "user", turnId: "t1", chunk: { type: "text", text: "hi" } },
+            { seq: 2, role: "assistant", turnId: "t1", chunk: { type: "text", text: "hello" } },
+          ],
+          latestSeq: 2,
+        });
+      }
+      if (url.endsWith("/metrics")) return Response.json({ turns: [] });
+      return base(input, init);
+    });
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: storage,
+      indexedDB: new IDBFactory(),
+      chatFlushScheduler: null,
+    });
+    const requests = () =>
+      fetchImpl.mock.calls
+        .map(([url]) => new URL(String(url)).pathname + new URL(String(url)).search)
+        .filter((url) => /\/conversations\/[^/?]+(?:\?sinceSeq=|\/metrics$)/.test(url));
+    await vi.waitFor(() => expect(store.tabs).toHaveLength(count));
+    if (activeConversationId !== null) {
+      await vi.waitFor(() =>
+        expect(requests()).toContain(`/conversations/${activeConversationId}/metrics`),
+      );
+    }
+    return { store, requests };
+  }
+
+  it("boots 300 persisted/discovered tabs with only active history + metrics", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws, 300);
+    try {
+      ws.resolveOpen();
+      expect(requests()).toEqual([
+        "/conversations/lazy-0?sinceSeq=0&limit=192",
+        "/conversations/lazy-0/metrics",
+      ]);
+      expect(
+        parseSent(ws).filter((m) => (m as { type: string }).type === "chat.subscribe"),
+      ).toHaveLength(300);
+      expect(store.tabs[299]?.title).toBe("Conversation 299");
+      expect(store.conversationStatus("lazy-1")).toBe("active");
+      ws.feedServerMessage({
+        type: "conversation.statusChanged",
+        conversationId: "lazy-1",
+        workspaceId: "default",
+        status: "queued",
+      });
+      expect(store.conversationStatus("lazy-1")).toBe("queued");
+      expect(requests()).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("does not load any history while the active slot is a draft", async () => {
+    const { store, requests } = await setup(fakeSocket(), 300, null);
+    try {
+      expect(requests()).toEqual([]);
+      store.selectTab("lazy-0");
+      await vi.waitFor(() => expect(requests()).toContain("/conversations/lazy-0/metrics"));
+      expect(requests()).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("loads a tab once, including repeated activation while its load is pending", async () => {
+    const { store, requests } = await setup(fakeSocket());
+    try {
+      store.selectTab("lazy-2");
+      store.selectTab("lazy-0");
+      store.selectTab("lazy-2");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(requests().filter((u) => u.includes("lazy-2"))).toHaveLength(2);
+      expect(store.activeChat.cacheTimer.running?.startedAt).toBe(1234);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("re-subscribes all tabs on reconnect but resyncs only loaded tabs and watches", async () => {
+    const ws = reconnectableSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.open();
+      store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      ws.sent.length = 0;
+      const before = requests().length;
+      ws.closeRemote();
+      await new Promise((r) => setTimeout(r, 800));
+      ws.open();
+      await vi.waitFor(() => expect(requests()).toHaveLength(before + 4));
+      expect(
+        requests()
+          .slice(before)
+          .every((u) => /lazy-(0|watch)[/?]/.test(u)),
+      ).toBe(true);
+      expect(
+        parseSent(ws).filter((m) => (m as { type: string }).type === "chat.subscribe"),
+      ).toHaveLength(4);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("loads watches, including unloaded tabs, and loads disposed watches again", async () => {
+    const { store, requests } = await setup(fakeSocket());
+    try {
+      const watch = store.watchConversation("lazy-1");
+      store.watchConversation("lazy-1");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(watch.chunks).toHaveLength(2);
+      store.selectTab("lazy-1");
+      expect(requests()).toHaveLength(4);
+      store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+      store.unwatchConversation("lazy-watch");
+      const reopened = store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(8));
+      expect(reopened.chunks).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("merges pre-load live deltas with history without duplicate bubbles", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.resolveOpen();
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId: "lazy-1", turnId: "t1" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "user-message", conversationId: "lazy-1", turnId: "t1", text: "hi" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "text-delta", conversationId: "lazy-1", turnId: "t1", delta: "hello" },
+      });
+      expect(requests()).toHaveLength(2);
+      store.selectTab("lazy-1");
+      expect(store.activeChat.chunks.map((c) => c.chunk)).toEqual([
+        { type: "text", text: "hi" },
+        { type: "text", text: "hello" },
+      ]);
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(store.activeChat.chunks).toHaveLength(2);
+      expect(store.activeChat.chunks.every((c) => !c.provisional)).toBe(true);
+      expect(store.activeChat.generating).toBe(true);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("compaction reloads loaded stores but does not load unseen conversations", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.resolveOpen();
+      for (const id of ["lazy-1", "unknown", "lazy-0"]) {
+        ws.feedServerMessage({
+          type: "conversation.compacted",
+          conversationId: id,
+          newConversationId: `${id}-archive`,
+          messagesSummarized: 10,
+          messagesKept: 2,
+        });
+      }
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(requests().every((u) => u.includes("lazy-0"))).toBe(true);
+      store.selectTab("lazy-1");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+      expect(store.activeChat.chunks).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("keeps a watched store loaded when it becomes a tab, and reloads a closed tab", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.resolveOpen();
+      const watch = store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      ws.feedServerMessage({
+        type: "conversation.open",
+        conversationId: "lazy-watch",
+        workspaceId: "default",
+      });
+      store.selectTab("lazy-watch");
+      expect(store.activeChat.chunks).toEqual(watch.chunks);
+      store.unwatchConversation("lazy-watch");
+      expect(requests()).toHaveLength(4);
+      store.newDraft(); // Closing a background tab must not activate/load its neighbor.
+      store.closeTab("lazy-watch");
+      ws.feedServerMessage({
+        type: "conversation.open",
+        conversationId: "lazy-watch",
+        workspaceId: "default",
+      });
+      expect(requests()).toHaveLength(4);
+      store.selectTab("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+    } finally {
+      store.dispose();
+    }
   });
 });
