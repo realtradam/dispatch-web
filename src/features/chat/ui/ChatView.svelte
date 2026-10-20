@@ -78,6 +78,7 @@
 
   // True while a show-earlier page-in is awaited (disables the button).
   let loadingEarlier = $state(false);
+  let failedImages = $state<string[]>([]);
 
   async function showEarlier() {
     if (!onShowEarlier || loadingEarlier) return;
@@ -161,13 +162,22 @@
         {#if rendered.chunk.type === "text"}
           <p>{rendered.chunk.text}</p>
         {:else if rendered.chunk.type === "image"}
-          <img
-            src={resolveImageUrl(rendered.chunk.url, apiBaseUrl)}
-            alt={rendered.chunk.mimeType ?? "pasted image"}
-            loading="lazy"
-            decoding="async"
-            class="max-h-80 max-w-full rounded"
-          />
+          {#if failedImages.includes(rendered.chunk.url)}
+            <span class="text-sm opacity-70">image expired</span>
+          {:else}
+            <img
+              src={resolveImageUrl(rendered.chunk.url, apiBaseUrl)}
+              alt={rendered.chunk.mimeType ?? "pasted image"}
+              loading="lazy"
+              decoding="async"
+              onerror={() => {
+                if (rendered.chunk.type === "image" && rendered.chunk.url.startsWith("/images/")) {
+                  failedImages = [...failedImages, rendered.chunk.url];
+                }
+              }}
+              class="max-h-80 max-w-full rounded"
+            />
+          {/if}
         {/if}
       </div>
     </div>

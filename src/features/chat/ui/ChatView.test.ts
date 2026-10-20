@@ -1,5 +1,5 @@
 import type { StepId } from "@dispatch/wire";
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { RenderedChunk } from "../../../core/chunks";
@@ -496,4 +496,19 @@ it("renders a per-tool Phosphor icon in the header", () => {
   expect(icons).toHaveLength(2);
   // Different tools → different glyphs.
   expect(icons[0]?.innerHTML).not.toBe(icons[1]?.innerHTML);
+});
+
+it("replaces failed persisted images with an expired placeholder, without marking inline images expired", async () => {
+  const chunks: RenderedChunk[] = ["/images/conv/gone.png", "data:image/png;base64,AAAA"].map(
+    (url, i) => ({ seq: i + 1, role: "user", chunk: { type: "image", url }, provisional: false }),
+  );
+  render(ChatView, { chunks, apiBaseUrl: "https://backend.test" });
+  const [stored, inline] = screen.getAllByRole("img");
+  if (!stored || !inline) throw new Error("expected both images");
+  expect(stored).toHaveAttribute("src", "https://backend.test/images/conv/gone.png");
+  await fireEvent.error(inline);
+  expect(screen.queryByText("image expired")).toBeNull();
+  await fireEvent.error(stored);
+  expect(screen.getByText("image expired")).toBeInTheDocument();
+  expect(screen.getAllByRole("img")).toEqual([inline]);
 });
