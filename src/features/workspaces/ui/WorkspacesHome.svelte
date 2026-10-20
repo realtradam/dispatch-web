@@ -12,6 +12,7 @@
   import {
     DEFAULT_VIEWPORT,
     geometryFor,
+    mergeLayout,
     pack,
     type GridGeometry,
     type Span,
@@ -86,11 +87,15 @@
   });
 
   // ── The tile canvas' size decides the geometry (ONE pure function — no
-  // breakpoint classes). Unmeasured (tests) → the default landscape viewport.
+  // breakpoint classes). Start from the viewport, matching the boot probe;
+  // the canvas measurement then refines it (no transient wide reset on phones).
+  const initialViewport = typeof window === "undefined"
+    ? DEFAULT_VIEWPORT
+    : { width: window.innerWidth, height: window.innerHeight };
   let regionEl = $state<HTMLDivElement | undefined>();
   let size = $state<{ width: number; height: number } | undefined>();
   const geometry: GridGeometry = $derived(
-    geometryFor(size?.width ?? DEFAULT_VIEWPORT.width, size?.height ?? DEFAULT_VIEWPORT.height),
+    geometryFor(size?.width ?? initialViewport.width, size?.height ?? initialViewport.height),
   );
 
   $effect(() => {
@@ -115,7 +120,12 @@
 
   // The grid view: the SAME persisted data packs into either geometry —
   // positions re-derive here, spans clamp for the RENDER only.
-  const placements = $derived(pack(tiles.entries, geometry));
+  // Render-only fallback: workspace discovery must not wait for layout GET.
+  // Never sync/commit this provisional arrangement while the probe is unknown.
+  const entries = $derived(tiles.entries.length > 0
+    ? tiles.entries
+    : mergeLayout(null, store.list.map((ws) => ws.id)));
+  const placements = $derived(pack(entries, geometry));
   const workspacesById = $derived(new Map(store.list.map((ws) => [ws.id, ws])));
 
   // ── Selection + action bar ─────────────────────────────────────────────────

@@ -123,9 +123,12 @@ import {
   type VisionSettings,
   type VisionSettingsPatch,
 } from "../features/vision";
-import { createTileLayoutHttp } from "../features/workspaces/adapter/tile-layout-http";
-import type { TileLayoutStore } from "../features/workspaces/tile-layout-store.svelte";
-import { createTileLayoutStore } from "../features/workspaces/tile-layout-store.svelte";
+import {
+  createTileLayoutHttp,
+  createTileLayoutStore,
+  geometryFor,
+  type TileLayoutStore,
+} from "../features/workspaces";
 import { createPluginHost } from "./plugin-host.svelte";
 import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
@@ -816,6 +819,11 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // the debounced PUT + rollback, and the offline degrade.
   const tileLayoutStore = createTileLayoutStore({
     http: createTileLayoutHttp(httpBase, fetchImpl),
+    initialMode:
+      typeof window === "undefined"
+        ? "wide"
+        : geometryFor(window.innerWidth, window.innerHeight).mode,
+    storage: localStorageOpt,
   });
 
   /**

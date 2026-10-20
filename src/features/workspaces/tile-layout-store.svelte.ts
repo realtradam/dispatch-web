@@ -2,6 +2,7 @@ import type {
   TileLayoutData as ContractTileLayoutData,
   TileGeometryMode,
 } from "@dispatch/tile-layout-contract";
+import { createLocalStore } from "../../adapters/local-storage";
 import type { TileLayoutHttp } from "./adapter/tile-layout-http";
 import {
   type Cell,
@@ -25,7 +26,7 @@ import {
  *
  * - **Orientation selection** — `setMode(mode)` (the home page's effect on
  *   the resolved grid geometry) is the boot + orientation-change trigger:
- *   an orientation CHANGE resets to the local empty default and probes that
+ *   an orientation CHANGE seeds from its cached server layout and probes that
  *   orientation's document fresh. Same-mode calls are a no-op. The store
  *   probes its INITIAL mode on creation (the boot probe).
  * - **Server-backed** — a successful probe applies the server document;
@@ -38,7 +39,7 @@ import {
  *   clients; the client filters by mode).
  * - **Quiet degrade** — any probe/write failure (backend unreachable, routes
  *   not served) keeps the local state with EPHEMERAL edits (in-memory only —
- *   the retired localStorage write path is gone); logged once, no error UI.
+ *   only server-confirmed layouts are cached); logged once, no error UI.
  * - **Sync gating** — `sync(ids)` no-ops while the first probe for an
  *   orientation is in flight (`providerState === "unknown"`): merging the
  *   live workspace list into an unprobed empty document would PUT a wiped
@@ -61,7 +62,7 @@ export interface TileLayoutStore {
   /**
    * Select the active orientation and probe its document. Same-mode calls
    * are a no-op (the boot probe fires on creation for the initial mode);
-   * an orientation CHANGE resets to the local default + probes fresh.
+   * an orientation CHANGE seeds from its cache + probes fresh.
    */
   setMode(mode: TileGeometryMode): void;
   /** Re-probe the ACTIVE orientation's document (reconnect catch-up). */
@@ -96,6 +97,10 @@ export interface TileLayoutStore {
 export interface TileLayoutStoreOptions {
   /** The injected HTTP edge (the `home-tile-layout` plugin's routes). */
   readonly http: TileLayoutHttp;
+  /** Initial viewport orientation (default wide). */
+  readonly initialMode?: TileGeometryMode;
+  /** Injected localStorage for server-layout snapshots; absent → no cache. */
+  readonly storage?: Storage | undefined;
   /** Edit-PUT debounce window in ms (default 300; tests shrink it). */
   readonly debounceMs?: number;
   /** The quiet-failure hook (default `console.warn` — never an error UI). */
@@ -109,11 +114,16 @@ export function createTileLayoutStore(opts: TileLayoutStoreOptions): TileLayoutS
   const debounceMs = opts.debounceMs ?? DEFAULT_DEBOUNCE_MS;
   const warn = opts.warn ?? ((message: string) => console.warn(message));
 
-  let mode = $state<TileGeometryMode>("wide");
+  const cache = {
+    wide: createLocalStore<TileLayoutData>("dispatch.tile-layout.wide", { storage: opts.storage }),
+    tall: createLocalStore<TileLayoutData>("dispatch.tile-layout.tall", { storage: opts.storage }),
+  };
+  const initialMode = opts.initialMode ?? "wide";
+  let mode = $state<TileGeometryMode>(initialMode);
   // The ACTIVE orientation's document — the server's copy once a probe has
   // landed (sanitized defensively; the backend validates strictly), the
-  // empty default until then.
-  let data = $state<TileLayoutData>(sanitizeLayout(null));
+  // cached server snapshot (or empty default) until then. Never PUT the seed.
+  let data = $state<TileLayoutData>(sanitizeLayout(cache[initialMode].load()));
   let providerState = $state<TileLayoutProviderState>("unknown");
 
   /** The last document known to come from the server (GET / WS push / PUT echo) — the rollback target. */
@@ -141,6 +151,7 @@ export function createTileLayoutStore(opts: TileLayoutStoreOptions): TileLayoutS
   function applyServerLayout(next: TileLayoutData): void {
     lastServerLayout = next;
     data = next;
+    cache[mode].save(next);
   }
 
   function clearPutTimer(): void {
@@ -154,7 +165,10 @@ export function createTileLayoutStore(opts: TileLayoutStoreOptions): TileLayoutS
     putTimer = null;
     // Read the CURRENT document at fire time: a newer edit supersedes the
     // debounced snapshot (one in-flight write per window, last wins).
-    const result = await http.putLayout(mode, { version: 2, tiles: data.tiles });
+    const writtenMode = mode;
+    const result = await http.putLayout(writtenMode, { version: 2, tiles: data.tiles });
+    if (result.ok) cache[writtenMode].save(sanitizeLayout(result.layout));
+    if (writtenMode !== mode) return;
     if (result.ok) {
       notePresent();
       // The server's validated echo is the new rollback target.
@@ -227,12 +241,12 @@ export function createTileLayoutStore(opts: TileLayoutStoreOptions): TileLayoutS
     setMode(next) {
       if (next === mode) return;
       mode = next;
-      // The document belongs to the OLD orientation now: reset to the local
-      // default while the probe resolves (never flash the other
+      // The document belongs to the OLD orientation now: seed from this
+      // mode's cache while the probe resolves (never flash the other
       // orientation's arrangement), and drop any queued edit.
       clearPutTimer();
       lastServerLayout = null;
-      data = sanitizeLayout(null);
+      data = sanitizeLayout(cache[mode].load());
       providerState = "unknown";
       void runProbe();
     },

@@ -234,6 +234,29 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
+  it("probes only the portrait tile layout at boot and injects its cached document", () => {
+    const width = vi.spyOn(window, "innerWidth", "get").mockReturnValue(390);
+    const height = vi.spyOn(window, "innerHeight", "get").mockReturnValue(844);
+    const storage = createFakeStorage();
+    const cached = { version: 2, tiles: [{ id: "a", order: 0, colSpan: 2, rowSpan: 2 }] };
+    storage.setItem("dispatch.tile-layout.tall", JSON.stringify(cached));
+    const fetchImpl = vi.fn(fakeFetchImpl());
+    const store = createAppStore({ socketFactory: fakeSocket, fetchImpl, localStorage: storage });
+    try {
+      expect(store.tileLayout.mode).toBe("tall");
+      expect(store.tileLayout.entries).toEqual(cached.tiles);
+      expect(
+        fetchImpl.mock.calls
+          .map(([url]) => String(url))
+          .filter((url) => url.includes("/home/tile-layout/")),
+      ).toEqual([expect.stringMatching(/\/home\/tile-layout\/tall$/)]);
+    } finally {
+      store.dispose();
+      width.mockRestore();
+      height.mockRestore();
+    }
+  });
+
   it("updates catalog when catalog message arrives", () => {
     const ws = fakeSocket();
     const store = createAppStore({
