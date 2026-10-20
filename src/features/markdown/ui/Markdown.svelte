@@ -14,7 +14,8 @@
      * Per-conversation local-image context: the backend HTTP base and the
      * conversation cwd. Markdown image srcs that are local paths are rewritten
      * through `${apiBase}/local-image?path=…` (relative paths resolve against
-     * `cwd`); remote/data URLs are untouched. Omit it to render srcs as-is.
+     * `cwd`). Remote HTTP(S) images require a click; data, same-origin and
+     * backend images load inline. Omit it to skip local-path rewriting.
      */
     image?: MarkdownImageOptions;
   } = $props();
@@ -41,8 +42,8 @@
 
   let container: HTMLElement;
 
-  // One delegated listener on the stable container handles every code block's
-  // copy button — including blocks re-created when the tail html changes
+  // One delegated listener on the stable container handles image consent and
+  // every code block's copy button — including blocks re-created when the tail html changes
   // (streaming), since the listener lives on the container, not the buttons.
   // Clipboard is the edge effect; absent (insecure context) → no-op.
   $effect(() => {
@@ -52,6 +53,26 @@
     const onClick = (event: Event): void => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const remote = target.closest<HTMLButtonElement>("button.remote-image[data-src]");
+      if (remote !== null && el.contains(remote)) {
+        event.preventDefault(); // A Markdown image may be wrapped in a link.
+        event.stopPropagation();
+        // data-* is authorable in raw HTML: validate again at the DOM edge.
+        let url: URL;
+        try {
+          url = new URL(remote.dataset.src ?? "");
+        } catch {
+          return;
+        }
+        if (url.protocol !== "http:" && url.protocol !== "https:") return;
+        const img = el.ownerDocument.createElement("img");
+        img.alt = remote.dataset.alt ?? "";
+        if (remote.dataset.title !== undefined) img.title = remote.dataset.title;
+        img.setAttribute("referrerpolicy", "no-referrer");
+        img.src = url.href;
+        remote.replaceWith(img);
+        return;
+      }
       const button = target.closest<HTMLButtonElement>("[data-copy]");
       if (button === null) return;
 

@@ -39,6 +39,45 @@ describe("Markdown", () => {
     expect(writeText.mock.calls[0]?.[0]).toContain("const x = 1;");
   });
 
+  it.each([
+    false,
+    true,
+  ])("loads only the clicked remote image (streaming=%s)", async (streaming) => {
+    const { container } = render(Markdown, {
+      props: {
+        text: '![first](https://evil.example/a.png "A title")\n\n![second](https://other.example/b.png)',
+        streaming,
+      },
+    });
+    expect(container.querySelector("img")).toBeNull();
+    const button = screen.getByRole("button", { name: "Load image from evil.example" });
+    await fireEvent.click(button);
+    const img = container.querySelector("img");
+    expect(img?.getAttribute("src")).toBe("https://evil.example/a.png");
+    expect(img?.getAttribute("alt")).toBe("first");
+    expect(img?.getAttribute("title")).toBe("A title");
+    expect(img?.getAttribute("referrerpolicy")).toBe("no-referrer");
+    expect(
+      screen.getByRole("button", { name: "Load image from other.example" }),
+    ).toBeInTheDocument();
+  });
+
+  it("rejects an unsafe URL in a forged placeholder", async () => {
+    const { container } = render(Markdown, {
+      props: { text: '<button class="remote-image" data-src="javascript:alert(1)">Load</button>' },
+    });
+    await fireEvent.click(screen.getByRole("button", { name: "Load" }));
+    expect(container.querySelector("img")).toBeNull();
+  });
+
+  it("delegates clicks on newly rendered images and prevents linked-image navigation", async () => {
+    const { container, rerender } = render(Markdown, { props: { text: "start" } });
+    await rerender({ text: "[![pic](https://evil.example/a.png)](https://other.example)" });
+    const button = screen.getByRole("button", { name: "Load image from evil.example" });
+    expect(await fireEvent.click(button)).toBe(false);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe("https://evil.example/a.png");
+  });
+
   it("non-streaming renders a single container (today's full-render path)", () => {
     const { container } = render(Markdown, { props: { text: "# Hello" } });
     expect(container.querySelector(".markdown-stream-prefix")).toBeNull();

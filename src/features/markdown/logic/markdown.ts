@@ -186,24 +186,47 @@ function addCopyButtons(html: string): string {
 }
 
 /**
- * A DEDICATED DOMPurify instance (not the shared default export) so the
- * link hook below only applies to chat Markdown, never to any other sanitizer
- * user. Every link opens in a NEW TAB: after DOMPurify has allowlisted the
- * attributes, each `<a href>` gets `target="_blank"` + `rel="noopener
- * noreferrer"` (the opened page can't reach `window.opener` or see a referrer).
- * Applied in the hook, so it covers marked links, autolinks, AND raw-HTML
- * anchors alike — and the hook overwrites any author-supplied target/rel.
+ * A dedicated, render-local DOMPurify instance: hooks never affect another
+ * consumer or retain a conversation's backend allowlist. The document base is
+ * part of the sanitizer's existing DOM dependency; no location/state is cached.
  */
-const purify = DOMPurify();
-purify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A" && node.hasAttribute("href")) {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
-  }
-});
+function sanitize(html: string, image?: MarkdownImageOptions): string {
+  const purify = DOMPurify();
+  const base = document.baseURI;
+  const origin = new URL(base).origin;
+  const backendOrigin = image === undefined ? origin : new URL(image.apiBase || base, base).origin;
+  purify.addHook("afterSanitizeAttributes", (node) => {
+    if (node.tagName === "A" && node.hasAttribute("href")) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+    if (node.tagName !== "IMG") return;
+    const src = node.getAttribute("src");
+    if (src === null) return;
+    let url: URL;
+    try {
+      url = new URL(src, base);
+    } catch {
+      node.removeAttribute("src");
+      return;
+    }
+    if (url.protocol !== "http:" && url.protocol !== "https:") return;
+    if (url.origin === origin || url.origin === backendOrigin) return;
 
-function sanitize(html: string): string {
-  return purify.sanitize(html);
+    // Only safe, inert attributes are carried over. In particular, never copy
+    // srcset or author event handlers to the image created after consent.
+    const button = node.ownerDocument.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("class", "remote-image btn btn-sm");
+    button.setAttribute("data-src", url.href);
+    button.setAttribute("data-alt", node.getAttribute("alt") ?? "");
+    const title = node.getAttribute("title");
+    if (title !== null) button.setAttribute("data-title", title);
+    button.textContent = `Load image from ${url.host}`;
+    node.parentNode?.replaceChild(button, node);
+  });
+  // Responsive candidates on <img>/<picture> must not bypass the src hook.
+  return purify.sanitize(html, { FORBID_ATTR: ["srcset"] });
 }
 
 /**
@@ -250,8 +273,9 @@ function safeDecode(path: string): string {
 function rewriteImageSrc(src: string, image: MarkdownImageOptions): string {
   const trimmed = src.trim();
   if (trimmed.length === 0) return src;
-  // Remote images and inline data URLs already work — never touch them.
-  if (/^(?:data:|https?:\/\/)/i.test(trimmed)) return src;
+  // Network-path URLs (including browser-normalized backslashes) are URLs,
+  // not local filesystem paths. The sanitizer applies the consent policy.
+  if (/^(?:data:|https?:\/\/)/i.test(trimmed) || /^[/\\]{2}/.test(trimmed)) return src;
 
   let path: string;
 
@@ -305,7 +329,7 @@ function parseMarkdown(src: string, image?: MarkdownImageOptions): string {
 export function renderMarkdown(text: string, opts?: MarkdownRenderOptions): string {
   const src = opts?.streaming === true ? closeOpenDelimiters(text) : text;
   try {
-    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)));
+    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)), opts?.image);
   } catch {
     return "";
   }
@@ -327,7 +351,7 @@ export function renderMarkdownTail(
 ): string {
   const src = closeOpenDelimiters(text, seed);
   try {
-    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)));
+    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)), opts?.image);
   } catch {
     return "";
   }

