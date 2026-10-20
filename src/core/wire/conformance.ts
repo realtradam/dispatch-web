@@ -32,6 +32,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
       return "done";
     case "turn-sealed":
       return "turn-sealed";
+    case "turn-ended":
+      return "turn-ended";
     case "step-complete":
       return "step-complete";
     case "steering":

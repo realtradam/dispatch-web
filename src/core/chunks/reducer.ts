@@ -408,6 +408,9 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       // (already true from `turn-start`) is left untouched.
       return { ...state, providerRetry: event };
     }
+
+    default:
+      return state; // Forward-compatible with additive wire events.
   }
 }
 

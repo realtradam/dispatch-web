@@ -75,6 +75,7 @@ describe("classifies every AgentEvent type", () => {
     { type: "error", conversationId: "c1", turnId: "t1", message: "oops" },
     { type: "done", conversationId: "c1", turnId: "t1", reason: "complete" },
     { type: "turn-sealed", conversationId: "c1", turnId: "t1" },
+    { type: "turn-ended", conversationId: "c1", turnId: "t1", reason: "sealed" },
     { type: "steering", conversationId: "c1", turnId: "t1", text: "steer mid-turn" },
     {
       type: "provider-retry",
@@ -103,13 +104,14 @@ describe("classifies every AgentEvent type", () => {
       "error",
       "done",
       "turn-sealed",
+      "turn-ended",
       "steering",
       "provider-retry",
     ]);
   });
 
-  it("covers all 15 AgentEvent variants", () => {
-    expect(samples).toHaveLength(15);
+  it("covers all 16 AgentEvent variants", () => {
+    expect(samples).toHaveLength(16);
   });
 });
 

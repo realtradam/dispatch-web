@@ -1051,3 +1051,13 @@ describe("turnId provenance on live chunks", () => {
     expect(selectChunks(s).map((c) => c.turnId)).toEqual(["t9", undefined]);
   });
 });
+
+describe("foldEvent — additive wire compatibility", () => {
+  it.each(["turn-ended", "future-event"])("preserves transcript identity for %s", (type) => {
+    const state = foldEvent(foldEvent(initialState(), turnStart("t1")), textDelta("t1", "partial"));
+    const before = structuredClone(state);
+    const event = { type, conversationId: "c1", turnId: "t1", reason: "sealed" };
+    expect(foldEvent(state, event as Parameters<typeof foldEvent>[1])).toBe(state);
+    expect(state).toEqual(before);
+  });
+});
