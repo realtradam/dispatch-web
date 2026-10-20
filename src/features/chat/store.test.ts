@@ -1,5 +1,8 @@
 import type { AgentEvent, ImageInput, StepId, StoredChunk } from "@dispatch/wire";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
+import { createIdbChunkStore } from "../../adapters/idb";
+import { createConversationCache } from "../conversation-cache";
 import { createChatStore } from "./store.svelte";
 import {
   createFakeCache,
@@ -528,7 +531,7 @@ describe("createChatStore", () => {
     store.dispose();
   });
 
-  it("overlapping syncs are guarded", async () => {
+  it("overlapping syncs coalesce into a sequential rerun", async () => {
     const transport = createFakeTransport();
     const _historySync = createFakeHistorySync();
     const metricsSync = createFakeMetricsSync();
@@ -546,7 +549,7 @@ describe("createChatStore", () => {
       if (callCount === 1) {
         await firstSyncPromise;
       }
-      return { chunks: [], latestSeq: sinceSeq };
+      return { chunks: [], latestSeq: sinceSeq, historyEpoch: 0 };
     };
 
     const store = createChatStore({
@@ -573,7 +576,7 @@ describe("createChatStore", () => {
 
     // Release the first sync
     resolveFirstSync?.();
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(callCount).toBe(2));
 
     store.dispose();
   });
@@ -1645,6 +1648,7 @@ describe("createChatStore", () => {
     });
     await store.load(); // only 50 chunks → all loaded, window starts at seq 1
     expect(store.chunks).toHaveLength(50);
+    await store.showEarlier(); // Probe server exhaustion; seq 1 alone is not a boundary.
     expect(store.hasEarlier).toBe(false);
     const callsAfterLoad = historySync.calls.length;
 
@@ -1891,4 +1895,97 @@ describe("createChatStore — cacheTimer", () => {
     expect(busy.cacheTimer.running).toBeNull();
     busy.dispose();
   });
+});
+
+describe("history epochs", () => {
+  it.each([
+    "tail",
+    "backfill",
+  ])("recovers missed compaction on %s and exhausts non-1 history", async (path) => {
+    const history = createFakeHistorySync();
+    const cache = createFakeCache();
+    history.returnChunks = Array.from({ length: 20 }, (_, i) => makeStoredChunk(i + 1));
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: history.impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: cache.impl,
+      chatLimit: 10,
+    });
+    await store.load();
+    history.historyEpoch = 1;
+    history.returnChunks = [makeStoredChunk(101), makeStoredChunk(102)];
+    if (path === "tail") {
+      store.resync();
+      await vi.waitFor(() => expect(store.chunks[0]?.seq).toBe(101));
+    } else await store.showEarlier();
+    expect(store.chunks.map((c) => c.seq)).toEqual([101, 102]);
+    expect((await cache.impl.load(CONV_ID)).map((c) => c.seq)).toEqual([101, 102]);
+    expect(history.calls.at(-1)).toMatchObject({ sinceSeq: 0, window: { limit: 7 } });
+    expect(store.hasEarlier).toBe(false);
+    const calls = history.calls.length;
+    await store.showEarlier();
+    expect(history.calls).toHaveLength(calls);
+    store.dispose();
+  });
+});
+
+it("a compaction broadcast during an in-flight fetch discards the old response", async () => {
+  const history = createFakeHistorySync();
+  history.returnChunks = [makeStoredChunk(101)];
+  let resolve!: (res: import("@dispatch/transport-contract").ConversationHistoryResponse) => void;
+  const first = new Promise<import("@dispatch/transport-contract").ConversationHistoryResponse>(
+    (r) => {
+      resolve = r;
+    },
+  );
+  const sync = vi
+    .fn<import("./ports").HistorySync>()
+    .mockImplementationOnce(() => first)
+    .mockImplementation(history.impl);
+  const cache = createFakeCache();
+  const store = createChatStore({
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: sync,
+    metricsSync: createFakeMetricsSync().impl,
+    cache: cache.impl,
+  });
+  const loading = store.load();
+  await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+  history.historyEpoch = 1;
+  store.resync(1);
+  resolve({ chunks: [makeStoredChunk(1)], latestSeq: 1, historyEpoch: 0 });
+  await loading;
+  expect(sync).toHaveBeenCalledTimes(2);
+  expect(store.chunks.map((c) => c.seq)).toEqual([101]);
+  expect((await cache.impl.load(CONV_ID)).map((c) => c.seq)).toEqual([101]);
+  store.dispose();
+});
+
+it("reloads unknown legacy cache epochs rather than merging pre-upgrade rows", async () => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const storage = createIdbChunkStore({ indexedDB: new IDBFactory() });
+  const cache = createConversationCache(storage);
+  await storage.append(CONV_ID, [makeStoredChunk(1)]);
+  const history = createFakeHistorySync();
+  history.returnChunks = [makeStoredChunk(101)];
+  const store = createChatStore({
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: history.impl,
+    metricsSync: createFakeMetricsSync().impl,
+    cache,
+  });
+  try {
+    await store.load();
+    expect(history.calls[0]).toMatchObject({ sinceSeq: 0 });
+    expect(store.chunks.map((c) => c.seq)).toEqual([101]);
+    expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+    expect((await cache.load(CONV_ID)).map((c) => c.seq)).toEqual([101]);
+  } finally {
+    store.dispose();
+    vi.unstubAllGlobals();
+  }
 });

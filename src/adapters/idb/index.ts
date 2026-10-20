@@ -20,6 +20,7 @@ interface ChunkRecord {
 interface MetaRecord {
   conversationId: string;
   lastAccess: number;
+  historyEpoch?: number;
 }
 
 export interface CreateIdbChunkStoreOptions {
@@ -92,6 +93,26 @@ export function createIdbChunkStore(opts?: CreateIdbChunkStoreOptions): Conversa
   }
 
   return {
+    async historyEpoch(conversationId) {
+      const db = await getDb();
+      const tx = db.transaction(META_STORE, "readonly");
+      const meta = await requestToPromise<MetaRecord | undefined>(
+        tx.objectStore(META_STORE).get(conversationId),
+      );
+      await txComplete(tx);
+      return meta?.historyEpoch;
+    },
+    async reset(conversationId, historyEpoch) {
+      const db = await getDb();
+      const tx = db.transaction([CHUNKS_STORE, META_STORE], "readwrite");
+      tx.objectStore(CHUNKS_STORE).delete(keyRangeFor(conversationId));
+      tx.objectStore(META_STORE).put({
+        conversationId,
+        historyEpoch,
+        lastAccess: Date.now(),
+      } satisfies MetaRecord);
+      await txComplete(tx);
+    },
     async load(conversationId: string): Promise<readonly StoredChunk[]> {
       const db = await getDb();
       const tx = db.transaction(CHUNKS_STORE, "readonly");
@@ -122,7 +143,9 @@ export function createIdbChunkStore(opts?: CreateIdbChunkStoreOptions): Conversa
         } satisfies ChunkRecord);
       }
 
+      const meta = await requestToPromise<MetaRecord | undefined>(metaStore.get(conversationId));
       metaStore.put({
+        ...meta,
         conversationId,
         lastAccess: Date.now(),
       } satisfies MetaRecord);

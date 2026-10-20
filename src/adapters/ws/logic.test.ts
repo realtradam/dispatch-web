@@ -562,3 +562,18 @@ describe("parseServerMessage — subagent tab groups", () => {
     ).toBeNull();
   });
 });
+
+it("preserves a compaction epoch and rejects absent or invalid epochs", () => {
+  const msg = {
+    type: "conversation.compacted",
+    conversationId: "c",
+    newConversationId: "archive",
+    messagesSummarized: 2,
+    messagesKept: 1,
+    historyEpoch: 7,
+  };
+  expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+  for (const historyEpoch of [undefined, -1, 1.5, "7"]) {
+    expect(parseServerMessage(JSON.stringify({ ...msg, historyEpoch }))).toBeNull();
+  }
+});

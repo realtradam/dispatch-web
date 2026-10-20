@@ -209,7 +209,9 @@ export interface ChatStore {
    * running, the server's post-subscribe replay re-asserts `generating`. The
    * app store pairs this with a `chat.subscribe` for the conversation.
    */
-  resync(): void;
+  resync(historyEpoch?: number): void;
+  /** Discard pre-replacement transcript state without loading an unseen conversation. */
+  invalidateHistory(historyEpoch: number): void;
   dispose(): void;
 }
 
@@ -223,6 +225,23 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
   let cacheTimer = $state<CacheTimerState>(initialCacheTimerState());
   const now = deps.now ?? Date.now;
   let disposed = false;
+  let rerunRequested = false;
+  let historyEpoch: number | undefined;
+  let revision = 0;
+  let reloadWindow = false;
+  let earliestSeq = $state<number | null>(null);
+
+  function resetTranscript(epoch: number): void {
+    historyEpoch = epoch;
+    revision++;
+    reloadWindow = true;
+    transcript = initialState();
+    earliestSeq = null;
+    pendingEvents = [];
+  }
+  function hasEarlier(): boolean {
+    return selectHasEarlier(transcript, earliestSeq);
+  }
 
   /** The most recent turn's id (resolves a seeded turn gap when it is stamped). */
   function lastTurnIdOf(m: MetricsState): string | undefined {
@@ -313,21 +332,58 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
    * between the cache and the fetched window.
    */
   async function syncTail(coldLimit?: number): Promise<void> {
-    if (disposed || _pendingSync) return;
-    _pendingSync = true;
-    try {
-      const since = await deps.cache.sinceSeq(deps.conversationId);
-      const window = since === 0 && coldLimit !== undefined ? { limit: coldLimit } : undefined;
-      const res = await deps.historySync(deps.conversationId, since, window);
-      const merged = await deps.cache.commit(deps.conversationId, res.chunks);
-      transcript = applyHistory(transcript, merged);
-      maybeTrim();
-      _error = null;
-    } catch (err) {
-      _error = err instanceof Error ? err.message : String(err);
-    } finally {
-      _pendingSync = false;
+    if (disposed) return;
+    if (_pendingSync) {
+      rerunRequested = true;
+      return;
     }
+    _pendingSync = true;
+    do {
+      rerunRequested = false;
+      try {
+        const currentRevision = revision;
+        const cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+        if (historyEpoch !== undefined && cachedEpoch !== historyEpoch)
+          await deps.cache.reset(deps.conversationId, historyEpoch);
+        const since =
+          cachedEpoch === undefined ? 0 : await deps.cache.sinceSeq(deps.conversationId);
+        const limit =
+          since === 0 ? (reloadWindow ? initialWindowSize(chatLimit) : coldLimit) : undefined;
+        const res = await deps.historySync(
+          deps.conversationId,
+          since,
+          limit === undefined ? undefined : { limit },
+        );
+        if (disposed) break;
+        if (revision !== currentRevision) {
+          rerunRequested = true;
+          continue;
+        }
+        if (
+          (cachedEpoch !== undefined && cachedEpoch !== res.historyEpoch) ||
+          (historyEpoch !== undefined && historyEpoch !== res.historyEpoch)
+        ) {
+          resetTranscript(res.historyEpoch);
+          await deps.cache.reset(deps.conversationId, res.historyEpoch);
+          if (since !== 0) {
+            rerunRequested = true;
+            continue;
+          }
+        }
+        reloadWindow = false;
+        historyEpoch = res.historyEpoch;
+        const merged = await deps.cache.commit(deps.conversationId, res.chunks, res.historyEpoch);
+        if (disposed || historyEpoch !== res.historyEpoch) continue;
+        if (since === 0 && (limit === undefined || res.chunks.length < limit))
+          earliestSeq = merged[0]?.seq ?? 0;
+        transcript = applyHistory(transcript, merged);
+        maybeTrim();
+        _error = null;
+      } catch (err) {
+        _error = err instanceof Error ? err.message : String(err);
+      }
+    } while (rerunRequested && !disposed);
+    _pendingSync = false;
   }
 
   async function syncMetrics(): Promise<void> {
@@ -351,14 +407,25 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
    * newest `count` of them). Shared by `showEarlier` and the raise-refill.
    */
   async function backfillOlder(oldest: number, want: number): Promise<readonly StoredChunk[]> {
+    const currentRevision = revision;
     let earlier = (await deps.cache.load(deps.conversationId)).filter((c) => c.seq < oldest);
+    if (disposed || revision !== currentRevision) return [];
     const oldestKnown = earlier[0]?.seq ?? oldest;
-    if (earlier.length < want && oldestKnown > 1) {
+    if (earlier.length < want && (earliestSeq === null || oldestKnown > earliestSeq)) {
       const res = await deps.historySync(deps.conversationId, 0, {
         beforeSeq: oldestKnown,
         limit: want - earlier.length,
       });
-      const merged = await deps.cache.commit(deps.conversationId, res.chunks);
+      if (disposed || revision !== currentRevision) return [];
+      if (res.historyEpoch !== historyEpoch) {
+        resetTranscript(res.historyEpoch);
+        await deps.cache.reset(deps.conversationId, res.historyEpoch);
+        await syncTail(initialWindowSize(chatLimit));
+        return [];
+      }
+      const merged = await deps.cache.commit(deps.conversationId, res.chunks, res.historyEpoch);
+      if (disposed || revision !== currentRevision) return [];
+      if (res.chunks.length < want - earlier.length) earliestSeq = merged[0]?.seq ?? 0;
       earlier = merged.filter((c) => c.seq < oldest);
     }
     return earlier;
@@ -368,15 +435,15 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
    * Refill toward the fresh-load window after a limit RAISE: pull older
    * history (cache first, then server) so the loaded set grows to match what a
    * fresh `load()` would show at the new limit. No-op when already at the
-   * origin (seq 1) or already within the window. `restoreEarlier` re-derives
+   * known history boundary or already within the window. `restoreEarlier` re-derives
    * the window start at apply time, so a delta landing during the await can't
    * corrupt the merge. NOT gated (refilling prepends above the viewport; the
    * caller preserves scroll position).
    */
   async function refill(): Promise<void> {
     if (disposed) return;
+    if (!hasEarlier()) return;
     const oldest = transcript.committed[0]?.seq ?? transcript.hiddenBeforeSeq;
-    if (oldest <= 1) return;
     const want = initialWindowSize(chatLimit) - transcript.committed.length;
     if (want <= 0) return;
     try {
@@ -418,7 +485,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       return _model;
     },
     get hasEarlier(): boolean {
-      return selectHasEarlier(transcript);
+      return hasEarlier();
     },
     get thinkingKeyBase(): number {
       return transcript.hiddenThinkingCount;
@@ -524,8 +591,11 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       // server instead (CR-5 `?limit=`), so a huge conversation never ships
       // whole. The post-sync window re-asserts the cap either way.
       const windowSize = initialWindowSize(chatLimit);
+      const currentRevision = revision;
+      const cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
       const cached = await deps.cache.load(deps.conversationId);
-      if (cached.length > 0) {
+      if (!disposed && revision === currentRevision && cachedEpoch !== undefined) {
+        historyEpoch = cachedEpoch;
         transcript = windowTranscript(applyHistory(transcript, cached), windowSize);
       }
       await syncTail(windowSize);
@@ -536,7 +606,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     async showEarlier(): Promise<void> {
       if (disposed) return;
       const oldest = transcript.committed[0]?.seq ?? transcript.hiddenBeforeSeq;
-      if (oldest <= 1) return;
+      if (!hasEarlier()) return;
       const want = unloadCount(chatLimit);
       try {
         const earlier = await backfillOlder(oldest, want);
@@ -547,8 +617,14 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       }
     },
 
-    resync(): void {
+    invalidateHistory(epoch): void {
+      if (!disposed && (historyEpoch === undefined || epoch > historyEpoch)) resetTranscript(epoch);
+    },
+
+    resync(epoch?: number): void {
       if (disposed) return;
+      if (epoch !== undefined && (historyEpoch === undefined || epoch > historyEpoch))
+        resetTranscript(epoch);
       // A turn may have sealed while we were disconnected (missed `turn-sealed`):
       // clear the now-stale spinner BEFORE re-subscribing, so a finished turn
       // doesn't spin forever. A still-running turn's replay re-asserts it.

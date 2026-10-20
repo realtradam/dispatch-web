@@ -184,6 +184,7 @@ describe("classifies every WsServerMessage type", () => {
         conversationId: "c1",
         newConversationId: "c2",
         messagesSummarized: 10,
+        historyEpoch: 0,
         messagesKept: 5,
       },
     ];
@@ -268,6 +269,7 @@ describe("ConversationHistoryResponse shape is constructible", () => {
   it("constructs a response with chunks", () => {
     const resp: ConversationHistoryResponse = {
       chunks: [{ seq: 1, role: "user", chunk: { type: "text", text: "hi" } }],
+      historyEpoch: 0,
       latestSeq: 1,
     };
     expect(resp.chunks).toHaveLength(1);
@@ -275,7 +277,7 @@ describe("ConversationHistoryResponse shape is constructible", () => {
   });
 
   it("constructs an empty (caught-up) response", () => {
-    const resp: ConversationHistoryResponse = { chunks: [], latestSeq: 5 };
+    const resp: ConversationHistoryResponse = { chunks: [], historyEpoch: 0, latestSeq: 5 };
     expect(resp.chunks).toHaveLength(0);
     expect(resp.latestSeq).toBe(5);
   });

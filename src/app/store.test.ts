@@ -195,7 +195,8 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
       }
       if (/^\/conversations\/[^/]+$/.test(pathname) && searchParams.has("sinceSeq")) {
         return Response.json(
-          history[url] ?? ({ chunks: [], latestSeq: 0 } satisfies ConversationHistoryResponse),
+          history[url] ??
+            ({ chunks: [], historyEpoch: 0, latestSeq: 0 } satisfies ConversationHistoryResponse),
         );
       }
     }
@@ -682,6 +683,7 @@ describe("createAppStore", () => {
         { seq: 1, role: "user", chunk: { type: "text", text: "hi" } },
         { seq: 2, role: "assistant", chunk: { type: "text", text: "hello!" } },
       ],
+      historyEpoch: 0,
       latestSeq: 2,
     };
     const base = fakeFetchImpl();
@@ -2743,6 +2745,7 @@ describe("conversation load-on-demand", () => {
             { seq: 1, role: "user", turnId: "t1", chunk: { type: "text", text: "hi" } },
             { seq: 2, role: "assistant", turnId: "t1", chunk: { type: "text", text: "hello" } },
           ],
+          historyEpoch: 0,
           latestSeq: 2,
         });
       }
@@ -2907,12 +2910,21 @@ describe("conversation load-on-demand", () => {
     const { store, requests } = await setup(ws);
     try {
       ws.resolveOpen();
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId: "lazy-1", turnId: "old" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "text-delta", conversationId: "lazy-1", turnId: "old", delta: "stale" },
+      });
       for (const id of ["lazy-1", "unknown", "lazy-0"]) {
         ws.feedServerMessage({
           type: "conversation.compacted",
           conversationId: id,
           newConversationId: `${id}-archive`,
           messagesSummarized: 10,
+          historyEpoch: 0,
           messagesKept: 2,
         });
       }
@@ -2956,4 +2968,26 @@ describe("conversation load-on-demand", () => {
       store.dispose();
     }
   });
+});
+
+it.each([
+  null,
+  {},
+  { conversations: {} },
+])("reports malformed conversation lists: %j", async (body) => {
+  const ws = fakeSocket();
+  const base = fakeFetchImpl();
+  const store = createAppStore({
+    socketFactory: () => ws,
+    indexedDB: new IDBFactory(),
+    localStorage: createFakeStorage(),
+    fetchImpl: async (input, init) =>
+      String(input).includes("/conversations?status=") ? Response.json(body) : base(input, init),
+  });
+  try {
+    ws.resolveOpen();
+    await vi.waitFor(() => expect(store.fatalError).toContain("Invalid conversations response"));
+  } finally {
+    store.dispose();
+  }
 });

@@ -18,6 +18,26 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Review 3.6 — history epochs (2026-10-20)
+
+- Consumed backend Step 3.5: required `historyEpoch` on HTTP history and WS compaction;
+  unchanged `file:../backend/packages/*` links refreshed with `bun install`.
+  Versions remain transport-contract **0.26.0**, wire **0.13.0**. Relevant declarations
+  and documentation re-mirrored in `.dispatch/{transport-contract,wire}.reference.md`.
+- IndexedDB meta persists epoch, including empty history; legacy missing epochs are
+  untrusted and reloaded from cursor 0. Epoch changes clear transcript/watermarks and
+  cache before a windowed reload. Broadcasts reuse the existing chat store and invalidate
+  in-flight responses, including modal watches; unseen conversations stay lazy.
+- Tail triggers coalesce into sequential reruns. Backfill validates epoch; earlier-history
+  availability uses a known lower boundary / short-page exhaustion, not `seq > 1`.
+  With no server `hasOlder` field, a full final page may require one empty-page probe.
+- Public FE seams: cache/storage `historyEpoch` + `reset`, optional epoch on cache `commit`,
+  optional epoch on chat `resync`, lazy transcript `invalidateHistory`, explicit earliest
+  boundary on `selectHasEarlier`.
+- Verification: typecheck/check/build green; full suite **2,186 tests / 115 files**
+  (run twice on final files; see `reports/review-3.6.md`). Backend health unavailable
+  on localhost:24203, so no live probe/server started. No new backend asks.
+
 ## Milestone: Local-path images in Markdown (`feature/local-image-markdown`, 2026-10-19)
 
 **Slice status:** COMPLETE (frontend half; the backend route is implemented in parallel in

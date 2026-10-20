@@ -3,6 +3,9 @@ import { nextSinceSeq, reconcileCache, selectEvictions } from "./logic";
 import type { ConversationChunkStore } from "./types";
 
 export interface ConversationCache {
+  historyEpoch(conversationId: string): Promise<number | undefined>;
+  reset(conversationId: string, historyEpoch: number): Promise<void>;
+
   /** Load all cached chunks for a conversation. */
   load(conversationId: string): Promise<readonly StoredChunk[]>;
 
@@ -10,7 +13,11 @@ export interface ConversationCache {
    * Load + reconcile + append new chunks.
    * Returns the merged cache (the new authoritative cache for this conversation).
    */
-  commit(conversationId: string, incoming: readonly StoredChunk[]): Promise<readonly StoredChunk[]>;
+  commit(
+    conversationId: string,
+    incoming: readonly StoredChunk[],
+    historyEpoch?: number,
+  ): Promise<readonly StoredChunk[]>;
 
   /** Return the `?sinceSeq=` cursor for the next incremental sync. */
   sinceSeq(conversationId: string): Promise<number>;
@@ -43,21 +50,52 @@ export function createConversationCache(
 ): ConversationCache {
   const maxChunks = opts?.maxChunks ?? DEFAULT_MAX_CHUNKS;
 
+  // Serialize mutation per conversation, including invalidation, so an old fetch
+  // cannot resurrect rows after a compaction broadcast has invalidated them.
+  const pending = new Map<string, Promise<unknown>>();
+  function exclusive<T>(id: string, run: () => Promise<T>): Promise<T> {
+    const next = (pending.get(id) ?? Promise.resolve()).catch(() => {}).then(run);
+    pending.set(id, next);
+    void next
+      .finally(() => {
+        if (pending.get(id) === next) pending.delete(id);
+      })
+      .catch(() => {});
+    return next;
+  }
   return {
+    historyEpoch: async (id) => {
+      await pending.get(id);
+      return store.historyEpoch(id);
+    },
+    reset: (id, epoch) =>
+      exclusive(id, async () => {
+        const current = await store.historyEpoch(id);
+        if (current === undefined || current < epoch) await store.reset(id, epoch);
+      }),
     async load(conversationId) {
+      await pending.get(conversationId);
       return store.load(conversationId);
     },
 
-    async commit(conversationId, incoming) {
-      const cached = await store.load(conversationId);
-      const { merged, toAppend } = reconcileCache(cached, incoming);
-      if (toAppend.length > 0) {
-        await store.append(conversationId, toAppend);
-      }
-      return merged;
+    commit(conversationId, incoming, epoch) {
+      return exclusive(conversationId, async () => {
+        if (epoch !== undefined) {
+          const current = await store.historyEpoch(conversationId);
+          if (current !== undefined && current > epoch) return store.load(conversationId);
+          if (current !== epoch) await store.reset(conversationId, epoch);
+        }
+        const cached = await store.load(conversationId);
+        const { merged, toAppend } = reconcileCache(cached, incoming);
+        if (toAppend.length > 0) {
+          await store.append(conversationId, toAppend);
+        }
+        return merged;
+      });
     },
 
     async sinceSeq(conversationId) {
+      await pending.get(conversationId);
       const cached = await store.load(conversationId);
       return nextSinceSeq(cached);
     },
@@ -72,7 +110,7 @@ export function createConversationCache(
     },
 
     async delete(conversationId) {
-      await store.delete(conversationId);
+      await exclusive(conversationId, () => store.delete(conversationId));
     },
   };
 }

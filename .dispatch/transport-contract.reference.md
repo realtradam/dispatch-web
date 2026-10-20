@@ -1,5 +1,7 @@
 # `@dispatch/transport-contract` — in-repo reference (read THIS, not node_modules)
 
+> **2026-10-20 review 3.5:** history replacements preserve monotonic seqs (retained history need not start at 1). HTTP history and WS compaction carry required `historyEpoch`; unknown cached epochs must be reloaded. Consumed by review 3.6.
+>
 > MIRRORS the backend's `@dispatch/transport-contract` package source so headless FE agents can read
 > the transport types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a
 > permission prompt). Your CODE still imports `@dispatch/transport-contract` normally — this file is for
@@ -318,17 +320,24 @@ export interface ModelMetadata {
  * tail sync = `?sinceSeq=<cursor>` (no limit); page older history in =
  * `?beforeSeq=<oldestLoadedSeq>&limit=<k>`.
  *
- * Seq numbering is **1-based and gap-free** (a CONTRACTUAL GUARANTEE — see
- * `StoredChunk` in `@dispatch/wire`): a client can derive "older chunks exist"
- * purely from `oldestLoaded.seq > 1`; there is deliberately no
- * `earliestSeq`/`hasOlder` response field.
+ * Seq is positive and never reused within a conversation, even when history is
+ * replaced. The retained log need not start at 1, so `oldestLoaded.seq > 1`
+ * does not prove older chunks exist. An empty/short backfill page can establish
+ * that no earlier chunks remain.
+ *
+ * `historyEpoch` is the persisted replacement count (missing storage value = 0).
+ * Every successful replacement, including an empty one, increments it once.
+ * On a different epoch, clients invalidate their conversation cache and refetch
+ * with `sinceSeq=0` (optionally windowed), even if this response has no chunks.
  *
  * `chunks` is the RAW, append-order, seq-ordered slice of the conversation log
  * selected + windowed as above. It is NOT reconciled: a dangling tool-call is
  * returned as-is (rendered as an interrupted call). Reconciliation is a
  * turn-path concern — the server repairs history only when it feeds a provider,
  * never on this read path — which is what preserves the per-chunk `seq` cursor
- * invariant (a synthesized repair chunk would have no seq).
+ * invariant (a synthesized repair chunk would have no seq). Provider-opaque
+ * thinking replay fields (`signature` and `redactedData`) are omitted from
+ * this client-facing response; chunk presence, text, order, and seq are intact.
  *
  * `latestSeq` is the `seq` of the LAST chunk in this response, or — when the
  * slice is empty (the client is already caught up) — the requested `sinceSeq`
@@ -343,8 +352,9 @@ export interface ModelMetadata {
  * the store contract.)
  */
 export interface ConversationHistoryResponse {
-	readonly chunks: readonly StoredChunk[];
-	readonly latestSeq: number;
+  readonly chunks: readonly StoredChunk[];
+  readonly latestSeq: number;
+  readonly historyEpoch: number;
 }
 
 /**
@@ -945,15 +955,18 @@ export interface ConversationStatusChangedMessage {
 
 /**
  * Broadcast to all connected WS clients when a conversation's history has been
- * compacted (summarized). The frontend should reload the conversation history
- * via `GET /conversations/:id` to reflect the compacted state.
+ * compacted (summarized). `historyEpoch` is the persisted replacement count:
+ * missing storage value = 0; every successful replacement increments it once,
+ * including empty replacements. On a different epoch, clients invalidate their
+ * conversation cache and refetch `GET /conversations/:id?sinceSeq=0`.
  */
 export interface ConversationCompactedMessage {
-	readonly type: "conversation.compacted";
-	readonly conversationId: string;
-	readonly newConversationId: string;
-	readonly messagesSummarized: number;
-	readonly messagesKept: number;
+  readonly type: "conversation.compacted";
+  readonly conversationId: string;
+  readonly newConversationId: string;
+  readonly messagesSummarized: number;
+  readonly messagesKept: number;
+  readonly historyEpoch: number;
 }
 
 /**

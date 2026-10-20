@@ -180,7 +180,10 @@ export function parseServerMessage(data: string): WsServerMessage | null {
       if (typeof parsed.newConversationId !== "string") return null;
       if (typeof parsed.messagesSummarized !== "number") return null;
       if (typeof parsed.messagesKept !== "number") return null;
+      if (!Number.isSafeInteger(parsed.historyEpoch) || (parsed.historyEpoch as number) < 0)
+        return null;
       const msg: ConversationCompactedMessage = {
+        historyEpoch: parsed.historyEpoch as number,
         type: "conversation.compacted",
         conversationId: parsed.conversationId,
         newConversationId: parsed.newConversationId,

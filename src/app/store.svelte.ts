@@ -704,7 +704,16 @@ function createHistorySync(httpBase: string, fetchImpl: typeof fetch): HistorySy
     if (!res.ok) {
       throw new Error(`History sync failed: ${res.status}`);
     }
-    return (await res.json()) as ConversationHistoryResponse;
+    const data = (await res.json()) as ConversationHistoryResponse;
+    if (
+      !data ||
+      !Array.isArray(data.chunks) ||
+      !Number.isSafeInteger(data.historyEpoch) ||
+      data.historyEpoch < 0
+    ) {
+      throw new Error("Invalid history response");
+    }
+    return data;
   };
 }
 
@@ -1483,6 +1492,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       if (!res.ok) return;
       const data = (await res.json()) as ConversationListResponse;
 
+      if (!data || !Array.isArray(data.conversations)) {
+        reportError(
+          "Failed to load open conversations",
+          new Error("Invalid conversations response"),
+        );
+        return;
+      }
       // Update the status map from the authoritative backend list.
       const newStatuses = new Map<string, ConversationStatus>();
       for (const conv of data.conversations) {
@@ -1628,27 +1644,17 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       }
     },
     onConversationCompacted(msg: ConversationCompactedMessage): void {
-      // Compaction keeps the conversation ID — the old full history is forked
-      // to an archive (newConversationId). Just reload the same conversation's
-      // history (dispose stale store + cache + re-fetch).
       const cid = msg.conversationId;
-      const wasActive = tabsStore.activeConversationId === cid;
-      void cache.delete(cid);
-      if (!chatStores.has(cid) || !loadedConversationIds.delete(cid)) return;
-      const store = chatStores.get(cid);
-      if (store !== undefined) {
-        store.dispose();
-      }
-      const tab = tabsStore.tabs.find((t) => t.conversationId === cid);
-      const fresh = createChatFor(
-        cid,
-        tab?.model ?? activeModel,
-        tab?.workspaceId ?? activeWorkspaceId,
-      );
-      chatStores.set(cid, fresh);
-      ensureLoaded(cid);
-      if (wasActive) {
-        refreshActiveChat();
+      const store = chatStores.get(cid) ?? watchStores.get(cid);
+      if (store && loadedConversationIds.has(cid)) {
+        store.resync(msg.historyEpoch);
+      } else {
+        store?.invalidateHistory(msg.historyEpoch);
+        // Unseen conversations stay lazy. Invalidation is queued before their
+        // next load; epoch-guarded commits reject any older in-flight response.
+        void cache
+          .reset(cid, msg.historyEpoch)
+          .catch((err) => reportError("Failed to reset conversation cache", err));
       }
     },
     onReopen() {

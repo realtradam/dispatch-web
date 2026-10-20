@@ -1,5 +1,7 @@
 # `@dispatch/wire` — in-repo reference (read THIS, not node_modules)
 
+> **2026-10-20 review 3.5:** history replacements preserve monotonic seqs (retained history need not start at 1). HTTP history and WS compaction carry required `historyEpoch`; unknown cached epochs must be reloaded. Consumed by review 3.6.
+>
 > MIRRORS the backend's `@dispatch/wire` package source so headless FE agents can read the wire
 > types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a permission
 > prompt). Your CODE still imports `@dispatch/wire` normally — this file is for READING only.
@@ -258,26 +260,37 @@ export interface ChatMessage {
 
 /**
  * A persisted chunk plus its sync metadata. The append-only conversation log
- * stamps every chunk with a **1-based**, monotonic, gap-free, per-conversation
+ * stamps every chunk with a positive, monotonic, per-conversation
  * `seq` (the sync cursor, assigned in append order) and records the `role` of
  * the message it belongs to. This makes a flat seq-ordered stream both
  * incrementally syncable ("give me chunks after seq N") and regroupable into
  * messages by the client.
  *
- * The 1-based start is a CONTRACTUAL GUARANTEE (not an implementation detail):
- * a conversation's first chunk is always `seq === 1` and numbering never skips,
- * so a client holding only a windowed suffix of the log can derive "older
- * chunks exist server-side" purely from `oldestLoaded.seq > 1` — no separate
- * has-older flag is needed (or provided). `chunk` is the content unit — `Chunk` carries no storage/sync cursor
+ * Seq is never reused within a conversation, including after compaction replaces
+ * its history. The retained log need not start at 1 or be gap-free; a client
+ * cannot infer that older chunks exist solely from `oldestLoaded.seq > 1`.
+ * `chunk` is the content unit — `Chunk` carries no storage/sync cursor
  * (`seq` lives here on the envelope, not on the chunk, since it is assigned by
  * the store and the provider has no use for it). A chunk MAY still carry
  * generation provenance assigned at production time (e.g. a tool chunk's
  * `stepId`), which is intrinsic to the content and so travels with it.
  */
 export interface StoredChunk {
-	readonly seq: number;
-	readonly role: Role;
-	readonly chunk: Chunk;
+  readonly seq: number;
+  readonly role: Role;
+  readonly chunk: Chunk;
+  /**
+   * The turn that produced this chunk — the same `turnId` carried on every
+   * live `AgentEvent` of that turn (the turn's opening user message, any
+   * mid-turn steering message, and every assistant/tool chunk the turn
+   * generated). The join key between transcript content and the turn's
+   * `TurnMetrics`, so a client places per-turn metrics EXACTLY (no positional
+   * guessing) — including while a turn is in flight and when older history has
+   * been unloaded. Optional: absent on rows persisted before this field
+   * existed and on chunks written outside any turn (e.g. a compaction summary).
+   * A consumer must tolerate its absence.
+   */
+  readonly turnId?: string;
 }
 
 // ─── Reasoning effort ───────────────────────────────────────────────────────

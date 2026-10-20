@@ -104,7 +104,9 @@ function fakeFetchImpl(): typeof fetch {
         { status: 200 },
       );
     }
-    return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+    return new Response(JSON.stringify({ chunks: [], historyEpoch: 0, latestSeq: 0 }), {
+      status: 200,
+    });
   };
 }
 
@@ -564,7 +566,9 @@ describe("App component interaction tests", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return new Response(JSON.stringify({ chunks: [], historyEpoch: 0, latestSeq: 0 }), {
+        status: 200,
+      });
     };
 
     const ws = fakeSocket();

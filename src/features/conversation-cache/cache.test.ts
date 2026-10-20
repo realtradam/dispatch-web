@@ -15,8 +15,16 @@ const chunk = (seq: number, role: "user" | "assistant" = "user"): StoredChunk =>
  */
 function createFakeStore(): ConversationChunkStore {
   const store = new Map<string, StoredChunk[]>();
+  const epochs = new Map<string, number>();
 
   return {
+    async historyEpoch(id) {
+      return epochs.get(id);
+    },
+    async reset(id, epoch) {
+      store.delete(id);
+      epochs.set(id, epoch);
+    },
     async load(conversationId) {
       return store.get(conversationId) ?? [];
     },
@@ -33,6 +41,7 @@ function createFakeStore(): ConversationChunkStore {
 
     async delete(conversationId) {
       store.delete(conversationId);
+      epochs.delete(conversationId);
     },
 
     async index() {
@@ -194,4 +203,14 @@ describe("cache.delete", () => {
     const result = await cache.load("conv-1");
     expect(result).toEqual([]);
   });
+});
+
+it("serializes invalidation and rejects stale epoch commits", async () => {
+  const store = createFakeStore();
+  const cache = createConversationCache(store);
+  await store.append("c", [chunk(1)]); // Legacy rows have no trusted epoch.
+  expect(await cache.commit("c", [chunk(101)], 1)).toEqual([chunk(101)]);
+  await Promise.all([cache.commit("c", [chunk(102)], 1), cache.reset("c", 2)]);
+  expect(await cache.commit("c", [chunk(103)], 1)).toEqual([]);
+  expect(await store.historyEpoch("c")).toBe(2);
 });

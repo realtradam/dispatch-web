@@ -43,14 +43,22 @@ export interface FakeHistorySync {
   readonly calls: Array<{ conversationId: string; sinceSeq: number; window?: HistoryWindow }>;
   /** Set the chunks to return on the next call. */
   returnChunks: readonly StoredChunk[];
+  historyEpoch: number;
   readonly impl: HistorySync;
 }
 
 export function createFakeHistorySync(): FakeHistorySync {
   const calls: Array<{ conversationId: string; sinceSeq: number; window?: HistoryWindow }> = [];
   let returnChunks: readonly StoredChunk[] = [];
+  let historyEpoch = 0;
   return {
     calls,
+    get historyEpoch() {
+      return historyEpoch;
+    },
+    set historyEpoch(v: number) {
+      historyEpoch = v;
+    },
     get returnChunks() {
       return returnChunks;
     },
@@ -72,7 +80,7 @@ export function createFakeHistorySync(): FakeHistorySync {
         chunks = chunks.slice(-window.limit);
       }
       const latestSeq = chunks.length > 0 ? Math.max(...chunks.map((c) => c.seq)) : sinceSeq;
-      return { chunks, latestSeq };
+      return { chunks, latestSeq, historyEpoch };
     },
   };
 }
@@ -122,13 +130,22 @@ export interface FakeCache {
 
 export function createFakeCache(): FakeCache {
   const store = new Map<string, StoredChunk[]>();
+  const epochs = new Map<string, number>();
   return {
     store,
     impl: {
+      async historyEpoch(id) {
+        return epochs.get(id) ?? 0;
+      },
+      async reset(id, epoch) {
+        store.delete(id);
+        epochs.set(id, epoch);
+      },
       async load(conversationId) {
         return store.get(conversationId) ?? [];
       },
-      async commit(conversationId, incoming) {
+      async commit(conversationId, incoming, epoch) {
+        if (epoch !== undefined) epochs.set(conversationId, epoch);
         const existing = store.get(conversationId) ?? [];
         const seen = new Set(existing.map((c) => c.seq));
         const toAppend = incoming.filter((c) => !seen.has(c.seq));
