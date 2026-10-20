@@ -2,9 +2,27 @@ import type { ConversationHistoryResponse, WsServerMessage } from "@dispatch/tra
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import type { NamedAgent } from "@dispatch/wire";
 import { IDBFactory } from "fake-indexeddb";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
 import { createAppStore } from "./store.svelte";
+
+// Never let an omitted injection reach a real backend. Track rejected requests
+// too: the app deliberately catches network errors, which must not hide a bad fake.
+const unexpectedFetch = vi.fn<typeof fetch>(async (input, init) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  throw new Error(`Unexpected fetch: ${method} ${url}`);
+});
+
+beforeEach(() => {
+  unexpectedFetch.mockClear();
+  vi.stubGlobal("fetch", unexpectedFetch);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  expect(unexpectedFetch).not.toHaveBeenCalled();
+});
 
 interface FakeSocket extends WebSocketLike {
   sent: string[];
@@ -129,13 +147,65 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
             "body" in input
           ? await input.clone().text()
           : null;
-    if (/\/models(\?.*)?$/.test(url)) {
-      return new Response(JSON.stringify({ models }), { status: 200 });
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === "/models" && method === "GET") {
+      return Response.json({ models });
     }
-    if (url.endsWith("/named-agents") && method === "GET") {
+    if (method === "GET") {
+      if (pathname === "/conversations" && searchParams.get("status") === "active,idle") {
+        // Most tests drive tabs via WS/local actions. Disable boot reconciliation
+        // so an in-flight empty list cannot remove a tab created by the test.
+        // Discovery tests override this route with their authoritative lists.
+        return Response.json({ error: "Discovery unavailable in this fixture" }, { status: 503 });
+      }
+      if (pathname === "/plugins") return Response.json({ plugins: [] });
+      if (pathname === "/computers") return Response.json({ computers: [] });
+      if (/^\/workspaces\/[^/]+\/plugins$/.test(pathname)) {
+        return Response.json({ workspaceId: pathname.split("/")[2], plugins: [] });
+      }
+      if (/^\/workspaces\/[^/]+\/plugins\/providers-status$/.test(pathname)) {
+        return Response.json({ enabledProviderCount: 1 });
+      }
+      // Explicitly simulate absent layout providers; retain local cached layouts.
+      if (
+        /^\/workspaces\/[^/]+\/layout$/.test(pathname) ||
+        /^\/home\/tile-layout\/(wide|tall)$/.test(pathname)
+      ) {
+        return Response.json({ error: "No layout provider" }, { status: 404 });
+      }
+      if (pathname === "/settings/vision") {
+        return Response.json({ imageLimit: 10, compactionModel: null });
+      }
+      const setting =
+        /^\/conversations\/[^/]+\/(cwd|computer|reasoning-effort|thinking|compact-percent)$/.exec(
+          pathname,
+        )?.[1];
+      if (setting !== undefined) {
+        const key = {
+          cwd: "cwd",
+          computer: "computerId",
+          "reasoning-effort": "reasoningEffort",
+          thinking: "thinking",
+          "compact-percent": "compactPercent",
+        }[setting];
+        if (key !== undefined) return Response.json({ [key]: null });
+      }
+      if (/^\/conversations\/[^/]+\/metrics$/.test(pathname)) {
+        return Response.json({ turns: [] });
+      }
+      if (/^\/conversations\/[^/]+$/.test(pathname) && searchParams.has("sinceSeq")) {
+        return Response.json(
+          history[url] ?? ({ chunks: [], latestSeq: 0 } satisfies ConversationHistoryResponse),
+        );
+      }
+    }
+    if (/^\/conversations\/[^/]+\/close$/.test(pathname) && method === "POST") {
+      return Response.json({ conversationId: pathname.split("/")[2], abortedTurn: false });
+    }
+    if (pathname === "/named-agents" && method === "GET") {
       return new Response(JSON.stringify({ namedAgents }), { status: 200 });
     }
-    if (url.endsWith("/named-agents") && method === "POST") {
+    if (pathname === "/named-agents" && method === "POST") {
       const payload =
         bodyText === null
           ? null
@@ -148,7 +218,7 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
       namedAgents = [...namedAgents, agent];
       return new Response(JSON.stringify({ namedAgent: agent }), { status: 201 });
     }
-    if (url.includes("/named-agents/") && method === "PUT") {
+    if (/^\/named-agents\/[^/]+$/.test(pathname) && method === "PUT") {
       const id = url.split("/named-agents/")[1] ?? "";
       const payload =
         bodyText === null
@@ -162,12 +232,15 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
       namedAgents = namedAgents.map((a) => (a.id === id ? updated : a));
       return new Response(JSON.stringify({ namedAgent: updated }), { status: 200 });
     }
-    if (url.includes("/named-agents/") && method === "DELETE") {
+    if (/^\/named-agents\/[^/]+$/.test(pathname) && method === "DELETE") {
       const id = url.split("/named-agents/")[1] ?? "";
       namedAgents = namedAgents.filter((a) => a.id !== id);
       return new Response(JSON.stringify({ id }), { status: 200 });
     }
-    if (url.endsWith("/model")) {
+    if (
+      /^\/conversations\/[^/]+\/model$/.test(pathname) &&
+      (method === "GET" || method === "PUT")
+    ) {
       return new Response(
         JSON.stringify({
           conversationId: "ignored",
@@ -176,9 +249,7 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
         { status: 200 },
       );
     }
-    const body =
-      history[url] ?? ({ chunks: [], latestSeq: 0 } satisfies ConversationHistoryResponse);
-    return new Response(JSON.stringify(body), { status: 200 });
+    return unexpectedFetch(input, init);
   };
 }
 
@@ -215,6 +286,22 @@ function activeConversationId(store: ReturnType<typeof createAppStore>): string 
   expect(id).not.toBeNull();
   return id as string;
 }
+
+describe("fakeFetchImpl", () => {
+  it.each([
+    "http://localhost:24203/unexpected",
+    new URL("http://localhost:24203/conversations/c/unknown-setting"),
+    new Request("http://localhost:24203/models", { method: "DELETE" }),
+  ])("rejects an unexpected URL or method: %s", async (input) => {
+    try {
+      await expect(fakeFetchImpl()(input)).rejects.toThrow("Unexpected fetch:");
+      expect(unexpectedFetch).toHaveBeenCalledOnce();
+    } finally {
+      // This test deliberately exercises the guard; all store tests require zero calls.
+      unexpectedFetch.mockClear();
+    }
+  });
+});
 
 describe("createAppStore", () => {
   it("starts with empty catalog and no surfaces", () => {
@@ -597,7 +684,11 @@ describe("createAppStore", () => {
       ],
       latestSeq: 2,
     };
-    const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
       if (/\/models(\?.*)?$/.test(url)) {
@@ -605,7 +696,10 @@ describe("createAppStore", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify(historyResponse), { status: 200 });
+      if (/\/conversations\/[^/?]+\?sinceSeq=/.test(url)) {
+        return Response.json(historyResponse);
+      }
+      return base(input, init);
     };
 
     const ws = fakeSocket();
@@ -656,13 +750,13 @@ describe("createAppStore", () => {
     });
     ws.resolveOpen();
 
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(store.models).toEqual([
-      "opencode-1/deepseek-v4-flash",
-      "openai/gpt-4o",
-      "anthropic/claude-3",
-    ]);
+    await vi.waitFor(() => {
+      expect(store.models).toEqual([
+        "opencode-1/deepseek-v4-flash",
+        "openai/gpt-4o",
+        "anthropic/claude-3",
+      ]);
+    });
 
     store.dispose();
   });
@@ -692,9 +786,7 @@ describe("createAppStore", () => {
       localStorage: createFakeStorage(),
     });
     ws.resolveOpen();
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(store.models).toEqual(["umans/umans-glm-5.2"]);
+    await vi.waitFor(() => expect(store.models).toEqual(["umans/umans-glm-5.2"]));
     expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
 
     store.dispose();
@@ -826,9 +918,10 @@ describe("createAppStore", () => {
 
   it("fetchOpenConversations stamps tabs with the conversation's persisted model (not the global active model)", async () => {
     const ws = fakeSocket();
+    const base = fakeFetchImpl();
     const fetchImpl: typeof fetch = async (
       input: string | URL | Request,
-      _init?: RequestInit,
+      init?: RequestInit,
     ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (/\/models(\?.*)?$/.test(url)) {
@@ -856,7 +949,7 @@ describe("createAppStore", () => {
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return base(input, init);
     };
 
     const store = createAppStore({
@@ -881,7 +974,11 @@ describe("createAppStore", () => {
 
   it("fetchOpenConversations seeds the chat store's cache-timer turn gap from an idle conversation's lastActivityAt", async () => {
     const ws = fakeSocket();
-    const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.includes("/conversations?status=")) {
         return new Response(
@@ -904,7 +1001,7 @@ describe("createAppStore", () => {
       if (url.endsWith("/metrics")) {
         return new Response(JSON.stringify({ turns: [] }), { status: 200 });
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return base(input, init);
     };
 
     const store = createAppStore({
@@ -1510,7 +1607,11 @@ describe("createAppStore", () => {
 
   it("re-subscribes and resyncs a loaded conversation on reconnect", async () => {
     const fetchedUrls: string[] = [];
-    const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
       if (/\/models(\?.*)?$/.test(url)) {
@@ -1518,7 +1619,7 @@ describe("createAppStore", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return base(input, init);
     };
 
     const ws = reconnectableSocket();
@@ -1600,9 +1701,6 @@ describe("createAppStore", () => {
         return new Response(JSON.stringify({ ...config, ...patch }), {
           status: 200,
         });
-      }
-      if (url.includes("/heartbeat")) {
-        return new Response(JSON.stringify(config), { status: 200 });
       }
       return base(input, init);
     };
@@ -2366,6 +2464,7 @@ describe("createAppStore — vision settings (global)", () => {
     fetchImpl: typeof fetch;
     puts: { imageLimit?: number; compactionModel?: string | null }[];
   } {
+    const base = fakeFetchImpl();
     let current = initial;
     const puts: { imageLimit?: number; compactionModel?: string | null }[] = [];
     return {
@@ -2394,8 +2493,7 @@ describe("createAppStore — vision settings (global)", () => {
           }
           return new Response(JSON.stringify(current), { status: 200 });
         }
-        // Default: empty history + no cwd for the other endpoints.
-        return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+        return base(input, init);
       },
     };
   }
@@ -2458,6 +2556,7 @@ describe("createAppStore — vision settings (global)", () => {
   });
 
   it("surfaces a PUT error", async () => {
+    const base = fakeFetchImpl();
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith("/settings/vision")) {
@@ -2468,7 +2567,7 @@ describe("createAppStore — vision settings (global)", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      return base(input, init);
     };
     const store = createAppStore({
       socketFactory: () => fakeSocket(),
@@ -2670,6 +2769,8 @@ describe("conversation load-on-demand", () => {
     return { store, requests };
   }
 
+  // These exercise 300 real Svelte-backed tabs and count requests, not elapsed
+  // time. Allow contention without shrinking the regression's large-tab fixture.
   it("boots 300 persisted/discovered tabs with only active history + metrics", async () => {
     const ws = fakeSocket();
     const { store, requests } = await setup(ws, 300);
@@ -2695,7 +2796,7 @@ describe("conversation load-on-demand", () => {
     } finally {
       store.dispose();
     }
-  });
+  }, 20_000);
 
   it("does not load any history while the active slot is a draft", async () => {
     const { store, requests } = await setup(fakeSocket(), 300, null);
@@ -2707,7 +2808,7 @@ describe("conversation load-on-demand", () => {
     } finally {
       store.dispose();
     }
-  });
+  }, 20_000);
 
   it("loads a tab once, including repeated activation while its load is pending", async () => {
     const { store, requests } = await setup(fakeSocket());
