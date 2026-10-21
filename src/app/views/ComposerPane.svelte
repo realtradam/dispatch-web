@@ -6,10 +6,17 @@
    * is a persistent column fixture, exactly like today.
    */
   import { Composer, type ComposerStatus } from "../../features/chat";
+  import { MESSAGE_QUEUE_RENDERER_ID, messageQueueCount } from "../../features/surface-host";
   import type { AppViewPorts } from "../view-ports";
 
   let { ports }: { ports: AppViewPorts } = $props();
   const store = $derived(ports.store);
+
+  const queuedMessageCount = $derived(
+    store.activeConversationId === null
+      ? undefined
+      : messageQueueCount(store.surface(MESSAGE_QUEUE_RENDERER_ID, store.activeConversationId)),
+  );
 
   // Priority: error > queued > running > idle. `queued` (the turn is in flight
   // but waiting for a concurrency slot — CR-13) wins over `running` so the
@@ -31,5 +38,6 @@
   onStop={() => store.stopGeneration()}
   contextSize={store.activeChat.currentContextSize}
   contextWindow={store.modelInfo[store.activeModel]?.contextWindow}
+  {queuedMessageCount}
   status={composerStatus}
 />

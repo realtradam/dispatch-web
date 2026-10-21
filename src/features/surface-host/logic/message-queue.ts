@@ -1,3 +1,4 @@
+import type { SurfaceSpec } from "@dispatch/ui-contract";
 import type { QueuedMessage } from "@dispatch/wire";
 
 /**
@@ -39,6 +40,15 @@ export function parseMessageQueuePayload(payload: unknown): MessageQueueData | n
     messages.push(entry);
   }
   return { messages };
+}
+
+/** Queue size from a validated snapshot; absent/malformed data stays unknown. */
+export function messageQueueCount(spec: SurfaceSpec | null): number | undefined {
+  const field = spec?.fields.find(
+    (field) => field.kind === "custom" && field.rendererId === MESSAGE_QUEUE_RENDERER_ID,
+  );
+  if (field?.kind !== "custom") return undefined;
+  return parseMessageQueuePayload(field.payload)?.messages.length;
 }
 
 /** The `rendererId` the message-queue extension's `custom` surface field uses. */

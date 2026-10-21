@@ -16,8 +16,18 @@ export function createSurfaceProtocol(deps: {
   send: SurfaceSocketHandle["send"];
 }) {
   let protocol = $state<ProtocolState>(protocolInitialState());
+  // Rendering may retain the prior spec during re-scope. Consumers making
+  // conversation-specific decisions can opt into a snapshot with a known scope.
+  let receivedScopes = $state<ReadonlyMap<string, string | undefined>>(new Map());
   function handleServerMessage(msg: SurfaceServerMessage): void {
-    protocol = applyServerMessage(protocol, msg);
+    const next = applyServerMessage(protocol, msg);
+    if (next !== protocol && (msg.type === "surface" || msg.type === "update")) {
+      const snapshot = msg.type === "surface" ? msg : msg.update;
+      const scopes = new Map(receivedScopes);
+      scopes.set(snapshot.spec.id, snapshot.conversationId);
+      receivedScopes = scopes;
+    }
+    protocol = next;
     // Surfaces are auto-expanded: whenever the catalog changes, subscribe to
     // every entry (and drop subscriptions for entries that vanished).
     if (msg.type === "catalog") {
@@ -55,6 +65,7 @@ export function createSurfaceProtocol(deps: {
         }
       }
     }
+    receivedScopes = new Map([...receivedScopes].filter(([id]) => protocol.subscriptions.has(id)));
   }
 
   /**
@@ -99,12 +110,17 @@ export function createSurfaceProtocol(deps: {
     void conversationId;
     const result = protocolUnsubscribe(protocol, surfaceId);
     protocol = result.state;
+    const scopes = new Map(receivedScopes);
+    scopes.delete(surfaceId);
+    receivedScopes = scopes;
     for (const msg of result.outgoing) {
       deps.send(msg);
     }
   }
 
-  function surfaceSpecOp(surfaceId: string): SurfaceSpec | null {
+  function surfaceSpecOp(surfaceId: string, conversationId?: string): SurfaceSpec | null {
+    if (conversationId !== undefined && receivedScopes.get(surfaceId) !== conversationId)
+      return null;
     return getSurfaceSpec(protocol, surfaceId);
   }
 

@@ -153,8 +153,11 @@ export interface AppStore {
   /** The localStorage instance the store uses for persistence (tabs, chatLimit).
    *  Exposed so the shell can persist sidebar layout via the same adapter. */
   readonly storage: Storage | undefined;
-  /** The current spec for one surface by id (discovery-by-id), or null if absent. */
-  surface(surfaceId: string): SurfaceSpec | null;
+  /**
+   * The current spec by id, or null if absent. With conversationId, require a
+   * snapshot received for that conversation (not a retained prior-scope spec).
+   */
+  surface(surfaceId: string, conversationId?: string): SurfaceSpec | null;
   /**
    * Send a user message (start a turn). Forwards any staged `images`
    * (`ImageInput[]` — base64 data URLs / https URLs) on the `chat.send` op;

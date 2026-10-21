@@ -849,6 +849,57 @@ describe("ChatView", () => {
 });
 
 describe("Composer", () => {
+  it.each([
+    "running",
+    "queued",
+  ] as const)("relabels Stop only with queued input while %s and preserves its action", async (status) => {
+    const onStop = vi.fn();
+    const onSend = vi.fn();
+    const onQueue = vi.fn();
+    const user = userEvent.setup();
+    const { rerender } = render(Composer, { props: { onSend, onQueue, onStop, status } });
+    const expectPlainStop = () => {
+      const button = screen.getByRole("button", { name: "Stop generation" });
+      expect(button).toHaveTextContent(/^Stop$/);
+      expect(button).not.toHaveAttribute("title");
+    };
+    expectPlainStop(); // No queue snapshot available.
+    await rerender({ queuedMessageCount: 0 });
+    expectPlainStop();
+    await user.click(screen.getByRole("button", { name: "Stop generation" }));
+    expect(onStop).toHaveBeenCalledTimes(1);
+
+    for (const queuedMessageCount of [1, 2]) {
+      await rerender({ queuedMessageCount });
+      const button = screen.getByRole("button", { name: "Interrupt & send queued" });
+      expect(button).toHaveTextContent(/^Interrupt & send queued$/);
+      expect(button).toHaveAttribute(
+        "title",
+        "Stop the current response and start the queued message now",
+      );
+    }
+    await user.click(screen.getByRole("button", { name: "Interrupt & send queued" }));
+    expect(onStop).toHaveBeenCalledTimes(2);
+    expect(onSend).not.toHaveBeenCalled();
+    expect(onQueue).not.toHaveBeenCalled();
+
+    const input = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(input, "next");
+    expect(screen.getByRole("button", { name: "Queue" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Interrupt & send queued" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+    expect(onQueue).toHaveBeenCalledExactlyOnceWith("next", undefined);
+    expect(screen.getByRole("button", { name: "Interrupt & send queued" })).toBeInTheDocument();
+    await rerender({ queuedMessageCount: 0 });
+    expectPlainStop(); // Queue drained or cancelled.
+    await rerender({ queuedMessageCount: 1, status: "idle" });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    await rerender({ status: "error" });
+    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    await rerender({ status, queuedMessageCount: undefined });
+    expectPlainStop();
+  });
+
   it("calls onSend with the typed text and clears", async () => {
     const onSend = vi.fn();
     const user = userEvent.setup();

@@ -1,6 +1,8 @@
+import type { SurfaceSpec } from "@dispatch/ui-contract";
 import type { QueuedMessage } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import {
+  messageQueueCount,
   parseMessageQueuePayload,
   reconcileCancelledIds,
   selectVisibleMessages,
@@ -101,5 +103,38 @@ describe("reconcileCancelledIds", () => {
     const messages = [msg("m1", "a"), msg("m2", "b")];
     const result = reconcileCancelledIds(messages, new Set(["m2"]));
     expect([...result]).toEqual(["m2"]);
+  });
+});
+
+describe("messageQueueCount", () => {
+  const spec = (payload: unknown): SurfaceSpec => ({
+    id: "message-queue",
+    region: "inline",
+    title: "Message queue",
+    fields: [{ kind: "custom", rendererId: "message-queue", payload }],
+  });
+
+  it("counts messages, including image-only input", () => {
+    expect(messageQueueCount(spec({ messages: [msg("m1", ""), msg("m2", "next")] }))).toBe(2);
+  });
+
+  it("distinguishes an empty queue from an unavailable snapshot", () => {
+    expect(messageQueueCount(spec({ messages: [] }))).toBe(0);
+    expect(messageQueueCount(null)).toBeUndefined();
+  });
+
+  it("returns unknown for missing fields or a different renderer", () => {
+    expect(messageQueueCount({ ...spec(null), fields: [] })).toBeUndefined();
+    expect(
+      messageQueueCount({
+        ...spec(null),
+        fields: [{ kind: "custom", rendererId: "other", payload: { messages: [msg("m1", "x")] } }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("returns unknown for malformed payloads", () => {
+    expect(messageQueueCount(spec({ messages: "nope" }))).toBeUndefined();
+    expect(messageQueueCount(spec({ messages: [{ id: "m1" }] }))).toBeUndefined();
   });
 });

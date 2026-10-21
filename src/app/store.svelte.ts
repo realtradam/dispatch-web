@@ -511,8 +511,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       return workspaceConversationId();
     },
 
-    surface(surfaceId: string): SurfaceSpec | null {
-      return getSurfaceSpec(surfaces.protocol, surfaceId);
+    surface(surfaceId: string, conversationId?: string): SurfaceSpec | null {
+      return surfaces.surfaceSpecOp(surfaceId, conversationId);
     },
 
     send(text: string, images?: readonly ImageInput[]): void {

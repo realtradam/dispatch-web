@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { ImageInput } from "@dispatch/wire";
   import { convertToJpeg, type ConvertedJpeg, type ImageJpegEncoder } from "../adapter/image-encode";
+  import { stopButtonLabels } from "../logic/composer";
   import { MAX_IMAGE_EDGE_PX, shouldConvertImage } from "../logic/image-compress";
   import { computeContextUsage, formatCompactTokens } from "../../../core/metrics";
 
@@ -59,6 +60,7 @@
     contextSize = undefined,
     contextWindow = undefined,
     status = "idle",
+    queuedMessageCount = undefined,
   }: {
     /**
      * Send a message (start a turn via `chat.send`). Carries any staged images
@@ -95,6 +97,8 @@
      * `running` for the send button (steer/stop).
      */
     status?: ComposerStatus;
+    /** Current conversation's queued snapshot size; undefined when unavailable. */
+    queuedMessageCount?: number | undefined;
   } = $props();
 
   export type ComposerStatus = "idle" | "running" | "queued" | "error";
@@ -123,6 +127,7 @@
     if (inFlight) return "queue";
     return "send";
   });
+  const stopButton = $derived(stopButtonLabels(queuedMessageCount));
   const placeholder = $derived(
     status === "queued"
       ? "Queued for a slot…"
@@ -319,7 +324,7 @@
   <!-- Top bar: expanding textarea + image-attach button + single context-aware button -->
   <div class="flex items-end gap-2 px-4 pt-3 pb-2">
     <div
-      class="flex-1"
+      class="min-w-0 flex-1"
       onpaste={handlePaste}
       class:border-2={dragOver}
       class:border-primary={dragOver}
@@ -371,12 +376,17 @@
 
     {#if buttonMode === "stop"}
       <button
-        class="btn btn-error w-20 shrink-0"
+        class="btn btn-error shrink-0"
+        class:w-20={stopButton.text === "Stop"}
+        class:w-36={stopButton.text !== "Stop"}
+        class:whitespace-normal={stopButton.text !== "Stop"}
+        class:leading-tight={stopButton.text !== "Stop"}
         type="button"
-        aria-label="Stop generation"
+        aria-label={stopButton.ariaLabel}
+        title={stopButton.title}
         onclick={() => onStop?.()}
       >
-        Stop
+        {stopButton.text}
       </button>
     {:else}
       <button class="btn btn-primary w-20 shrink-0" type="submit" disabled={!canSend}>
