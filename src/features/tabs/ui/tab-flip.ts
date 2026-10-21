@@ -35,9 +35,9 @@ export interface TabFlip {
   play(): void;
 }
 
-const SHRINK = 0.1;
-const MOVE = 0.15;
-const GROW = 0.1;
+const SHRINK = 0.2;
+const MOVE = 0.3;
+const GROW = 0.2;
 const SIZE_EASE = "power2.inOut";
 const MOVE_EASE = "power3.out";
 const GHOST_ATTR = "data-tab-ghost";
