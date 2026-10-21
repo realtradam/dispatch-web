@@ -609,3 +609,32 @@ describe("chat.queued admission acknowledgement", () => {
     expect(JSON.parse(serialize(msg))).toEqual(msg);
   });
 });
+
+describe("chat.resync-required", () => {
+  it.each(["replay-limit", "payload-limit"])("parses %s with optional turn identity", (reason) => {
+    const msg = { type: "chat.resync-required", conversationId: "c1", reason };
+    expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+    expect(parseServerMessage(JSON.stringify({ ...msg, turnId: "t1" }))).toEqual({
+      ...msg,
+      turnId: "t1",
+    });
+  });
+  it.each([
+    {},
+    { conversationId: null },
+    { conversationId: 1 },
+    { reason: "unknown" },
+    { reason: null },
+    { turnId: null },
+    { turnId: 42 },
+  ])("rejects malformed notice %j", (bad) => {
+    const msg = {
+      type: "chat.resync-required",
+      conversationId: "c1",
+      reason: "replay-limit",
+      ...bad,
+    };
+    if (Object.keys(bad).length === 0) delete (msg as { conversationId?: unknown }).conversationId;
+    expect(parseServerMessage(JSON.stringify(msg))).toBeNull();
+  });
+});

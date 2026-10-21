@@ -1053,11 +1053,35 @@ describe("turnId provenance on live chunks", () => {
 });
 
 describe("foldEvent — additive wire compatibility", () => {
-  it.each(["turn-ended", "future-event"])("preserves transcript identity for %s", (type) => {
+  it.each(["future-event"])("preserves transcript identity for %s", (type) => {
     const state = foldEvent(foldEvent(initialState(), turnStart("t1")), textDelta("t1", "partial"));
     const before = structuredClone(state);
     const event = { type, conversationId: "c1", turnId: "t1", reason: "sealed" };
     expect(foldEvent(state, event as Parameters<typeof foldEvent>[1])).toBe(state);
     expect(state).toEqual(before);
+  });
+});
+
+describe("foldEvent — authoritative turn terminal", () => {
+  it.each([
+    "sealed",
+    "aborted",
+    "error",
+    "rejected",
+  ] as const)("ends generation on %s", (reason) => {
+    const before = foldEvent(
+      foldEvent(initialState(), turnStart("t1")),
+      textDelta("t1", "partial"),
+    );
+    const next = foldEvent(before, {
+      type: "turn-ended",
+      conversationId: "c1",
+      turnId: "t1",
+      reason,
+    });
+    expect(next.generating).toBe(false);
+    expect(next.accumulating).toBeNull();
+    expect(selectChunks(next).map((c) => c.chunk)).toEqual([{ type: "text", text: "partial" }]);
+    expect(before.accumulating?.text).toBe("partial");
   });
 });

@@ -3076,3 +3076,56 @@ describe("compaction queued acknowledgement routing", () => {
     store.dispose();
   });
 });
+
+it("routes omitted replay only to the matching watch/tab without WS resend or an error banner", async () => {
+  const ws = fakeSocket();
+  const store = createAppStore({
+    socketFactory: () => ws,
+    fetchImpl: fakeFetchImpl(),
+    indexedDB: new IDBFactory(),
+    localStorage: createFakeStorage(),
+    chatFlushScheduler: null,
+  });
+  try {
+    ws.resolveOpen();
+    const tab = store.activeChat;
+    const watch = store.watchConversation("omitted-watch");
+    const sentBefore = ws.sent.length;
+    ws.feedServerMessage({
+      type: "chat.resync-required",
+      conversationId: "unknown",
+      turnId: "unknown-turn",
+      reason: "replay-limit",
+    });
+    expect(watch.recovering).toBe(false);
+    expect(tab.recovering).toBe(false);
+    ws.feedServerMessage({
+      type: "chat.resync-required",
+      conversationId: "omitted-watch",
+      turnId: "t1",
+      reason: "replay-limit",
+    });
+    expect(watch.recovering).toBe(true);
+    expect(watch.generating).toBe(true);
+    expect(tab.recovering).toBe(false);
+    expect(watch.error).toBeNull();
+    expect(tab.error).toBeNull();
+    expect(store.fatalError).toBeNull();
+    expect(ws.sent).toHaveLength(sentBefore);
+    ws.feedServerMessage({
+      type: "chat.delta",
+      event: {
+        type: "turn-ended",
+        conversationId: "omitted-watch",
+        turnId: "t1",
+        reason: "aborted",
+      },
+    });
+    await vi.waitFor(() => expect(watch.pendingSync).toBe(false));
+    expect(watch.recovering).toBe(false);
+    expect(watch.generating).toBe(false);
+    expect(ws.sent).toHaveLength(sentBefore);
+  } finally {
+    store.dispose();
+  }
+});

@@ -24,6 +24,7 @@
 
   let {
     chunks,
+    recovering = false,
     turnMetrics = [],
     hasEarlier = false,
     onShowEarlier,
@@ -34,6 +35,7 @@
     cacheTimer = null,
   }: {
     chunks: readonly RenderedChunk[];
+    recovering?: boolean;
     turnMetrics?: readonly TurnMetricsEntry[];
     /** Earlier history is unloaded (chat limit) and can be paged back in. */
     hasEarlier?: boolean;
@@ -90,7 +92,7 @@
     }
   }
 
-  const groups = $derived(groupRenderedChunks(chunks));
+  const groups = $derived(groupRenderedChunks(chunks, recovering));
 
   const rows = $derived(interleaveTurnMetrics(groups, turnMetrics));
 
@@ -149,6 +151,12 @@
     });
   });
 </script>
+
+{#if recovering}
+  <p role="status" class="px-4 py-2 text-sm text-base-content/70">
+    Recovering conversation history… Omitted tool input/output is unavailable until persisted.
+  </p>
+{/if}
 
 {#snippet chunkRow(rendered: RenderedChunk)}
   {#if rendered.role === "user"}

@@ -1,4 +1,5 @@
 import type { ChatMessage, Chunk, StoredChunk, TurnProviderRetryEvent } from "@dispatch/wire";
+import { historyBackedProvisional } from "./reconcile";
 import type { ProvisionalChunk, RenderedChunk, TranscriptState } from "./types";
 
 /**
@@ -42,7 +43,8 @@ function sameChunk(p: ProvisionalChunk, c: StoredChunk): boolean {
 function committedOverlap(state: TranscriptState): { skip: number; hideAccumulating: boolean } {
   const first = state.provisional[0];
   const turnId = first?.turnId ?? state.accumulating?.turnId;
-  if (turnId === undefined) return { skip: 0, hideAccumulating: false };
+  if (turnId === undefined || state.historyRecoveryTurnIds?.includes(turnId))
+    return { skip: 0, hideAccumulating: false };
   // The committed run for this turn (contiguous at the tail of `committed`).
   let start = state.committed.length;
   while (start > 0 && state.committed[start - 1]?.turnId === turnId) start--;
@@ -59,7 +61,7 @@ function committedOverlap(state: TranscriptState): { skip: number; hideAccumulat
 
   let hideAccumulating = false;
   const acc = state.accumulating;
-  if (acc !== null && skip === state.provisional.length && skip < run) {
+  if (acc !== null && acc.turnId === turnId && skip === state.provisional.length && skip < run) {
     const c = state.committed[start + skip];
     hideAccumulating =
       c !== undefined &&
@@ -72,11 +74,12 @@ function committedOverlap(state: TranscriptState): { skip: number; hideAccumulat
 
 /**
  * Select all chunks for rendering: committed first (seq order),
- * then provisional (seq: null) — minus provisional chunks already backed by
- * committed history (see `committedOverlap`).
+ * then provisional (seq: null), excluding history-backed identities. Unknown
+ * accumulating content stays live, even if its text equals an earlier step.
  */
 export function selectChunks(state: TranscriptState): readonly RenderedChunk[] {
   const result: RenderedChunk[] = [];
+  const backed = historyBackedProvisional(state);
   const { skip, hideAccumulating } = committedOverlap(state);
   for (const c of state.committed) {
     result.push(
@@ -87,7 +90,7 @@ export function selectChunks(state: TranscriptState): readonly RenderedChunk[] {
   }
   for (let i = skip; i < state.provisional.length; i++) {
     const p = state.provisional[i];
-    if (p === undefined) continue;
+    if (p === undefined || backed.has(p)) continue;
     result.push(
       p.turnId !== undefined
         ? { seq: null, role: p.role, chunk: p.chunk, provisional: true, turnId: p.turnId }

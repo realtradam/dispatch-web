@@ -1,5 +1,6 @@
 import type { AgentEvent, Chunk, ImageInput, Role, StoredChunk } from "@dispatch/wire";
 import { assertChunkExhaustive } from "../wire/conformance";
+import { historyBackedProvisional } from "./reconcile";
 import type { AccumulatingChunk, ProvisionalChunk, TranscriptState } from "./types";
 
 /** The initial empty transcript state. */
@@ -40,7 +41,13 @@ function flushAccumulating(
   if (acc === null) return provisional;
   const chunk: Chunk =
     acc.kind === "text" ? { type: "text", text: acc.text } : { type: "thinking", text: acc.text };
-  return [...provisional, withTurn({ role: "assistant", chunk }, acc.turnId)];
+  return [
+    ...provisional,
+    withTurn(
+      { role: "assistant", chunk, ...(acc.stepId !== undefined ? { stepId: acc.stepId } : {}) },
+      acc.turnId,
+    ),
+  ];
 }
 
 /** Attach a `turnId` to a provisional chunk (omitted when unknown). */
@@ -129,8 +136,8 @@ function trailingRun(
 /**
  * Merge authoritative seq-keyed chunks into the committed history.
  * Dedupes by seq (new wins), keeps seq-monotonic order, idempotent.
- * When sealedTurnId is set, drops all provisional chunks (now superseded)
- * and clears sealedTurnId.
+ * A sealed/finally-synced turn supersedes only its own provisional chunks;
+ * unrelated turns and an already-running queued carry remain live.
  *
  * Chunks below the chat-limit unload watermark (`hiddenBeforeSeq`) are
  * REJECTED: a full-cache or tail merge must not resurrect what the trim
@@ -139,6 +146,7 @@ function trailingRun(
 export function applyHistory(
   state: TranscriptState,
   chunks: readonly StoredChunk[],
+  finishedTurnIds: readonly string[] = [],
 ): TranscriptState {
   const seqMap = new Map<number, StoredChunk>();
   for (const c of state.committed) seqMap.set(c.seq, c);
@@ -149,14 +157,49 @@ export function applyHistory(
     seqMap.set(c.seq, c);
   }
   const committed = Array.from(seqMap.values()).sort((a, b) => a.seq - b.seq);
+  const identityRows = new Map(seqMap);
+  for (const c of chunks) identityRows.set(c.seq, c);
+  const backed = historyBackedProvisional(
+    state,
+    [...identityRows.values()].sort((a, b) => a.seq - b.seq),
+  );
+  const finished = new Set(finishedTurnIds);
+  if (state.sealedTurnId !== null) finished.add(state.sealedTurnId);
+  state = {
+    ...state,
+    provisional: state.provisional.filter((p) => !backed.has(p) && !finished.has(p.turnId ?? "")),
+    accumulating:
+      state.accumulating?.turnId !== undefined && finished.has(state.accumulating.turnId)
+        ? null
+        : state.accumulating,
+  };
 
   if (state.sealedTurnId !== null) {
+    // Legacy (non-recovery) histories may carry no turn provenance at all.
+    // Retain their seal cleanup, but never erase an already-live queued carry.
+    const legacySeal =
+      (state.historyRecoveryTurnIds?.length ?? 0) === 0 && finishedTurnIds.length === 0;
     return {
       ...state,
       committed,
-      provisional: [],
-      accumulating: null,
+      provisional: legacySeal
+        ? state.provisional.filter(
+            (p) =>
+              state.generating &&
+              p.turnId === state.currentTurnId &&
+              p.turnId !== state.sealedTurnId,
+          )
+        : state.provisional,
+      accumulating:
+        legacySeal && state.accumulating?.turnId === state.sealedTurnId ? null : state.accumulating,
       sealedTurnId: null,
+      ...(state.historyRecoveryTurnIds !== undefined
+        ? {
+            historyRecoveryTurnIds: state.historyRecoveryTurnIds.filter(
+              (id) => !finishedTurnIds.includes(id),
+            ),
+          }
+        : {}),
     };
   }
 
@@ -167,7 +210,14 @@ export function applyHistory(
   // match the trailing provisional user-run against the trailing committed
   // user-run by content equality and drop the whole echo when it is fully
   // backed. Leaves the accumulating (streaming) chunk untouched.
-  if (addedNew && state.generating && state.provisional.length > 0) {
+  if (
+    addedNew &&
+    state.generating &&
+    state.provisional.length > 0 &&
+    !state.provisional.some(
+      (p) => p.turnId !== undefined && state.historyRecoveryTurnIds?.includes(p.turnId),
+    )
+  ) {
     const provRun = trailingRun(state.provisional, "user");
     if (provRun.length > 0) {
       const commRun = trailingRun(committed, "user");
@@ -179,7 +229,11 @@ export function applyHistory(
         commRun.length >= provRun.length &&
         provRun.every((p, i) => {
           const c = commRun[i];
-          return c !== undefined && chunkContentEquals(p.chunk, c.chunk);
+          return (
+            c !== undefined &&
+            (c.turnId === undefined || p.turnId === undefined || c.turnId === p.turnId) &&
+            chunkContentEquals(p.chunk, c.chunk)
+          );
         });
       if (fullyBacked) {
         const dropStart = state.provisional.length - provRun.length;
@@ -189,7 +243,17 @@ export function applyHistory(
     }
   }
 
-  return { ...state, committed };
+  return {
+    ...state,
+    committed,
+    ...(state.historyRecoveryTurnIds !== undefined
+      ? {
+          historyRecoveryTurnIds: state.historyRecoveryTurnIds.filter(
+            (id) => !finishedTurnIds.includes(id),
+          ),
+        }
+      : {}),
+  };
 }
 
 /**
@@ -227,7 +291,11 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
     case "turn-start":
       return {
         ...state,
-        provisional: tagTrailingUserEcho(state.provisional, event.turnId),
+        provisional: tagTrailingUserEcho(
+          flushAccumulating(state.provisional, state.accumulating),
+          event.turnId,
+        ),
+        accumulating: null,
         currentTurnId: event.turnId,
         generating: true,
       };
@@ -246,16 +314,21 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       // text) emits no `user-message` and is not de-duped here.
       if (event.text.length === 0) return state;
       const run = trailingRun(state.provisional, "user");
-      const echoed = run.find((p) => p.chunk.type === "text" && p.chunk.text === event.text);
+      const echoed = run.find(
+        (p) =>
+          (p.turnId === undefined || p.turnId === event.turnId) &&
+          p.chunk.type === "text" &&
+          p.chunk.text === event.text,
+      );
       if (echoed !== undefined) {
         return {
           ...state,
           // Preserve the live text independently of the local send. A delayed
           // queued ack may remove its images, but cannot erase this server event.
           provisional: tagTrailingUserEcho(state.provisional, event.turnId).map((p) => {
-            if (p.chunk !== echoed.chunk || p.localRequestId === undefined) return p;
+            if (p.chunk !== echoed.chunk) return p;
             const { localRequestId: _local, ...confirmed } = p;
-            return confirmed;
+            return { ...confirmed, opening: true };
           }),
           generating: true,
         };
@@ -265,7 +338,12 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
         ...state,
         provisional: [
           ...provisional,
-          { role: "user", chunk: { type: "text", text: event.text }, turnId: event.turnId },
+          {
+            role: "user",
+            chunk: { type: "text", text: event.text },
+            turnId: event.turnId,
+            opening: true,
+          },
         ],
         accumulating: null,
         generating: true,
@@ -274,7 +352,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
 
     case "text-delta": {
       const acc = state.accumulating;
-      if (acc !== null && acc.kind === "text") {
+      if (acc !== null && acc.kind === "text" && acc.turnId === event.turnId) {
         return {
           ...state,
           accumulating: { ...acc, text: acc.text + event.delta },
@@ -292,7 +370,7 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
 
     case "reasoning-delta": {
       const acc = state.accumulating;
-      if (acc !== null && acc.kind === "thinking") {
+      if (acc !== null && acc.kind === "thinking" && acc.turnId === event.turnId) {
         return {
           ...state,
           accumulating: { ...acc, text: acc.text + event.delta },
@@ -361,8 +439,24 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       return { ...state, latestUsage: event.usage };
 
     case "step-complete":
-      // Timing metadata — no content chunk; handled by the telemetry reducer.
-      return state;
+      // A persistence boundary may lag this notification. Stamp provenance and
+      // finish the generation chunk, but keep it until history really backs it.
+      return {
+        ...state,
+        provisional: flushAccumulating(state.provisional, state.accumulating),
+        accumulating: null,
+      };
+
+    case "turn-ended":
+      return {
+        ...state,
+        provisional:
+          state.accumulating?.turnId === event.turnId
+            ? flushAccumulating(state.provisional, state.accumulating)
+            : state.provisional,
+        accumulating: state.accumulating?.turnId === event.turnId ? null : state.accumulating,
+        generating: state.currentTurnId === event.turnId ? false : state.generating,
+      };
 
     case "done": {
       const provisional = flushAccumulating(state.provisional, state.accumulating);
@@ -394,11 +488,21 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       // into the transcript by the sender).
       if (event.text.length === 0) return state;
       const provisional = flushAccumulating(state.provisional, state.accumulating);
+      const preceding = [...state.committed, ...provisional]
+        .reverse()
+        .find((p) => p.turnId === event.turnId && p.chunk.type === "tool-result");
+      const afterToolCallId =
+        preceding?.chunk.type === "tool-result" ? preceding.chunk.toolCallId : undefined;
       return {
         ...state,
         provisional: [
           ...provisional,
-          { role: "user", chunk: { type: "text", text: event.text }, turnId: event.turnId },
+          {
+            role: "user",
+            chunk: { type: "text", text: event.text },
+            turnId: event.turnId,
+            ...(afterToolCallId !== undefined ? { afterToolCallId } : {}),
+          },
         ],
         accumulating: null,
         generating: true,
@@ -440,9 +544,31 @@ const RETRY_CLEARING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
   "error",
   "done",
   "turn-sealed",
+  "turn-ended",
 ]);
 
 export function foldEvent(state: TranscriptState, event: AgentEvent): TranscriptState {
+  if (
+    event.type === "tool-call" ||
+    event.type === "tool-result" ||
+    event.type === "step-complete"
+  ) {
+    state = {
+      ...state,
+      provisional: state.provisional.map((p) =>
+        p.turnId === event.turnId &&
+        p.role === "assistant" &&
+        p.stepId === undefined &&
+        (p.chunk.type === "text" || p.chunk.type === "thinking")
+          ? { ...p, stepId: event.stepId }
+          : p,
+      ),
+      accumulating:
+        state.accumulating?.turnId === event.turnId
+          ? { ...state.accumulating, stepId: event.stepId }
+          : state.accumulating,
+    };
+  }
   const next = reduceEvent(state, event);
   if (event.type === "provider-retry") return next; // set by reduceEvent; not a clearing event
   if (RETRY_CLEARING_EVENTS.has(event.type) && state.providerRetry !== null) {
@@ -510,4 +636,16 @@ export function appendUserMessage(
 export function removeLocalEcho(state: TranscriptState, requestId: string): TranscriptState {
   const provisional = state.provisional.filter((p) => p.localRequestId !== requestId);
   return provisional.length === state.provisional.length ? state : { ...state, provisional };
+}
+
+/** A resync notice is lifecycle evidence, never fabricated transcript content. */
+export function markHistoryRecovering(state: TranscriptState, turnId: string): TranscriptState {
+  return {
+    ...state,
+    currentTurnId: turnId,
+    generating: true,
+    historyRecoveryTurnIds: state.historyRecoveryTurnIds?.includes(turnId)
+      ? state.historyRecoveryTurnIds
+      : [...(state.historyRecoveryTurnIds ?? []), turnId],
+  };
 }

@@ -150,3 +150,25 @@ describe("groupRenderedChunks", () => {
     expect(groups.map((g) => g.kind)).toEqual(["single", "tool"]);
   });
 });
+
+it("keeps windowed committed orphan calls in Show earlier even while another payload recovers", () => {
+  const groups = groupRenderedChunks(
+    [
+      {
+        seq: 50,
+        role: "tool",
+        provisional: false,
+        chunk: {
+          type: "tool-result",
+          toolCallId: "older",
+          toolName: "run_shell",
+          content: "output",
+          isError: false,
+        },
+      },
+    ],
+    true,
+  );
+  expect(groups[0]).toMatchObject({ kind: "tool", entry: { call: null } });
+  if (groups[0]?.kind === "tool") expect(groups[0].entry.recovering).toBeUndefined();
+});

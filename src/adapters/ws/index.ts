@@ -2,6 +2,7 @@ import type {
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueuedMessage,
+  ChatResyncRequiredMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -25,7 +26,9 @@ export interface WebSocketLike {
 export interface SurfaceSocketOptions {
   url: string;
   onMessage: (msg: SurfaceServerMessage) => void;
-  onChat?: (msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage) => void;
+  onChat?: (
+    msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage | ChatResyncRequiredMessage,
+  ) => void;
   /** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
   onConversationOpen?: (msg: ConversationOpenMessage) => void;
   /** Broadcast when a conversation's lifecycle status changes (active/idle/closed). */
@@ -101,8 +104,19 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
       if (disposed) return;
       const msg = parseServerMessage(ev.data);
       if (msg !== null) {
-        if (msg.type === "chat.delta" || msg.type === "chat.error" || msg.type === "chat.queued") {
-          opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage);
+        if (
+          msg.type === "chat.delta" ||
+          msg.type === "chat.error" ||
+          msg.type === "chat.queued" ||
+          msg.type === "chat.resync-required"
+        ) {
+          opts.onChat?.(
+            msg as
+              | ChatDeltaMessage
+              | ChatErrorMessage
+              | ChatQueuedMessage
+              | ChatResyncRequiredMessage,
+          );
         } else if (msg.type === "conversation.open") {
           opts.onConversationOpen?.(msg as ConversationOpenMessage);
         } else if (msg.type === "conversation.statusChanged") {

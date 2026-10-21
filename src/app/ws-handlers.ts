@@ -2,6 +2,7 @@ import type {
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueuedMessage,
+  ChatResyncRequiredMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -53,7 +54,9 @@ export function createWsHandlers(deps: {
     layoutStore,
     tileLayoutStore,
   } = deps;
-  function handleChatMessage(msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage): void {
+  function handleChatMessage(
+    msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage | ChatResyncRequiredMessage,
+  ): void {
     let targetId: string | undefined;
     if (msg.type === "chat.delta") {
       targetId = msg.event.conversationId;
@@ -69,7 +72,7 @@ export function createWsHandlers(deps: {
       }
     }
 
-    if (msg.type === "chat.queued") return;
+    if (msg.type === "chat.queued" || msg.type === "chat.resync-required") return;
 
     // fallback: try all stores (chat.error without conversationId)
     for (const store of registry.chatStores.values()) {

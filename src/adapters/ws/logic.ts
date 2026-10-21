@@ -2,6 +2,7 @@ import type {
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueuedMessage,
+  ChatResyncRequiredMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -27,6 +28,7 @@ const VALID_SERVER_TYPES = new Set([
   "chat.delta",
   "chat.error",
   "chat.queued",
+  "chat.resync-required",
   "conversation.open",
   "conversation.statusChanged",
   "conversation.compacted",
@@ -112,6 +114,18 @@ export function parseServerMessage(data: string): WsServerMessage | null {
       if (!isRecord(event)) return null;
       if (typeof event.type !== "string") return null;
       return { type: "chat.delta", event: event as unknown as ChatDeltaMessage["event"] };
+    }
+    case "chat.resync-required": {
+      if (typeof parsed.conversationId !== "string") return null;
+      if (parsed.turnId !== undefined && typeof parsed.turnId !== "string") return null;
+      if (parsed.reason !== "replay-limit" && parsed.reason !== "payload-limit") return null;
+      const msg: ChatResyncRequiredMessage = {
+        type: "chat.resync-required",
+        conversationId: parsed.conversationId,
+        reason: parsed.reason,
+        ...(parsed.turnId !== undefined ? { turnId: parsed.turnId } : {}),
+      };
+      return msg;
     }
     case "chat.queued": {
       if (typeof parsed.conversationId !== "string") return null;

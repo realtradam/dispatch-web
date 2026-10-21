@@ -80,6 +80,7 @@
       {#key store.activeConversationId}
         <ChatView
           chunks={store.activeChat.chunks}
+          recovering={store.activeChat.recovering}
           turnMetrics={store.activeChat.turnMetrics}
           hasEarlier={store.activeChat.hasEarlier}
           onShowEarlier={handleShowEarlier}

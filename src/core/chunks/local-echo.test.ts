@@ -28,7 +28,7 @@ describe("request-local optimistic echo", () => {
     });
     state = removeLocalEcho(removeLocalEcho(state, "r1"), "r2");
     expect(state.provisional).toEqual([
-      { role: "user", turnId: "t1", chunk: { type: "text", text: "same" } },
+      { role: "user", turnId: "t1", opening: true, chunk: { type: "text", text: "same" } },
     ]);
   });
 

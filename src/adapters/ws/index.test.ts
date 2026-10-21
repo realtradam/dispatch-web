@@ -499,3 +499,40 @@ it("routes chat.queued only through the typed chat callback, never surface/error
   expect(onMessage).not.toHaveBeenCalled();
   handle.close();
 });
+
+it("routes resync notices to chat without reconnect/resend or surface errors", () => {
+  vi.useFakeTimers();
+  const ws = fakeSocket();
+  const onChat = vi.fn();
+  const onMessage = vi.fn();
+  const onReopen = vi.fn();
+  const factory = vi.fn(() => ws);
+  const handle = createSurfaceSocket({
+    url: "ws://test",
+    socketFactory: factory,
+    onChat,
+    onMessage,
+    onReopen,
+  });
+  try {
+    ws.resolveOpen();
+    const notice = {
+      type: "chat.resync-required",
+      conversationId: "c1",
+      turnId: "t1",
+      reason: "replay-limit",
+    };
+    ws.invokeMessage(JSON.stringify(notice));
+    ws.invokeMessage(JSON.stringify(notice));
+    vi.advanceTimersByTime(1000);
+    expect(onChat).toHaveBeenCalledTimes(2);
+    expect(onChat).toHaveBeenCalledWith(notice);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(onReopen).not.toHaveBeenCalled();
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toEqual([]);
+  } finally {
+    handle.close();
+    vi.useRealTimers();
+  }
+});

@@ -512,3 +512,47 @@ it("replaces failed persisted images with an expired placeholder, without markin
   expect(screen.getByText("image expired")).toBeInTheDocument();
   expect(screen.getAllByRole("img")).toEqual([inline]);
 });
+
+it("shows omitted in-progress tool input as recovering/unavailable, never No arguments", async () => {
+  const { container, rerender } = render(ChatView, {
+    recovering: true,
+    chunks: [
+      {
+        seq: null,
+        role: "tool",
+        provisional: true,
+        chunk: {
+          type: "tool-result",
+          toolCallId: "missing",
+          toolName: "run_shell",
+          content: "real output",
+          isError: false,
+        },
+      },
+    ],
+  });
+  expect(screen.getByRole("status").textContent).toContain("unavailable until persisted");
+  expect(screen.getByText("Recovering tool input…")).toBeTruthy();
+  await openAllCollapses(container);
+  expect(screen.getByText(/Tool input is unavailable until it is persisted/)).toBeTruthy();
+  expect(screen.queryByText("No arguments")).toBeNull();
+  expect(screen.getByText("real output")).toBeTruthy();
+  await rerender({
+    recovering: false,
+    chunks: [
+      {
+        seq: 1,
+        role: "assistant",
+        provisional: false,
+        chunk: {
+          type: "tool-call",
+          toolCallId: "missing",
+          toolName: "run_shell",
+          input: { command: "recovered command" },
+        },
+      },
+    ],
+  });
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByText("Recovering tool input…")).toBeNull();
+});

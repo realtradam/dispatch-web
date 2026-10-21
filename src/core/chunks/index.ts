@@ -7,6 +7,7 @@ export {
   clearGenerating,
   foldEvent,
   initialState,
+  markHistoryRecovering,
   removeLocalEcho,
 } from "./reducer";
 export type { ProviderRetryView } from "./retry-banner";

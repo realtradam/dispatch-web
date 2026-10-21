@@ -1,4 +1,8 @@
-import type { ChatSendMessage, ConversationHistoryResponse } from "@dispatch/transport-contract";
+import type {
+  ChatSendMessage,
+  ConversationHistoryResponse,
+  WsServerMessage,
+} from "@dispatch/transport-contract";
 import type { AgentEvent, StepId, StoredChunk } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import {
@@ -180,6 +184,11 @@ describe("classifies every WsServerMessage type", () => {
         reason: "compaction" as const,
         messageId: "queued-1",
       },
+      {
+        type: "chat.resync-required" as const,
+        conversationId: "c1",
+        reason: "replay-limit" as const,
+      },
       { type: "conversation.open" as const, conversationId: "c1", workspaceId: "w1" },
       {
         type: "conversation.statusChanged" as const,
@@ -195,7 +204,29 @@ describe("classifies every WsServerMessage type", () => {
         historyEpoch: 0,
         messagesKept: 5,
       },
+      {
+        type: "conversation.tabGroupChanged" as const,
+        conversationId: "c1",
+        workspaceId: "w1",
+        tabGroupParentId: null,
+      },
+      { type: "extensions-changed" as const, action: "scan" as const },
+      {
+        type: "layout" as const,
+        workspaceId: "w1",
+        tree: { version: 1 as const, root: { kind: "leaf" as const, id: "leaf1", view: "chat" } },
+      },
+      {
+        type: "tile-layout" as const,
+        mode: "wide" as const,
+        data: { version: 2 as const, tiles: [] },
+      },
     ];
+    // Runtime samples stay exhaustive too, not just the switch guard.
+    const covered: Exclude<WsServerMessage["type"], (typeof msgs)[number]["type"]> extends never
+      ? true
+      : false = true;
+    expect(covered).toBe(true);
     const labels = msgs.map(assertWsServerMessageExhaustive);
     expect(labels).toEqual([
       "catalog",
@@ -205,9 +236,14 @@ describe("classifies every WsServerMessage type", () => {
       "chat.delta",
       "chat.error",
       "chat.queued",
+      "chat.resync-required",
       "conversation.open",
       "conversation.statusChanged",
       "conversation.compacted",
+      "conversation.tabGroupChanged",
+      "extensions-changed",
+      "layout",
+      "tile-layout",
     ]);
   });
 });

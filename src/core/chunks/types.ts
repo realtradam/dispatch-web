@@ -2,6 +2,7 @@ import type { Chunk, Role, StoredChunk, TurnProviderRetryEvent, Usage } from "@d
 
 /** A chunk being accumulated from streaming deltas (text or thinking). */
 export interface AccumulatingChunk {
+  readonly stepId?: string;
   readonly kind: "text" | "thinking";
   readonly text: string;
   /** The turn generating this chunk (from the live event's `turnId`). */
@@ -10,6 +11,11 @@ export interface AccumulatingChunk {
 
 /** A provisional chunk that has no authoritative seq yet. */
 export interface ProvisionalChunk {
+  /** Local provenance learned from tool-call/step-complete, not content. */
+  readonly stepId?: string;
+  readonly opening?: boolean;
+  /** Steering is persisted immediately after this completed tool batch. */
+  readonly afterToolCallId?: string;
   /** Local send identity only; turn-start tagging does NOT confirm this content. */
   readonly localRequestId?: string;
   readonly role: Role;
@@ -24,6 +30,8 @@ export interface ProvisionalChunk {
 
 /** The transcript reducer state. Holds committed history + live in-flight turn. */
 export interface TranscriptState {
+  /** Turns with omitted delivery: never use payload equality as replay identity. */
+  readonly historyRecoveryTurnIds?: readonly string[];
   readonly committed: readonly StoredChunk[];
   readonly provisional: readonly ProvisionalChunk[];
   readonly accumulating: AccumulatingChunk | null;
