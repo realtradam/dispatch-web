@@ -107,13 +107,13 @@
 {/snippet}
 
 <div class="flex flex-col gap-2">
-  <!-- 2-column grid of same-size tab cards, fixed at 40% of the viewport height
+  <!-- 2-column grid of same-size tab cards, fixed at 70% of the viewport height
        so a long tab set scrolls inside this region instead of growing the
        sidebar. Subagent groups span both columns; `dense` lets a later card
        fill the half-row a group would otherwise leave empty. -->
   <div
     bind:this={scrollerEl}
-    class="relative h-[40vh] overflow-y-auto py-0.5"
+    class="relative h-[70vh] overflow-y-auto py-0.5"
     style:padding-inline="{gutter}px"
     data-tab-grid
     onscroll={() => (menu = null)}

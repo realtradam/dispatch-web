@@ -186,7 +186,7 @@ describe("TabList", () => {
     }
   });
 
-  it("fixes the tab grid region at 40vh so a long set scrolls internally", () => {
+  it("fixes the tab grid region at 70vh so a long set scrolls internally", () => {
     render(TabList, {
       props: {
         tabs: sampleTabs,
@@ -199,7 +199,7 @@ describe("TabList", () => {
 
     const tabs = screen.getAllByRole("tab");
     const region = tabs[0]?.parentElement?.parentElement;
-    expect(region).toHaveClass("h-[40vh]");
+    expect(region).toHaveClass("h-[70vh]");
     expect(region).toHaveClass("overflow-y-auto");
   });
 
