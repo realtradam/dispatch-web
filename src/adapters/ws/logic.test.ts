@@ -577,3 +577,35 @@ it("preserves a compaction epoch and rejects absent or invalid epochs", () => {
     expect(parseServerMessage(JSON.stringify({ ...msg, historyEpoch }))).toBeNull();
   }
 });
+
+describe("chat.queued admission acknowledgement", () => {
+  const ack = {
+    type: "chat.queued",
+    conversationId: "c1",
+    reason: "compaction",
+    messageId: "q1",
+  };
+
+  it.each([undefined, "request-1"])("preserves optional requestId %s", (requestId) => {
+    const msg = { ...ack, ...(requestId !== undefined ? { requestId } : {}) };
+    expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+  });
+
+  it.each([
+    { conversationId: undefined },
+    { conversationId: 12 },
+    { messageId: undefined },
+    { messageId: null },
+    { reason: undefined },
+    { reason: "other" },
+    { requestId: null },
+    { requestId: 12 },
+  ])("rejects malformed acknowledgement %j", (bad) => {
+    expect(parseServerMessage(JSON.stringify({ ...ack, ...bad }))).toBeNull();
+  });
+
+  it("serializes a correlated send", () => {
+    const msg = { type: "chat.send" as const, message: "hello", requestId: "r1" };
+    expect(JSON.parse(serialize(msg))).toEqual(msg);
+  });
+});

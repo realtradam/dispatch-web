@@ -10,6 +10,8 @@ export interface AccumulatingChunk {
 
 /** A provisional chunk that has no authoritative seq yet. */
 export interface ProvisionalChunk {
+  /** Local send identity only; turn-start tagging does NOT confirm this content. */
+  readonly localRequestId?: string;
   readonly role: Role;
   readonly chunk: Chunk;
   /**

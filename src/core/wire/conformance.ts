@@ -85,6 +85,8 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "error";
     case "chat.delta":
       return "chat.delta";
+    case "chat.queued":
+      return "chat.queued";
     case "chat.error":
       return "chat.error";
     case "conversation.open":

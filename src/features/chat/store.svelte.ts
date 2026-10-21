@@ -2,6 +2,7 @@ import type {
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueueCancelMessage,
+  ChatQueuedMessage,
   ChatQueueMessage,
   ChatSendMessage,
 } from "@dispatch/transport-contract";
@@ -15,6 +16,7 @@ import {
   initialState,
   initialWindowSize,
   normalizeChatLimit,
+  removeLocalEcho,
   restoreEarlier,
   selectChunks,
   selectGenerating,
@@ -43,6 +45,8 @@ import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 
 export interface ChatStoreDependencies {
   readonly conversationId: string;
+  /** Injected unique client-local correlation token for each new send. */
+  readonly createRequestId: () => string;
   readonly model?: string;
   readonly transport: ChatTransport;
   readonly historySync: HistorySync;
@@ -142,7 +146,7 @@ export interface ChatStore {
    * Ignored while a turn is generating; a running turn gap keeps the later start.
    */
   noteLastActivity(at: number): void;
-  handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
+  handleDelta(msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage): void;
   /**
    * Send a user message (start a turn via `chat.send`). Optimistically echoes
    * the text + any `images` as provisional user chunks (`[text, image, …]` in
@@ -540,12 +544,20 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       cacheTimer = seedTurnGap(cacheTimer, at);
     },
 
-    handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void {
+    handleDelta(msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage): void {
       if (msg.type === "chat.error") {
         if (msg.conversationId !== undefined && msg.conversationId !== deps.conversationId) {
           return;
         }
         _error = msg.message;
+        return;
+      }
+      if (msg.type === "chat.queued") {
+        if (disposed || msg.conversationId !== deps.conversationId) return;
+        // A queued live opening may already have confirmed the echoed text.
+        // Fold it first; turn-start alone must not protect still-local artifacts.
+        flushEvents();
+        if (msg.requestId !== undefined) transcript = removeLocalEcho(transcript, msg.requestId);
         return;
       }
       if (msg.event.conversationId !== deps.conversationId) {
@@ -566,10 +578,12 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       flushEvents();
       // Sending ends the wait since the last turn: stamp it on that turn.
       cacheTimer = stopTurnGap(cacheTimer, now(), () => lastTurnIdOf(metrics));
-      transcript = appendUserMessage(transcript, text, images);
+      const requestId = deps.createRequestId();
+      transcript = appendUserMessage(transcript, text, images, requestId);
       maybeTrim();
       const msg: ChatSendMessage = {
         type: "chat.send",
+        requestId,
         conversationId: deps.conversationId,
         message: text,
         ...(_model !== undefined ? { model: _model } : {}),

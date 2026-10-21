@@ -78,6 +78,7 @@ export function createChatRegistry(deps: {
   function createChatFor(conversationId: string, model: string, workspaceId: string): ChatStore {
     return createChatStore({
       conversationId,
+      createRequestId: randomId,
       model,
       workspaceId,
       transport: {

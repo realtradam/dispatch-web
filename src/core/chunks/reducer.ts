@@ -246,11 +246,17 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
       // text) emits no `user-message` and is not de-duped here.
       if (event.text.length === 0) return state;
       const run = trailingRun(state.provisional, "user");
-      const alreadyEchoed = run.some((p) => p.chunk.type === "text" && p.chunk.text === event.text);
-      if (alreadyEchoed) {
+      const echoed = run.find((p) => p.chunk.type === "text" && p.chunk.text === event.text);
+      if (echoed !== undefined) {
         return {
           ...state,
-          provisional: tagTrailingUserEcho(state.provisional, event.turnId),
+          // Preserve the live text independently of the local send. A delayed
+          // queued ack may remove its images, but cannot erase this server event.
+          provisional: tagTrailingUserEcho(state.provisional, event.turnId).map((p) => {
+            if (p.chunk !== echoed.chunk || p.localRequestId === undefined) return p;
+            const { localRequestId: _local, ...confirmed } = p;
+            return confirmed;
+          }),
           generating: true,
         };
       }
@@ -463,6 +469,7 @@ export function appendUserMessage(
   state: TranscriptState,
   text: string,
   images?: readonly ImageInput[],
+  localRequestId?: string,
 ): TranscriptState {
   const provisional = flushAccumulating(state.provisional, state.accumulating);
   const userChunks: Chunk[] = [];
@@ -484,7 +491,23 @@ export function appendUserMessage(
   }
   return {
     ...state,
-    provisional: [...provisional, ...userChunks.map((chunk) => ({ role: "user", chunk }) as const)],
+    provisional: [
+      ...provisional,
+      ...userChunks.map(
+        (chunk) =>
+          ({
+            role: "user",
+            chunk,
+            ...(localRequestId !== undefined ? { localRequestId } : {}),
+          }) as const,
+      ),
+    ],
     accumulating: null,
   };
+}
+
+/** Remove only still-local artifacts of one accepted queued send; never history/live text. */
+export function removeLocalEcho(state: TranscriptState, requestId: string): TranscriptState {
+  const provisional = state.provisional.filter((p) => p.localRequestId !== requestId);
+  return provisional.length === state.provisional.length ? state : { ...state, provisional };
 }

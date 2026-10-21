@@ -1,6 +1,7 @@
 import type {
   ChatDeltaMessage,
   ChatErrorMessage,
+  ChatQueuedMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -25,6 +26,7 @@ const VALID_SERVER_TYPES = new Set([
   "error",
   "chat.delta",
   "chat.error",
+  "chat.queued",
   "conversation.open",
   "conversation.statusChanged",
   "conversation.compacted",
@@ -110,6 +112,20 @@ export function parseServerMessage(data: string): WsServerMessage | null {
       if (!isRecord(event)) return null;
       if (typeof event.type !== "string") return null;
       return { type: "chat.delta", event: event as unknown as ChatDeltaMessage["event"] };
+    }
+    case "chat.queued": {
+      if (typeof parsed.conversationId !== "string") return null;
+      if (typeof parsed.messageId !== "string") return null;
+      if (parsed.reason !== "compaction") return null;
+      if (parsed.requestId !== undefined && typeof parsed.requestId !== "string") return null;
+      const msg: ChatQueuedMessage = {
+        type: "chat.queued",
+        conversationId: parsed.conversationId,
+        messageId: parsed.messageId,
+        reason: "compaction",
+        ...(parsed.requestId !== undefined ? { requestId: parsed.requestId } : {}),
+      };
+      return msg;
     }
     case "chat.error": {
       if (typeof parsed.message !== "string") return null;

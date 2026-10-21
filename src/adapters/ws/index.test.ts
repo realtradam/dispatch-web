@@ -476,3 +476,26 @@ describe("reconnect backoff after open", () => {
     }
   });
 });
+
+it("routes chat.queued only through the typed chat callback, never surface/error handling", () => {
+  const ws = fakeSocket();
+  const onChat = vi.fn();
+  const onMessage = vi.fn();
+  const handle = createSurfaceSocket({
+    url: "ws://test",
+    socketFactory: () => ws,
+    onChat,
+    onMessage,
+  });
+  const ack = {
+    type: "chat.queued",
+    conversationId: "c1",
+    reason: "compaction",
+    messageId: "q1",
+    requestId: "r1",
+  };
+  ws.invokeMessage(JSON.stringify(ack));
+  expect(onChat).toHaveBeenCalledExactlyOnceWith(ack);
+  expect(onMessage).not.toHaveBeenCalled();
+  handle.close();
+});

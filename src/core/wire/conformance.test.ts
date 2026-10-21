@@ -174,6 +174,12 @@ describe("classifies every WsServerMessage type", () => {
         event: { type: "done" as const, conversationId: "c", turnId: "t", reason: "r" },
       },
       { type: "chat.error" as const, message: "e" },
+      {
+        type: "chat.queued" as const,
+        conversationId: "conv-1",
+        reason: "compaction" as const,
+        messageId: "queued-1",
+      },
       { type: "conversation.open" as const, conversationId: "c1", workspaceId: "w1" },
       {
         type: "conversation.statusChanged" as const,
@@ -198,6 +204,7 @@ describe("classifies every WsServerMessage type", () => {
       "error",
       "chat.delta",
       "chat.error",
+      "chat.queued",
       "conversation.open",
       "conversation.statusChanged",
       "conversation.compacted",

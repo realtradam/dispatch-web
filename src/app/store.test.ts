@@ -2991,3 +2991,88 @@ it.each([
     store.dispose();
   }
 });
+
+describe("compaction queued acknowledgement routing", () => {
+  it.each([
+    "surface-first",
+    "ack-first",
+    "drained-before-ack",
+  ])("uses only authoritative queue snapshots: %s", (order) => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
+    });
+    ws.resolveOpen();
+    store.send("queued text", [{ url: "data:image/png;base64,AAAA" }]);
+    const cid = activeConversationId(store);
+    const send = parseSent(ws).find((m) => (m as { type: string }).type === "chat.send") as {
+      requestId: string;
+    };
+    expect(send.requestId).toEqual(expect.any(String));
+    const sourceChat = store.activeChat;
+    const watch = store.watchConversation("other-conversation");
+    watch.send("unrelated local echo");
+    ws.feedSurfaceMessage({
+      type: "catalog",
+      catalog: [{ id: "message-queue", region: "inline", title: "Queue", scope: "conversation" }],
+    });
+    const spec = (messages: { id: string; text: string; timestamp: number }[]) => ({
+      id: "message-queue",
+      region: "inline",
+      title: "Queue",
+      fields: [{ kind: "custom" as const, rendererId: "message-queue", payload: { messages } }],
+    });
+    const queued = spec([{ id: "q1", text: "queued text", timestamp: 1 }]);
+    const drained = spec([]);
+    const ack = () =>
+      ws.feedServerMessage({
+        type: "chat.queued",
+        conversationId: cid,
+        reason: "compaction",
+        messageId: "q1",
+        requestId: send.requestId,
+      });
+    if (order === "ack-first") {
+      ack();
+      expect(store.surface("message-queue", cid)).toBeNull();
+    }
+    ws.feedSurfaceMessage({ type: "surface", conversationId: cid, spec: queued });
+    expect(store.surface("message-queue", cid)).toEqual(queued);
+    if (order === "drained-before-ack") {
+      ws.feedSurfaceMessage({
+        type: "update",
+        update: { surfaceId: "message-queue", conversationId: cid, spec: drained },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId: cid, turnId: "t1" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "user-message", conversationId: cid, turnId: "t1", text: "queued text" },
+      });
+    }
+    ack();
+    ack();
+    expect(store.surface("message-queue", cid)).toEqual(
+      order === "drained-before-ack" ? drained : queued,
+    );
+    expect(sourceChat.chunks.map((c) => c.chunk)).toEqual(
+      order === "drained-before-ack" ? [{ type: "text", text: "queued text" }] : [],
+    );
+    expect(sourceChat.error).toBeNull();
+    expect(watch.chunks.map((c) => c.chunk)).toEqual([
+      { type: "text", text: "unrelated local echo" },
+    ]);
+    expect(parseSent(ws).filter((m) => (m as { type: string }).type === "chat.send")).toHaveLength(
+      2,
+    );
+    expect(parseSent(ws).filter((m) => (m as { type: string }).type === "chat.queue")).toHaveLength(
+      0,
+    );
+    store.dispose();
+  });
+});
