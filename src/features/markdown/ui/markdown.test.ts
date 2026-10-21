@@ -62,6 +62,25 @@ describe("Markdown", () => {
     ).toBeInTheDocument();
   });
 
+  it.each([
+    false,
+    true,
+  ])("keeps non-image HTML inert before and after image consent (streaming=%s)", async (streaming) => {
+    const { container } = render(Markdown, {
+      props: {
+        text: '<div style="background:url(https://evil.example/bg)"><video poster="https://evil.example/poster" src="https://evil.example/video"></video><svg><image href="https://evil.example/svg" /></svg><input type="image" src="https://evil.example/input"><img src="https://evil.example/allowed-after-click"></div>',
+        streaming,
+      },
+    });
+    expect(container.querySelector("video,svg,input,[style],img")).toBeNull();
+    await fireEvent.click(screen.getByRole("button", { name: "Load image from evil.example" }));
+    expect(container.querySelectorAll("img")).toHaveLength(1);
+    expect(container.querySelector("img")?.getAttribute("src")).toBe(
+      "https://evil.example/allowed-after-click",
+    );
+    expect(container.querySelector("video,svg,input,[style]")).toBeNull();
+  });
+
   it("rejects an unsafe URL in a forged placeholder", async () => {
     const { container } = render(Markdown, {
       props: { text: '<button class="remote-image" data-src="javascript:alert(1)">Load</button>' },

@@ -174,6 +174,124 @@ describe("renderMarkdown", () => {
     });
   });
 
+  describe("raw HTML cannot load remote content outside image consent", () => {
+    const remote = "https://evil.example/beacon";
+    const vectors = [
+      ["video poster", `<video poster="${remote}"></video>`, "video"],
+      ["video src", `<video src="${remote}" autoplay></video>`, "video"],
+      ["audio src", `<audio src="${remote}" preload="auto"></audio>`, "audio"],
+      ["source src", `<video><source src="${remote}"></video>`, "source"],
+      ["source srcset", `<picture><source srcset="${remote} 2x"></picture>`, "source"],
+      ["track src", `<video><track src="${remote}" default></video>`, "track"],
+      ["image input", `<input type="image" src="${remote}">`, "input"],
+      ["input src without type", `<input src="${remote}">`, "input"],
+      ["inline background", `<div style="background-image:url(${remote})">text</div>`, "[style]"],
+      ["inline CSS escape", `<p style="background: u\\72l(${remote})">text</p>`, "[style]"],
+      [
+        "inline image-set",
+        `<span style="background:image-set('${remote}' 1x)">text</span>`,
+        "[style]",
+      ],
+      ["style import", `<style>@import '${remote}';</style>`, "style"],
+      ["SVG image href", `<svg><image href="${remote}" /></svg>`, "svg,image"],
+      ["SVG image xlink", `<svg><image xlink:href="${remote}" /></svg>`, "svg,image"],
+      ["SVG use href", `<svg><use href="${remote}#x" /></svg>`, "svg,use"],
+      ["SVG use xlink", `<svg><use xlink:href="${remote}#x" /></svg>`, "svg,use"],
+      ["SVG filter", `<svg><filter><feImage href="${remote}" /></filter></svg>`, "svg,feImage"],
+      ["MathML", `<math href="${remote}"><mi>x</mi></math>`, "math"],
+      [
+        "table background",
+        `<table background="${remote}"><tr><td>x</td></tr></table>`,
+        "[background]",
+      ],
+      [
+        "td background",
+        `<table><tr><td background="${remote}">x</td></tr></table>`,
+        "[background]",
+      ],
+      ["body background", `<body background="${remote}">x</body>`, "[background]"],
+      ["object data", `<object data="${remote}"></object>`, "object"],
+      ["embed src", `<embed src="${remote}">`, "embed"],
+      ["embed data", `<embed data="${remote}">`, "embed"],
+      ["form action", `<form action="${remote}"><button>go</button></form>`, "form,[action]"],
+      ["button formaction", `<button formaction="${remote}">go</button>`, "[formaction]"],
+      ["input formaction", `<input type="submit" formaction="${remote}">`, "input,[formaction]"],
+      ["stylesheet link", `<link rel="stylesheet" href="${remote}">`, "link"],
+      ["preload link", `<link rel="preload" as="image" href="${remote}">`, "link"],
+      ["prefetch link", `<link rel="prefetch" href="${remote}">`, "link"],
+      ["DNS prefetch", `<link rel="dns-prefetch" href="//evil.example">`, "link"],
+      ["meta refresh", `<meta http-equiv="refresh" content="0;url=${remote}">`, "meta"],
+      ["iframe src", `<iframe src="${remote}"></iframe>`, "iframe"],
+      [
+        "iframe srcdoc",
+        `<iframe srcdoc="&lt;img src='${remote}'&gt;"></iframe>`,
+        "iframe,[srcdoc]",
+      ],
+      ["base URL", `<base href="${remote}/"><img src="/safe.png">`, "base"],
+      ["script src", `<script src="${remote}"></script>`, "script"],
+      ["anchor ping", `<a href="/safe" ping="${remote}">link</a>`, "[ping]"],
+      ["legacy command", `<command icon="${remote}">`, "command"],
+      ["legacy applet", `<applet codebase="${remote}" archive="x.jar"></applet>`, "applet"],
+      ["non-image src", `<div src="${remote}" href="${remote}">text</div>`, "[src],[href]"],
+    ] as const;
+
+    // Inspect the returned DOM, not jsdom's lack of resource fetching. Both
+    // authoritative renders and streaming tails must remove each active sink.
+    describe.each([
+      ["full", renderMarkdown],
+      ["tail", renderMarkdownTail],
+    ] as const)("%s render", (_name, render) => {
+      it.each(vectors)("neutralizes %s", (_vector, text, forbidden) => {
+        const doc = new DOMParser().parseFromString(render(text), "text/html");
+        expect(doc.querySelector(forbidden)).toBeNull();
+        for (const element of doc.body.querySelectorAll("*")) {
+          for (const attr of element.attributes) {
+            if (attr.name === "href" && element.tagName === "A") continue;
+            expect(attr.value).not.toContain("evil.example");
+          }
+        }
+      });
+    });
+
+    it("also blocks all vectors in settled streaming prefixes", () => {
+      for (const [_name, text, forbidden] of vectors) {
+        const state = createStreamingMarkdown();
+        advance(state, `${text}\n\ntail`);
+        const result = advance(state, `${text}\n\ntail grows`);
+        const doc = new DOMParser().parseFromString(
+          result.prefixHtml + result.tailHtml,
+          "text/html",
+        );
+        expect(doc.querySelector(forbidden)).toBeNull();
+      }
+    });
+
+    it("retains passive Markdown structure, highlighting and disabled task checkboxes", () => {
+      const html = renderMarkdown(
+        "- [x] done\n- [ ] pending\n\n| A | B |\n| - | - |\n| x | y |\n\n```js\nconst x = 1;\n```",
+      );
+      const doc = new DOMParser().parseFromString(html, "text/html");
+      expect(doc.querySelectorAll('input[type="checkbox"][disabled]')).toHaveLength(2);
+      expect(doc.querySelector("input[checked]")).not.toBeNull();
+      expect(doc.querySelectorAll("td")).toHaveLength(2);
+      expect(doc.querySelector(".hljs-keyword")).not.toBeNull();
+      expect(doc.querySelector('button[data-copy][type="button"]')).not.toBeNull();
+    });
+
+    it("makes raw checkboxes and buttons inert, even inside an outer form", () => {
+      const doc = new DOMParser().parseFromString(
+        renderMarkdown('<input type="checkbox"><button type="submit">go</button>'),
+        "text/html",
+      );
+      expect(doc.querySelector("input")?.hasAttribute("disabled")).toBe(true);
+      expect(doc.querySelector("button")?.getAttribute("type")).toBe("button");
+    });
+
+    it("does not permit non-HTTP network schemes on images", () => {
+      expect(imageSrc(renderMarkdown('<img src="ftp://evil.example/beacon">'))).toBeNull();
+    });
+  });
+
   describe("local-path images", () => {
     const BASE = "http://localhost:24203";
     const image = { apiBase: BASE, cwd: "/w/foo" };

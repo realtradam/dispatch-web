@@ -185,6 +185,87 @@ function addCopyButtons(html: string): string {
     .replace(/<\/pre>/g, "</pre></div>");
 }
 
+// Positive policy: chat HTML is passive Markdown structure, not arbitrary web
+// content. New browser elements/attributes must not silently add fetch sinks.
+// In particular there is no CSS, SVG/MathML, media, form, embed or metadata.
+const MARKDOWN_TAGS = [
+  "a",
+  "abbr",
+  "b",
+  "blockquote",
+  "br",
+  "caption",
+  "code",
+  "col",
+  "colgroup",
+  "dd",
+  "del",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "i",
+  "img",
+  "kbd",
+  "li",
+  "mark",
+  "ol",
+  "p",
+  "pre",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+  "var",
+  "wbr",
+  "button",
+  "input",
+];
+const MARKDOWN_ATTRIBUTES = [
+  "alt",
+  "align",
+  "checked",
+  "class",
+  "colspan",
+  "disabled",
+  "height",
+  "href",
+  "open",
+  "reversed",
+  "rowspan",
+  "scope",
+  "src",
+  "start",
+  "title",
+  "type",
+  "width",
+];
+
 /**
  * A dedicated, render-local DOMPurify instance: hooks never affect another
  * consumer or retain a conversation's backend allowlist. The document base is
@@ -195,7 +276,22 @@ function sanitize(html: string, image?: MarkdownImageOptions): string {
   const base = document.baseURI;
   const origin = new URL(base).origin;
   const backendOrigin = image === undefined ? origin : new URL(image.apiBase || base, base).origin;
+  purify.addHook("uponSanitizeElement", (node) => {
+    // Keep GFM task lists, but no image/submit/other form controls. Removing
+    // only type/src would allow browser defaulting or later attribute changes.
+    if (
+      node.nodeName === "INPUT" &&
+      (node as Element).getAttribute("type")?.toLowerCase() !== "checkbox"
+    ) {
+      node.parentNode?.removeChild(node);
+    }
+  });
   purify.addHook("afterSanitizeAttributes", (node) => {
+    // URL-bearing attributes are supported ONLY on these two HTML elements.
+    if (node.tagName !== "A") node.removeAttribute("href");
+    if (node.tagName !== "IMG") node.removeAttribute("src");
+    if (node.tagName === "INPUT") node.setAttribute("disabled", "");
+    if (node.tagName === "BUTTON") node.setAttribute("type", "button");
     if (node.tagName === "A" && node.hasAttribute("href")) {
       node.setAttribute("target", "_blank");
       node.setAttribute("rel", "noopener noreferrer");
@@ -210,7 +306,11 @@ function sanitize(html: string, image?: MarkdownImageOptions): string {
       node.removeAttribute("src");
       return;
     }
-    if (url.protocol !== "http:" && url.protocol !== "https:") return;
+    if (url.protocol === "data:") return; // Image context cannot load subresources.
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      node.removeAttribute("src");
+      return;
+    }
     if (url.origin === origin || url.origin === backendOrigin) return;
 
     // Only safe, inert attributes are carried over. In particular, never copy
@@ -225,8 +325,14 @@ function sanitize(html: string, image?: MarkdownImageOptions): string {
     button.textContent = `Load image from ${url.host}`;
     node.parentNode?.replaceChild(button, node);
   });
-  // Responsive candidates on <img>/<picture> must not bypass the src hook.
-  return purify.sanitize(html, { FORBID_ATTR: ["srcset"] });
+  return purify.sanitize(html, {
+    ALLOWED_TAGS: MARKDOWN_TAGS,
+    ALLOWED_ATTR: MARKDOWN_ATTRIBUTES,
+    // Keep consent/copy data and accessibility labels, never active URL sinks
+    // such as srcset, style, background, ping, action or namespaced href.
+    ALLOW_DATA_ATTR: true,
+    ALLOW_ARIA_ATTR: true,
+  });
 }
 
 /**

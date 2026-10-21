@@ -11,27 +11,17 @@ import { svelteTesting } from "@testing-library/svelte/vite";
 import { defineConfig, type Plugin, type UserConfig } from "vitest/config";
 import {
   buildAllowedHosts,
-  checkDevRequest,
   type DevNetworkPolicy,
   normalizeHost,
-  normalizeHostHeader,
   tailscaleSelf,
 } from "./scripts/network-policy";
+import { applyViteNetworkPolicy } from "./scripts/vite-network-guard";
 
 async function secureDevConfig(config: UserConfig, serving: boolean): Promise<UserConfig> {
   // Build/test have no listener and need no subprocess or DNS effects.
   if (!serving) return config;
   const network = await detectDevNetworkPolicy();
-  return {
-    ...config,
-    plugins: [devNetworkGuard(network), ...(config.plugins ?? [])],
-    server: {
-      ...config.server,
-      allowedHosts: [...network.allowedHosts],
-      // Safe reflection: our guard rejects disallowed Origins before Vite's CORS.
-      cors: { origin: true },
-    },
-  };
+  return applyViteNetworkPolicy(config, network);
 }
 
 async function detectDevNetworkPolicy(): Promise<DevNetworkPolicy> {
@@ -73,53 +63,6 @@ async function detectDevNetworkPolicy(): Promise<DevNetworkPolicy> {
     }
   }
   return { allowedHosts, allowedAddresses: new Set(["127.0.0.1", "::1", ...self.ips]) };
-}
-
-function devNetworkGuard(policy: DevNetworkPolicy): Plugin {
-  return {
-    name: "dispatch-dev-network-guard",
-    enforce: "pre",
-    configureServer(server) {
-      const check = (req: import("node:http").IncomingMessage) =>
-        checkDevRequest(
-          {
-            localAddress: req.socket.localAddress,
-            host: req.headers.host,
-            origin: req.headers.origin,
-          },
-          policy,
-        );
-      server.middlewares.use((req, res, next) => {
-        const decision = check(req);
-        if (decision !== "ok") {
-          res.writeHead(decision.status, { "Content-Type": "text/plain" });
-          res.end(decision.reason);
-          return;
-        }
-        // Vite's own check is case-sensitive and doesn't strip trailing dots.
-        req.headers.host = normalizeHostHeader(req.headers.host ?? "");
-        next();
-      });
-      // Vite registers HMR before configureServer. Wrap (rather than prepend to)
-      // its listeners: EventEmitter otherwise continues into HMR after a denial.
-      const http = server.httpServer;
-      if (http) {
-        const upgrades = http.listeners("upgrade");
-        http.removeAllListeners("upgrade");
-        http.on("upgrade", (req, socket, head) => {
-          const decision = check(req);
-          if (decision !== "ok") {
-            socket.end(
-              `HTTP/1.1 ${decision.status} ${decision.status === 421 ? "Misdirected Request" : "Forbidden"}\r\nConnection: close\r\nContent-Length: 0\r\n\r\n`,
-            );
-            return;
-          }
-          req.headers.host = normalizeHostHeader(req.headers.host ?? "");
-          for (const upgrade of upgrades) upgrade.call(http, req, socket, head);
-        });
-      }
-    },
-  };
 }
 
 /**
