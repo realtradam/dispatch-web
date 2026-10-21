@@ -178,6 +178,12 @@ describe("classifies every WsServerMessage type", () => {
         event: { type: "done" as const, conversationId: "c", turnId: "t", reason: "r" },
       },
       { type: "chat.error" as const, message: "e" },
+      { type: "chat.accepted" as const, conversationId: "c1", requestId: "r1" },
+      {
+        type: "chat.subscription-rejected" as const,
+        conversationId: "c1",
+        reason: "subscription-limit" as const,
+      },
       {
         type: "chat.queued" as const,
         conversationId: "conv-1",
@@ -235,6 +241,8 @@ describe("classifies every WsServerMessage type", () => {
       "error",
       "chat.delta",
       "chat.error",
+      "chat.accepted",
+      "chat.subscription-rejected",
       "chat.queued",
       "chat.resync-required",
       "conversation.open",

@@ -3,10 +3,11 @@ import { createLocalStore } from "../adapters/local-storage";
 import type { SurfaceSocketHandle } from "../adapters/ws";
 import { normalizeChatLimit } from "../core/chunks";
 import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
-import { createChatStore } from "../features/chat";
+import { createChatStore, createPendingInputStorage } from "../features/chat";
 import type { ConversationCache } from "../features/conversation-cache";
 import type { TabsStore } from "../features/tabs";
 import type { ChatLimitResult, CreateAppStoreOptions } from "./store-types";
+import { liveConversationIds } from "./subscription-budget";
 import { randomId } from "./uuid";
 
 /** App-owned tab/watch stores and idempotent transcript loading; no singleton state. */
@@ -46,6 +47,7 @@ export function createChatRegistry(deps: {
   const chatStores = new Map<string, ChatStore>();
   // Includes in-flight loads: repeated activation must not start a second load.
   const loadedConversationIds = new Set<string>();
+  const loadingConversationIds = new Set<string>();
 
   // Ephemeral chat stores for MODAL viewers (the heartbeat run-chat modal): a
   // watch on a conversation's live turn stream WITHOUT opening a tab. Separate
@@ -53,6 +55,26 @@ export function createChatRegistry(deps: {
   // and a tab's conversation reuses its own store (see `watchConversation`).
   // Deltas are routed here in addition to `chatStores`.
   const watchStores = new Map<string, ChatStore>();
+  const watchedIds = new Set<string>();
+  const subscribedIds = new Set<string>();
+
+  function syncChatSubscriptions(): void {
+    const desired = liveConversationIds(deps.tabsStore.activeConversationId, watchedIds);
+    for (const id of subscribedIds) {
+      if (!desired.has(id)) {
+        deps.send({ type: "chat.unsubscribe", conversationId: id });
+        subscribedIds.delete(id);
+      }
+    }
+    for (const id of desired) {
+      if (subscribedIds.has(id)) continue;
+      subscribedIds.add(id);
+      deps.send({ type: "chat.subscribe", conversationId: id });
+      if (loadedConversationIds.has(id) && !loadingConversationIds.has(id)) {
+        (chatStores.get(id) ?? watchStores.get(id))?.resync();
+      }
+    }
+  }
 
   /**
    * Coalesce live chat events to at most one fold + render per animation
@@ -77,6 +99,11 @@ export function createChatRegistry(deps: {
 
   function createChatFor(conversationId: string, model: string, workspaceId: string): ChatStore {
     return createChatStore({
+      ...(deps.storage === undefined
+        ? {}
+        : {
+            pendingInputStorage: createPendingInputStorage(deps.storage, conversationId),
+          }),
       conversationId,
       createRequestId: randomId,
       model,
@@ -128,30 +155,28 @@ export function createChatRegistry(deps: {
     const store = chatStores.get(conversationId) ?? watchStores.get(conversationId);
     if (store === undefined) return;
     loadedConversationIds.add(conversationId);
-    void store.load();
+    loadingConversationIds.add(conversationId);
+    void store.load().finally(() => loadingConversationIds.delete(conversationId));
   }
 
   function refreshActiveChat(): void {
+    syncChatSubscriptions();
     const activeId = deps.tabsStore.activeConversationId;
     if (activeId !== null) ensureLoaded(activeId);
     activeChat = getActiveChat();
   }
 
-  /**
-   * Start watching a conversation's live turn events (`chat.subscribe`). Sent for
-   * EVERY open conversation — not just the active one — so a backgrounded tab keeps
-   * streaming a running turn, and a reloaded/second client re-attaches to an
-   * in-flight turn (the server replays it from `turn-start`). Idempotent server-side;
-   * the socket queues it until the connection is open. NOT needed right after
-   * `chat.send` (that auto-subscribes the sending connection).
-   */
+  /** Discovery creates metadata; only the focused chat and explicit viewers watch live. */
   function subscribeChat(conversationId: string): void {
-    deps.send({ type: "chat.subscribe", conversationId });
+    void conversationId;
+    syncChatSubscriptions();
   }
 
   /** Stop watching a conversation's turn events (`chat.unsubscribe`). Never stops the turn. */
   function unsubscribeChat(conversationId: string): void {
-    deps.send({ type: "chat.unsubscribe", conversationId });
+    if (subscribedIds.delete(conversationId)) {
+      deps.send({ type: "chat.unsubscribe", conversationId });
+    }
   }
 
   /**
@@ -164,9 +189,11 @@ export function createChatRegistry(deps: {
    * Pair with {@link unwatchConversation} on close.
    */
   function watchConversation(conversationId: string): ChatStore {
+    watchedIds.add(conversationId);
     // An open tab already has a live store + subscription — reuse it.
     const tabStore = chatStores.get(conversationId);
     if (tabStore !== undefined) {
+      syncChatSubscriptions();
       ensureLoaded(conversationId);
       return tabStore;
     }
@@ -174,8 +201,8 @@ export function createChatRegistry(deps: {
     if (existing !== undefined) return existing;
     const store = createChatFor(conversationId, deps.activeModel(), deps.activeWorkspaceId());
     watchStores.set(conversationId, store);
-    ensureLoaded(conversationId);
     subscribeChat(conversationId);
+    ensureLoaded(conversationId);
     return store;
   }
 
@@ -186,6 +213,8 @@ export function createChatRegistry(deps: {
    * tab strip). Only the ephemeral watch store is disposed + unsubscribed.
    */
   function unwatchConversation(conversationId: string): void {
+    watchedIds.delete(conversationId);
+    syncChatSubscriptions();
     // A tab reuses its own store — leave it (and its subscription) intact.
     if (chatStores.has(conversationId)) return;
     const store = watchStores.get(conversationId);
@@ -207,6 +236,10 @@ export function createChatRegistry(deps: {
     refreshActiveChat,
     subscribeChat,
     unsubscribeChat,
+    reconnect(): void {
+      subscribedIds.clear();
+      syncChatSubscriptions();
+    },
     watchConversation,
     unwatchConversation,
     get draftStore() {

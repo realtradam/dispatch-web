@@ -1,4 +1,5 @@
 import type {
+  ChatAcceptedMessage,
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueueCancelMessage,
@@ -6,6 +7,7 @@ import type {
   ChatQueueMessage,
   ChatResyncRequiredMessage,
   ChatSendMessage,
+  ChatSubscriptionRejectedMessage,
 } from "@dispatch/transport-contract";
 import type { ChatMessage, ImageInput, StoredChunk, TurnProviderRetryEvent } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "../../core/chunks";
@@ -43,9 +45,11 @@ import {
 } from "../../core/metrics";
 import type { ConversationCache } from "../conversation-cache";
 import type { NamedAgentSelectionSnapshot } from "../named-agents";
+import type { PendingInput, PendingInputStorage } from "./pending-inputs";
 import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 
 export interface ChatStoreDependencies {
+  readonly pendingInputStorage?: PendingInputStorage;
   readonly conversationId: string;
   /** Injected unique client-local correlation token for each new send. */
   readonly createRequestId: () => string;
@@ -98,6 +102,8 @@ export interface ChatStoreDependencies {
 }
 
 export interface ChatStore {
+  readonly pendingInputs: readonly PendingInput[];
+  discardPendingInput(requestId: string): void;
   readonly messages: readonly ChatMessage[];
   readonly chunks: readonly RenderedChunk[];
   readonly turnMetrics: readonly TurnMetricsEntry[];
@@ -156,7 +162,13 @@ export interface ChatStore {
    */
   noteLastActivity(at: number): void;
   handleDelta(
-    msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage | ChatResyncRequiredMessage,
+    msg:
+      | ChatAcceptedMessage
+      | ChatSubscriptionRejectedMessage
+      | ChatDeltaMessage
+      | ChatErrorMessage
+      | ChatQueuedMessage
+      | ChatResyncRequiredMessage,
   ): void;
   /**
    * Send a user message (start a turn via `chat.send`). Optimistically echoes
@@ -232,6 +244,14 @@ export interface ChatStore {
 }
 
 export function createChatStore(deps: ChatStoreDependencies): ChatStore {
+  let pendingInputs = $state<readonly PendingInput[]>(deps.pendingInputStorage?.load() ?? []);
+  function savePendingInputs(next: readonly PendingInput[]): void {
+    deps.pendingInputStorage?.save(next);
+    pendingInputs = next;
+  }
+  function confirmInput(requestId: string): void {
+    savePendingInputs(pendingInputs.filter((input) => input.request.requestId !== requestId));
+  }
   let transcript = $state<TranscriptState>(initialState());
   let metrics = $state<MetricsState>(initialMetricsState());
   let _pendingSync = $state(false);
@@ -507,10 +527,30 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     }
   }
 
-  async function syncMetrics(): Promise<void> {
+  let pendingMetrics: Promise<void> | undefined;
+  let rerunMetrics = false;
+  function syncMetrics(): Promise<void> {
+    if (pendingMetrics !== undefined) {
+      rerunMetrics = true;
+      return pendingMetrics;
+    }
+    pendingMetrics = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        rerunMetrics = false;
+        await fetchMetrics();
+        if (!rerunMetrics || disposed) break;
+      }
+    })().finally(() => {
+      pendingMetrics = undefined;
+    });
+    return pendingMetrics;
+  }
+
+  async function fetchMetrics(): Promise<void> {
     if (disposed) return;
     try {
       const res = await deps.metricsSync(deps.conversationId);
+      if (disposed) return;
       metrics = applyDurableMetrics(metrics, res.turns);
     } catch (err) {
       // Metrics fetch failure must not block history sync or throw;
@@ -580,6 +620,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
   }
 
   return {
+    get pendingInputs() {
+      return pendingInputs;
+    },
+    discardPendingInput: confirmInput,
     get messages(): readonly ChatMessage[] {
       return selectMessages(transcript);
     },
@@ -626,9 +670,27 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     },
 
     handleDelta(
-      msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage | ChatResyncRequiredMessage,
+      msg:
+        | ChatAcceptedMessage
+        | ChatSubscriptionRejectedMessage
+        | ChatDeltaMessage
+        | ChatErrorMessage
+        | ChatQueuedMessage
+        | ChatResyncRequiredMessage,
     ): void {
       if (disposed) return;
+      if (msg.type === "chat.accepted") {
+        if (msg.conversationId === deps.conversationId) confirmInput(msg.requestId);
+        return;
+      }
+      if (msg.type === "chat.subscription-rejected") {
+        if (msg.conversationId === deps.conversationId) {
+          _error =
+            "Live updates could not be subscribed. Message delivery is independent; saved inputs remain available below.";
+          void syncTail();
+        }
+        return;
+      }
       if (msg.type === "chat.resync-required") {
         if (msg.conversationId !== deps.conversationId) return;
         flushEvents();
@@ -656,6 +718,16 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
           return;
         }
         _error = msg.message;
+        if (msg.requestId !== undefined) {
+          savePendingInputs(
+            pendingInputs.map((input) =>
+              input.request.requestId === msg.requestId
+                ? { ...input, rejection: msg.message }
+                : input,
+            ),
+          );
+          transcript = removeLocalEcho(transcript, msg.requestId);
+        }
         return;
       }
       if (msg.type === "chat.queued") {
@@ -663,7 +735,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
         // A queued live opening may already have confirmed the echoed text.
         // Fold it first; turn-start alone must not protect still-local artifacts.
         flushEvents();
-        if (msg.requestId !== undefined) transcript = removeLocalEcho(transcript, msg.requestId);
+        if (msg.requestId !== undefined) {
+          confirmInput(msg.requestId);
+          transcript = removeLocalEcho(transcript, msg.requestId);
+        }
         return;
       }
       if (msg.event.conversationId !== deps.conversationId) {
@@ -685,9 +760,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       // Sending ends the wait since the last turn: stamp it on that turn.
       cacheTimer = stopTurnGap(cacheTimer, now(), () => lastTurnIdOf(metrics));
       const requestId = deps.createRequestId();
-      transcript = appendUserMessage(transcript, text, images, requestId);
-      maybeTrim();
-      const msg: ChatSendMessage = {
+      const msg: ChatSendMessage & { requestId: string } = {
         type: "chat.send",
         requestId,
         conversationId: deps.conversationId,
@@ -697,19 +770,34 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
         ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
       };
+      try {
+        savePendingInputs([...pendingInputs, { request: msg }]);
+      } catch (error) {
+        deps.onError?.("Unable to save input; the message has not been sent", error);
+        throw error;
+      }
+      transcript = appendUserMessage(transcript, text, images, requestId);
+      maybeTrim();
       deps.transport.send(msg);
     },
 
     queueMessage(text: string, images?: readonly ImageInput[]): void {
       const trimmed = text.trim();
       if (trimmed.length === 0 && !images?.length) return;
-      const msg: ChatQueueMessage = {
+      const msg: ChatQueueMessage & { requestId: string } = {
         type: "chat.queue",
+        requestId: deps.createRequestId(),
         conversationId: deps.conversationId,
         text: trimmed,
         ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
       };
+      try {
+        savePendingInputs([...pendingInputs, { request: msg }]);
+      } catch (error) {
+        deps.onError?.("Unable to save input; the message has not been queued", error);
+        throw error;
+      }
       deps.transport.send(msg);
     },
 

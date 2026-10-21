@@ -1,8 +1,10 @@
 import type {
+  ChatAcceptedMessage,
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueuedMessage,
   ChatResyncRequiredMessage,
+  ChatSubscriptionRejectedMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -55,7 +57,13 @@ export function createWsHandlers(deps: {
     tileLayoutStore,
   } = deps;
   function handleChatMessage(
-    msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage | ChatResyncRequiredMessage,
+    msg:
+      | ChatAcceptedMessage
+      | ChatSubscriptionRejectedMessage
+      | ChatDeltaMessage
+      | ChatErrorMessage
+      | ChatQueuedMessage
+      | ChatResyncRequiredMessage,
   ): void {
     let targetId: string | undefined;
     if (msg.type === "chat.delta") {
@@ -72,7 +80,13 @@ export function createWsHandlers(deps: {
       }
     }
 
-    if (msg.type === "chat.queued" || msg.type === "chat.resync-required") return;
+    if (
+      msg.type === "chat.accepted" ||
+      msg.type === "chat.subscription-rejected" ||
+      msg.type === "chat.queued" ||
+      msg.type === "chat.resync-required"
+    )
+      return;
 
     // fallback: try all stores (chat.error without conversationId)
     for (const store of registry.chatStores.values()) {
@@ -166,23 +180,8 @@ export function createWsHandlers(deps: {
       // workspace too. Re-declare it so the re-pushed catalog is filtered
       // (plan 06 §6.4).
       deps.send(deps.workspaceSetMsg(deps.activeWorkspaceId()));
-      // Re-attach to every open conversation's turn stream. A turn that kept
-      // running while we were disconnected resumes streaming (server replays it
-      // from `turn-start`); one that sealed while we were gone is committed from
-      // history by `resync()` (which also clears a now-stale "generating").
-      // Unloaded tabs stay lazy — only their cheap live subscription is restored.
-      for (const tab of tabsStore.tabs) {
-        registry.subscribeChat(tab.conversationId);
-        if (registry.loadedConversationIds.has(tab.conversationId)) {
-          registry.chatStores.get(tab.conversationId)?.resync();
-        }
-      }
-      // Re-attach to every MODAL watch too (a run-chat modal open across a
-      // reconnect keeps streaming). Watch stores are separate from tabs.
-      for (const [watchId, watchStore] of registry.watchStores) {
-        registry.subscribeChat(watchId);
-        if (registry.loadedConversationIds.has(watchId)) watchStore.resync();
-      }
+      registry.reconnect();
+      void conversations.fetchOpenConversations();
     },
     onExtensionsChanged(_msg: ExtensionsChangedMessage) {
       // §11 multi-client coherence: another client (or this one) mutated the

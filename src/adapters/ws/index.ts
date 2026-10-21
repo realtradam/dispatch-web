@@ -1,8 +1,10 @@
 import type {
+  ChatAcceptedMessage,
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueuedMessage,
   ChatResyncRequiredMessage,
+  ChatSubscriptionRejectedMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -27,7 +29,13 @@ export interface SurfaceSocketOptions {
   url: string;
   onMessage: (msg: SurfaceServerMessage) => void;
   onChat?: (
-    msg: ChatDeltaMessage | ChatErrorMessage | ChatQueuedMessage | ChatResyncRequiredMessage,
+    msg:
+      | ChatAcceptedMessage
+      | ChatSubscriptionRejectedMessage
+      | ChatDeltaMessage
+      | ChatErrorMessage
+      | ChatQueuedMessage
+      | ChatResyncRequiredMessage,
   ) => void;
   /** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
   onConversationOpen?: (msg: ConversationOpenMessage) => void;
@@ -105,6 +113,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
       const msg = parseServerMessage(ev.data);
       if (msg !== null) {
         if (
+          msg.type === "chat.accepted" ||
+          msg.type === "chat.subscription-rejected" ||
           msg.type === "chat.delta" ||
           msg.type === "chat.error" ||
           msg.type === "chat.queued" ||
@@ -112,6 +122,8 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
         ) {
           opts.onChat?.(
             msg as
+              | ChatAcceptedMessage
+              | ChatSubscriptionRejectedMessage
               | ChatDeltaMessage
               | ChatErrorMessage
               | ChatQueuedMessage

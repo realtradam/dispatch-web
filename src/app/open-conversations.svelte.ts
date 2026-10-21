@@ -130,7 +130,15 @@ export function createOpenConversations(deps: {
    * (closed on another device), and subscribes to `active` conversations'
    * live streams.
    */
-  async function fetchOpenConversations(): Promise<void> {
+  let pendingFetch: Promise<void> | undefined;
+  function fetchOpenConversations(): Promise<void> {
+    pendingFetch ??= loadOpenConversations().finally(() => {
+      pendingFetch = undefined;
+    });
+    return pendingFetch;
+  }
+
+  async function loadOpenConversations(): Promise<void> {
     try {
       const res = await fetchImpl(`${httpBase}/conversations?status=active,idle`);
       if (!res.ok) return;
@@ -203,10 +211,14 @@ export function createOpenConversations(deps: {
       // Remove tabs for conversations no longer active/idle (closed elsewhere).
       const backendIds = new Set(data.conversations.map((c) => c.id));
       for (const tab of tabsStore.tabs) {
-        if (!backendIds.has(tab.conversationId)) {
+        if (
+          !backendIds.has(tab.conversationId) &&
+          !registry.chatStores.get(tab.conversationId)?.pendingInputs.length
+        ) {
           removeTabLocally(tab.conversationId);
         }
       }
+      registry.refreshActiveChat();
     } catch (err) {
       deps.reportError(
         `Failed to load conversations from the backend.\n\nURL: ${httpBase}/conversations?status=active,idle`,

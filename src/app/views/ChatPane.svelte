@@ -7,7 +7,7 @@
    * preservation, the ScrollToBottom affordance, and the empty-state
    * watermark. Keyed on the active conversation exactly like today's ChatView.
    */
-  import { ChatView, isClaudeSubscriptionModel } from "../../features/chat";
+  import { ChatView, PendingInputs, isClaudeSubscriptionModel } from "../../features/chat";
   import { createSmartScrollController, ScrollToBottom } from "../../features/smart-scroll";
   import { preserveViewportAcross, type AppViewPorts } from "../view-ports";
 
@@ -91,9 +91,10 @@
           {cacheTimer}
         />
       {/key}
+      <PendingInputs inputs={store.activeChat.pendingInputs} onDiscard={store.activeChat.discardPendingInput} />
     </div>
   </div>
-  {#if store.activeChat.chunks.length === 0}
+  {#if store.activeChat.chunks.length === 0 && store.activeChat.pendingInputs.length === 0}
     <div
       class="pointer-events-none absolute inset-0 flex items-center justify-center"
       aria-hidden="true"

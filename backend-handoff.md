@@ -18,6 +18,35 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Subscription and input delivery regression (2026-10-21)
+
+The user authorized one agent to implement both repositories in paired worktrees on
+`feature/subscription-delivery-fix`.
+
+- Discovery remains global for metadata and lifecycle status. Only the focused chat and
+  explicit modal viewers subscribe to transcripts. Reopening a background chat catches up
+  history and metrics. Chat watchers and surfaces each own at most 128 of the server's
+  256 shared slots; unsubscribes precede replacement subscriptions.
+- Backend overflow rejects a watcher with `chat.subscription-rejected` (or a scoped surface
+  error) while preserving the socket and independent message admission. Logs include the
+  connection ID, subscription counts, and close code/reason.
+- `chat.send` and `chat.queue` use correlated receipts. `chat.accepted` follows opening
+  message storage or queue insertion; `chat.queued` confirms compaction admission. Correlated
+  `chat.error` identifies rejected input. Ordinary stream echoes are not durable receipts.
+- Inputs and images are saved per conversation in localStorage before transmission. Saving
+  failures preserve the composer and prevent transmission. A reload retains local-only tabs
+  with saved input; unconfirmed/rejected copies are visible and can be discarded explicitly.
+  There is no automatic retry: `requestId` is a correlation token, not an idempotency key.
+- Reconnect recovery is limited to live viewers. Discovery and per-chat metrics requests
+  coalesce; metrics permit at most one catch-up request behind an in-flight request.
+- Contracts remain transport-contract 0.26.0 and wire 0.13.0. Built declarations were refreshed
+  into the unchanged local file dependencies and the transport mirror was regenerated.
+- Validation: frontend typecheck/check/build passed; **2,439 tests / 124 files**, twice.
+  Backend typecheck/check passed; **4,150 Vitest + 184 Bun integration tests** passed.
+  The real socket fixture validates 339 requests, admission at capacity, storage-before-receipt,
+  and disconnect before receipt using isolated test ports and in-memory storage. Details in
+  `reports/subscription-delivery-fix.md`. No merge or deployment is part of this task.
+
 ## Milestone: Review 3.6 — history epochs (2026-10-20)
 
 - Consumed backend Step 3.5: required `historyEpoch` on HTTP history and WS compaction;

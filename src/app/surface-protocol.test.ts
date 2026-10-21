@@ -63,3 +63,34 @@ describe("conversation-scoped surface lookup", () => {
     expect(surfaces.surfaceSpecOp("s1", "c1")).toBeNull();
   });
 });
+
+describe("surface subscription budget", () => {
+  it("bounds a large catalog and releases old slots before subscribing a replacement catalog", () => {
+    const live = new Set<string>();
+    let peak = 0;
+    const surfaces = createSurfaceProtocol({
+      focusedConversationId: () => "chat",
+      send(message) {
+        if (message.type === "subscribe") live.add(message.surfaceId);
+        if (message.type === "unsubscribe") live.delete(message.surfaceId);
+        peak = Math.max(peak, live.size);
+      },
+    });
+    for (const prefix of ["old", "new"]) {
+      surfaces.handleServerMessage({
+        type: "catalog",
+        catalog: Array.from({ length: 339 }, (_, i) => ({
+          id: `${prefix}-${i}`,
+          region: "inline",
+          title: "Surface",
+          scope: "global" as const,
+        })),
+      });
+      expect(live.size).toBe(128);
+      expect([...live].every((id) => id.startsWith(prefix))).toBe(true);
+    }
+    surfaces.subscribeSurfaceOp("overflow");
+    expect(live.has("overflow")).toBe(false);
+    expect(peak).toBe(128);
+  });
+});

@@ -25,6 +25,8 @@ const VALID_SERVER_TYPES = new Set([
   "surface",
   "update",
   "error",
+  "chat.accepted",
+  "chat.subscription-rejected",
   "chat.delta",
   "chat.error",
   "chat.queued",
@@ -109,6 +111,24 @@ export function parseServerMessage(data: string): WsServerMessage | null {
           : { type: "error", message: parsed.message };
       return msg;
     }
+    case "chat.accepted": {
+      if (typeof parsed.conversationId !== "string" || typeof parsed.requestId !== "string")
+        return null;
+      return {
+        type: "chat.accepted",
+        conversationId: parsed.conversationId,
+        requestId: parsed.requestId,
+      };
+    }
+    case "chat.subscription-rejected": {
+      if (typeof parsed.conversationId !== "string" || parsed.reason !== "subscription-limit")
+        return null;
+      return {
+        type: "chat.subscription-rejected",
+        conversationId: parsed.conversationId,
+        reason: parsed.reason,
+      };
+    }
     case "chat.delta": {
       const event = parsed.event;
       if (!isRecord(event)) return null;
@@ -149,7 +169,11 @@ export function parseServerMessage(data: string): WsServerMessage | null {
         conversationId !== undefined
           ? { type: "chat.error", conversationId, message: parsed.message }
           : { type: "chat.error", message: parsed.message };
-      return msg;
+      if (parsed.requestId !== undefined && typeof parsed.requestId !== "string") return null;
+      return {
+        ...msg,
+        ...(typeof parsed.requestId === "string" ? { requestId: parsed.requestId } : {}),
+      };
     }
     case "conversation.open": {
       if (typeof parsed.conversationId !== "string") return null;

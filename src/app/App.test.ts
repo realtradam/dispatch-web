@@ -470,6 +470,7 @@ describe("App component interaction tests", () => {
     expect(sentMessages(ws).filter((m: { type: string }) => m.type.startsWith("chat."))).toEqual([
       {
         type: "chat.queue",
+        requestId: expect.any(String),
         conversationId,
         workspaceId: "default",
         text,

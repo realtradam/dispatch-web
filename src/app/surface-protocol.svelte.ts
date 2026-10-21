@@ -9,6 +9,7 @@ import {
   subscribe as protocolSubscribe,
   unsubscribe as protocolUnsubscribe,
 } from "../core/protocol";
+import { MAX_SURFACE_SUBSCRIPTIONS } from "./subscription-budget";
 
 /** Shared app/plugin surface operations over the single app protocol state. */
 export function createSurfaceProtocol(deps: {
@@ -43,7 +44,19 @@ export function createSurfaceProtocol(deps: {
    */
   function syncSubscriptions(): void {
     const cid = deps.focusedConversationId();
-    for (const entry of protocol.catalog) {
+    const catalogIds = new Set(
+      protocol.catalog.slice(0, MAX_SURFACE_SUBSCRIPTIONS).map((e) => e.id),
+    );
+    for (const id of [...protocol.subscriptions.keys()]) {
+      if (!catalogIds.has(id)) {
+        const result = protocolUnsubscribe(protocol, id);
+        protocol = result.state;
+        for (const msg of result.outgoing) {
+          deps.send(msg);
+        }
+      }
+    }
+    for (const entry of protocol.catalog.slice(0, MAX_SURFACE_SUBSCRIPTIONS)) {
       // A GLOBAL surface ignores conversation scope — subscribe it WITHOUT an id
       // so a conversation switch doesn't churn a redundant unsubscribe+subscribe
       // round trip (ui-contract@0.2.0 catalog `scope`; ABSENT = assume
@@ -53,16 +66,6 @@ export function createSurfaceProtocol(deps: {
       protocol = result.state;
       for (const msg of result.outgoing) {
         deps.send(msg);
-      }
-    }
-    const catalogIds = new Set(protocol.catalog.map((e) => e.id));
-    for (const id of [...protocol.subscriptions.keys()]) {
-      if (!catalogIds.has(id)) {
-        const result = protocolUnsubscribe(protocol, id);
-        protocol = result.state;
-        for (const msg of result.outgoing) {
-          deps.send(msg);
-        }
       }
     }
     receivedScopes = new Map([...receivedScopes].filter(([id]) => protocol.subscriptions.has(id)));
@@ -93,6 +96,11 @@ export function createSurfaceProtocol(deps: {
   }
 
   function subscribeSurfaceOp(surfaceId: string, conversationId?: string): void {
+    if (
+      !protocol.subscriptions.has(surfaceId) &&
+      protocol.subscriptions.size >= MAX_SURFACE_SUBSCRIPTIONS
+    )
+      return;
     const result = protocolSubscribe(
       protocol,
       surfaceId,

@@ -290,6 +290,7 @@ describe("createChatStore", () => {
       expect(transport.sentQueue).toEqual([
         {
           type: "chat.queue",
+          requestId: expect.any(String),
           conversationId: CONV_ID,
           workspaceId: "images-workspace",
           text: text.trim(),

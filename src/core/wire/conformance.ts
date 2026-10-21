@@ -87,6 +87,10 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "chat.delta";
     case "chat.resync-required":
       return "chat.resync-required";
+    case "chat.accepted":
+      return "chat.accepted";
+    case "chat.subscription-rejected":
+      return "chat.subscription-rejected";
     case "chat.queued":
       return "chat.queued";
     case "chat.error":

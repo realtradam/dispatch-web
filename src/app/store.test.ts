@@ -270,8 +270,8 @@ function createFakeStorage(): Storage {
     getItem(key: string): string | null {
       return map.get(key) ?? null;
     },
-    key(_index: number): string | null {
-      return null;
+    key(index: number): string | null {
+      return [...map.keys()][index] ?? null;
     },
     removeItem(key: string) {
       map.delete(key);
@@ -2711,13 +2711,14 @@ describe("conversation load-on-demand", () => {
     ws: WebSocketLike,
     count = 3,
     activeConversationId: string | null = "lazy-0",
+    workspaceCount = 1,
   ) {
     const storage = createFakeStorage();
     const conversations = Array.from({ length: count }, (_, i) => ({
       id: `lazy-${i}`,
       title: `Conversation ${i}`,
       model: "openai/gpt-4o",
-      workspaceId: "default",
+      workspaceId: i % workspaceCount === 0 ? "default" : `workspace-${i % workspaceCount}`,
       status: i === 1 ? "active" : "idle",
       lastActivityAt: 1234,
     }));
@@ -2763,7 +2764,7 @@ describe("conversation load-on-demand", () => {
       fetchImpl.mock.calls
         .map(([url]) => new URL(String(url)).pathname + new URL(String(url)).search)
         .filter((url) => /\/conversations\/[^/?]+(?:\?sinceSeq=|\/metrics$)/.test(url));
-    await vi.waitFor(() => expect(store.tabs).toHaveLength(count));
+    await vi.waitFor(() => expect(store.tabs).toHaveLength(Math.ceil(count / workspaceCount)));
     if (activeConversationId !== null) {
       await vi.waitFor(() =>
         expect(requests()).toContain(`/conversations/${activeConversationId}/metrics`),
@@ -2785,7 +2786,7 @@ describe("conversation load-on-demand", () => {
       ]);
       expect(
         parseSent(ws).filter((m) => (m as { type: string }).type === "chat.subscribe"),
-      ).toHaveLength(300);
+      ).toHaveLength(1);
       expect(store.tabs[299]?.title).toBe("Conversation 299");
       expect(store.conversationStatus("lazy-1")).toBe("active");
       ws.feedServerMessage({
@@ -2796,6 +2797,24 @@ describe("conversation load-on-demand", () => {
       });
       expect(store.conversationStatus("lazy-1")).toBe("queued");
       expect(requests()).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  }, 20_000);
+
+  it("discovers 339 conversations across 24 workspaces without subscribing to all of them", async () => {
+    const ws = fakeSocket();
+    const { store } = await setup(ws, 339, "lazy-0", 24);
+    try {
+      ws.resolveOpen();
+      const subscriptions = parseSent(ws).filter(
+        (message) => (message as { type: string }).type === "chat.subscribe",
+      );
+      expect(subscriptions).toEqual([{ type: "chat.subscribe", conversationId: "lazy-0" }]);
+      store.setActiveWorkspace("workspace-1");
+      store.selectTab("lazy-1");
+      expect(parseSent(ws)).toContainEqual({ type: "chat.unsubscribe", conversationId: "lazy-0" });
+      expect(parseSent(ws)).toContainEqual({ type: "chat.subscribe", conversationId: "lazy-1" });
     } finally {
       store.dispose();
     }
@@ -2813,13 +2832,13 @@ describe("conversation load-on-demand", () => {
     }
   }, 20_000);
 
-  it("loads a tab once, including repeated activation while its load is pending", async () => {
+  it("loads a tab once while pending and catches up a previously loaded tab on reactivation", async () => {
     const { store, requests } = await setup(fakeSocket());
     try {
       store.selectTab("lazy-2");
       store.selectTab("lazy-0");
       store.selectTab("lazy-2");
-      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
       expect(requests().filter((u) => u.includes("lazy-2"))).toHaveLength(2);
       expect(store.activeChat.cacheTimer.running?.startedAt).toBe(1234);
     } finally {
@@ -2827,7 +2846,7 @@ describe("conversation load-on-demand", () => {
     }
   });
 
-  it("re-subscribes all tabs on reconnect but resyncs only loaded tabs and watches", async () => {
+  it("re-subscribes and resyncs only focused tabs and watches on reconnect", async () => {
     const ws = reconnectableSocket();
     const { store, requests } = await setup(ws);
     try {
@@ -2847,7 +2866,7 @@ describe("conversation load-on-demand", () => {
       ).toBe(true);
       expect(
         parseSent(ws).filter((m) => (m as { type: string }).type === "chat.subscribe"),
-      ).toHaveLength(4);
+      ).toHaveLength(2);
     } finally {
       store.dispose();
     }
@@ -3128,4 +3147,54 @@ it("routes omitted replay only to the matching watch/tab without WS resend or an
   } finally {
     store.dispose();
   }
+});
+
+describe("unconfirmed first-message recovery", () => {
+  it("retains a local-only tab and input after reload and authoritative discovery, without resending", async () => {
+    const storage = createFakeStorage();
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      if (String(input).endsWith("/conversations?status=active,idle"))
+        return Response.json({ conversations: [] });
+      return base(input, init);
+    };
+    const ws = fakeSocket();
+    const first = createAppStore({
+      localStorage: storage,
+      indexedDB: new IDBFactory(),
+      fetchImpl,
+      socketFactory: () => ws,
+    });
+    ws.resolveOpen();
+    first.send("must survive", [{ url: "data:image/png;base64,AAAA" }]);
+    const id = first.activeConversationId;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(first.activeChat.pendingInputs).toHaveLength(1);
+    first.dispose();
+    const nextSocket = fakeSocket();
+    const next = createAppStore({
+      localStorage: storage,
+      indexedDB: new IDBFactory(),
+      fetchImpl,
+      socketFactory: () => nextSocket,
+    });
+    try {
+      nextSocket.resolveOpen();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(next.tabs.some((tab) => tab.conversationId === id)).toBe(true);
+      expect(next.activeChat.pendingInputs).toMatchObject([
+        { request: { message: "must survive" } },
+      ]);
+      const requestId = next.activeChat.pendingInputs[0]?.request.requestId ?? "";
+      nextSocket.feedServerMessage({ type: "chat.accepted", conversationId: id ?? "", requestId });
+      expect(next.activeChat.pendingInputs).toEqual([]);
+      expect(
+        parseSent(nextSocket).some((message) =>
+          ["chat.send", "chat.queue"].includes((message as { type: string }).type),
+        ),
+      ).toBe(false);
+    } finally {
+      next.dispose();
+    }
+  });
 });
