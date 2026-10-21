@@ -1,5 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import { gsap } from "gsap";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tab } from "./tabs";
 import TabList from "./ui/TabList.svelte";
@@ -461,7 +462,14 @@ describe("TabList", () => {
         const grid = screen.getByRole("tablist");
         const boxGhost = grid.firstElementChild as HTMLElement;
         expect(boxGhost).toHaveAttribute("data-tab-ghost");
-        expect(boxGhost.childElementCount).toBe(0); // tint only, no card copies
+        // A clipping frame around a copy of the tint only — no card copies.
+        expect(boxGhost.childElementCount).toBe(1);
+        expect(boxGhost.firstElementChild?.childElementCount).toBe(0);
+        // Ghosts SHRINK (a clipped height), they don't fade or scale.
+        for (const g of ghosts) {
+          expect(g.style.overflow).toBe("hidden");
+          expect(gsap.getTweensOf(g)).toHaveLength(1);
+        }
         const cardGhost = ghosts.find((g) => g !== boxGhost);
         expect(cardGhost?.parentElement).toBe(grid.parentElement);
         expect(cardGhost).toHaveTextContent("Child 1");
@@ -479,6 +487,11 @@ describe("TabList", () => {
         await rerender({ ...props, tabs: grouped });
         expect(document.querySelector("[data-tab-ghost]")).toBeNull();
         expect(screen.getAllByRole("tab")).toHaveLength(grouped.length);
+        // New cards start fully clipped (0 visible height) and grow in.
+        for (const id of ["c1", "c2", "g"]) {
+          expect(card(id).style.clipPath).toBe("inset(0% 0% 100% 0%)");
+          expect(gsap.getTweensOf(card(id))).toHaveLength(1);
+        }
       });
     });
 
