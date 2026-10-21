@@ -383,9 +383,11 @@ describe("TabList", () => {
           s?.paddingLeft,
         ]);
       }
-      // Every box paints a 15% lavender tint, so nested boxes compound per level.
-      expect(outer).toHaveClass("bg-secondary/15");
-      expect(inner).toHaveClass("bg-secondary/15");
+      // Each level is tinted with its own rotating theme colour.
+      expect(outer?.dataset.tone).toBe("secondary");
+      expect(inner?.dataset.tone).toBe("success");
+      expect(outer?.style.getPropertyValue("--group-tone")).toBe("var(--color-secondary)");
+      expect(inner?.style.getPropertyValue("--group-tone")).toBe("var(--color-success)");
       expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${outer?.style.paddingLeft}`);
     });
 
