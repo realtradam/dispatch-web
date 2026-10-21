@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { untrack } from "svelte";
+  import { forestFlipIds } from "../tab-flip";
   import {
     buildTabGroups,
     directGroupChildren,
@@ -11,6 +13,7 @@
   import TabCard from "./TabCard.svelte";
   import TabGroupBox from "./TabGroupBox.svelte";
   import TabMenu from "./TabMenu.svelte";
+  import { createTabFlip } from "./tab-flip";
 
   let {
     tabs,
@@ -50,6 +53,20 @@
   // The subagent-group forest (pure) + the gutter the outermost box bleeds into.
   const forest = $derived(buildTabGroups(tabs));
   const gutter = $derived(groupGutterPx(forest.maxDepth));
+
+  // FLIP: a summoned subagent / closed tab / regroup animates (GSAP Flip).
+  // Capture positions (+ ghost leaving elements) BEFORE the DOM updates, play
+  // AFTER. Keyed on `forest` only; the DOM work itself is untracked.
+  let scrollerEl = $state<HTMLDivElement | undefined>();
+  const flip = createTabFlip(() => scrollerEl);
+  $effect.pre(() => {
+    const next = forestFlipIds(forest);
+    untrack(() => flip.capture(next));
+  });
+  $effect(() => {
+    void forest;
+    untrack(() => flip.play());
+  });
 
   // Tab menu (right-click / touch-and-hold). Local UI state owned here.
   let menu = $state<{ conversationId: string; x: number; y: number } | null>(null);
@@ -95,12 +112,13 @@
        sidebar. Subagent groups span both columns; `dense` lets a later card
        fill the half-row a group would otherwise leave empty. -->
   <div
-    class="h-[40vh] overflow-y-auto py-0.5"
+    bind:this={scrollerEl}
+    class="relative h-[40vh] overflow-y-auto py-0.5"
     style:padding-inline="{gutter}px"
     data-tab-grid
     onscroll={() => (menu = null)}
   >
-    <div class="grid grid-flow-row-dense grid-cols-2 gap-1.5" role="tablist">
+    <div class="relative grid grid-flow-row-dense grid-cols-2 gap-1.5" role="tablist">
       {#each forest.roots as node (node.tab.conversationId)}
         {#if node.children.length > 0}
           <TabGroupBox {node} level={1} maxDepth={forest.maxDepth} {card} />

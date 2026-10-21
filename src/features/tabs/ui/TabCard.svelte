@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { cardFlipId } from "../tab-flip";
   import type { Tab } from "../tabs";
 
   /**
@@ -115,6 +116,7 @@
   aria-selected={active}
   title={tab.title}
   data-conversation-id={tab.conversationId}
+  data-flip-id={cardFlipId(tab.conversationId)}
   data-wide={wide ? "true" : undefined}
   onclick={() => {
     if (suppressClick) {

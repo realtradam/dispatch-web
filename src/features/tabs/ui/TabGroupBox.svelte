@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
   import type { TabGroupNode } from "../tab-groups";
+  import { groupFlipId } from "../tab-flip";
   import { groupBleedPx, groupTone, lastRowIsGroup } from "../tab-groups";
   import type { Tab } from "../tabs";
   import TabGroupBox from "./TabGroupBox.svelte";
@@ -17,7 +18,9 @@
    * box is tinted with one of three theme colours ROTATING by level
    * (`groupTone`), painted OPAQUE (mixed into the sidebar well colour) so a
    * nested box never blends with the box around it, plus a border in the same
-   * colour so every box edge reads at a glance.
+   * colour so every box edge reads at a glance. The tint lives on its own
+   * BACKDROP layer so the FLIP animation (`tab-flip.ts`) can fade a new
+   * group's tint in while its cards fly into place.
    */
   let {
     node,
@@ -44,8 +47,7 @@
 </script>
 
 <div
-  class="tab-group-box col-span-2 rounded-lg"
-  style:--group-tone="var(--color-{tone})"
+  class="relative col-span-2"
   style:margin-inline="-{bleed}px"
   style:padding="{bleed}px {bleed}px {padBottom}px"
   role="group"
@@ -53,8 +55,15 @@
   data-tab-group={node.tab.conversationId}
   data-level={level}
   data-tone={tone}
+  data-flip-id={groupFlipId(node.tab.conversationId)}
 >
-  <div class="grid grid-flow-row-dense grid-cols-2 gap-1.5">
+  <div
+    class="tab-group-backdrop pointer-events-none absolute inset-0 rounded-lg"
+    style:--group-tone="var(--color-{tone})"
+    data-group-backdrop
+    aria-hidden="true"
+  ></div>
+  <div class="relative grid grid-flow-row-dense grid-cols-2 gap-1.5">
     {@render card(node.tab, true, node.children.length)}
     {#each node.children as child (child.tab.conversationId)}
       {#if child.children.length > 0}
@@ -70,7 +79,7 @@
   /* Opaque tint: the tone mixed into the sidebar's `.inset-well` colour (the
      surface the tab grid sits on), so nested boxes replace — never compound
      with — the colour around them. */
-  .tab-group-box {
+  .tab-group-backdrop {
     background-color: color-mix(
       in oklab,
       var(--group-tone) 16%,

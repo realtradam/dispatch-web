@@ -1,6 +1,6 @@
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tab } from "./tabs";
 import TabList from "./ui/TabList.svelte";
 
@@ -386,8 +386,13 @@ describe("TabList", () => {
       // Each level is tinted with its own rotating theme colour.
       expect(outer?.dataset.tone).toBe("secondary");
       expect(inner?.dataset.tone).toBe("success");
-      expect(outer?.style.getPropertyValue("--group-tone")).toBe("var(--color-secondary)");
-      expect(inner?.style.getPropertyValue("--group-tone")).toBe("var(--color-success)");
+      // The tint lives on each box's own backdrop layer (FLIP fades it in).
+      const tint = (box: HTMLElement | null) =>
+        box
+          ?.querySelector<HTMLElement>(":scope > [data-group-backdrop]")
+          ?.style.getPropertyValue("--group-tone");
+      expect(tint(outer)).toBe("var(--color-secondary)");
+      expect(tint(inner)).toBe("var(--color-success)");
       expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${outer?.style.paddingLeft}`);
     });
 
@@ -416,6 +421,86 @@ describe("TabList", () => {
       expect(card("p")).not.toHaveClass("col-span-2");
       expect(card("p")).not.toHaveTextContent("subagent");
       expect(document.querySelector("[data-tab-group]")).toBeNull();
+    });
+
+    describe("FLIP animation (motion allowed)", () => {
+      // jsdom has no matchMedia, which the grid reads as "no motion" — stub
+      // the outermost edge so the GSAP Flip path actually runs.
+      beforeEach(() => {
+        vi.stubGlobal(
+          "matchMedia",
+          vi.fn(() => ({ matches: false }) as unknown as MediaQueryList),
+        );
+      });
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
+      const props = {
+        activeConversationId: "p",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+        onSetTabGroup: vi.fn(),
+      };
+
+      it("leaves an inert ghost of a closed tab (and its dissolved box) that is never a tab", async () => {
+        const two = grouped.filter((t) => ["p", "c1", "solo"].includes(t.conversationId));
+        const { rerender } = render(TabList, { props: { ...props, tabs: two } });
+        // Close c1: its card AND p's group box leave.
+        await rerender({ ...props, tabs: two.filter((t) => t.conversationId !== "c1") });
+
+        const ghosts = [...document.querySelectorAll<HTMLElement>("[data-tab-ghost]")];
+        expect(ghosts).toHaveLength(2);
+        for (const g of ghosts) {
+          expect(g).toHaveAttribute("aria-hidden", "true");
+          expect(g.querySelector("[data-conversation-id],[data-flip-id],[role]")).toBeNull();
+        }
+        // Paint order: the dissolving box's tint goes FIRST in its enclosing
+        // grid (under every card); the closed card's ghost goes on top.
+        const grid = screen.getByRole("tablist");
+        const boxGhost = grid.firstElementChild as HTMLElement;
+        expect(boxGhost).toHaveAttribute("data-tab-ghost");
+        expect(boxGhost.childElementCount).toBe(0); // tint only, no card copies
+        const cardGhost = ghosts.find((g) => g !== boxGhost);
+        expect(cardGhost?.parentElement).toBe(grid.parentElement);
+        expect(cardGhost).toHaveTextContent("Child 1");
+        // Ghosts are invisible to queries: only the real remaining tabs count.
+        expect(screen.getAllByRole("tab").map((t) => t.dataset.conversationId)).toEqual([
+          "p",
+          "solo",
+        ]);
+        expect(screen.getAllByRole("button", { name: "Close tab" })).toHaveLength(2);
+      });
+
+      it("does not ghost anything when a subagent is summoned", async () => {
+        const base = grouped.filter((t) => ["p", "solo"].includes(t.conversationId));
+        const { rerender } = render(TabList, { props: { ...props, tabs: base } });
+        await rerender({ ...props, tabs: grouped });
+        expect(document.querySelector("[data-tab-ghost]")).toBeNull();
+        expect(screen.getAllByRole("tab")).toHaveLength(grouped.length);
+      });
+    });
+
+    it("never animates when the user prefers reduced motion", async () => {
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn(() => ({ matches: true }) as unknown as MediaQueryList),
+      );
+      try {
+        const props = {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose: vi.fn(),
+          onNewDraft: vi.fn(),
+        };
+        const { rerender } = render(TabList, { props });
+        await rerender({ ...props, tabs: grouped.filter((t) => t.conversationId !== "c2") });
+        expect(document.querySelector("[data-tab-ghost]")).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
 
     it("keeps the parent wide while a nested descendant's own parent remains open", async () => {
