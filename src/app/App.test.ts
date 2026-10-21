@@ -482,7 +482,7 @@ describe("App component interaction tests", () => {
     store.dispose();
   });
 
-  it("uses only the focused conversation's queue snapshot for the interrupt label and POSTs stop", async () => {
+  it("uses only the focused conversation's queue snapshot for the Flush label and POSTs stop", async () => {
     const ws = fakeSocket();
     const fetchImpl = vi.fn(fakeFetchImpl());
     const store = createAppStore({
@@ -523,10 +523,10 @@ describe("App component interaction tests", () => {
     });
     const pending = { messages: [{ id: "m1", text: "next", queuedAt: 1 }] };
     pushQueue(firstId, pending);
-    const interrupt = await screen.findByRole("button", { name: "Interrupt & send queued" });
+    const flush = await screen.findByRole("button", { name: "Flush" });
     ws.sent.length = 0;
     fetchImpl.mockClear();
-    await user.click(interrupt);
+    await user.click(flush);
     expect(fetchImpl.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([
       [expect.stringContaining(`/conversations/${firstId}/stop`), { method: "POST" }],
     ]);
@@ -544,7 +544,7 @@ describe("App component interaction tests", () => {
       expect(screen.getByRole("button", { name: "Stop generation" })).toBeInTheDocument(),
     );
     pushQueue(secondId, pending);
-    await screen.findByRole("button", { name: "Interrupt & send queued" });
+    await screen.findByRole("button", { name: "Flush" });
     pushQueue(secondId, { messages: [] });
     await screen.findByRole("button", { name: "Stop generation" });
     pushQueue(secondId, { messages: "malformed" });

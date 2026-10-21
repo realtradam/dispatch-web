@@ -871,14 +871,14 @@ describe("Composer", () => {
 
     for (const queuedMessageCount of [1, 2]) {
       await rerender({ queuedMessageCount });
-      const button = screen.getByRole("button", { name: "Interrupt & send queued" });
-      expect(button).toHaveTextContent(/^Interrupt & send queued$/);
+      const button = screen.getByRole("button", { name: "Flush" });
+      expect(button).toHaveTextContent(/^Flush$/);
       expect(button).toHaveAttribute(
         "title",
         "Stop the current response and start the queued message now",
       );
     }
-    await user.click(screen.getByRole("button", { name: "Interrupt & send queued" }));
+    await user.click(screen.getByRole("button", { name: "Flush" }));
     expect(onStop).toHaveBeenCalledTimes(2);
     expect(onSend).not.toHaveBeenCalled();
     expect(onQueue).not.toHaveBeenCalled();
@@ -886,10 +886,10 @@ describe("Composer", () => {
     const input = screen.getByRole("textbox", { name: "Message input" });
     await user.type(input, "next");
     expect(screen.getByRole("button", { name: "Queue" })).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Interrupt & send queued" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Flush" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Queue" }));
     expect(onQueue).toHaveBeenCalledExactlyOnceWith("next", undefined);
-    expect(screen.getByRole("button", { name: "Interrupt & send queued" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Flush" })).toBeInTheDocument();
     await rerender({ queuedMessageCount: 0 });
     expectPlainStop(); // Queue drained or cancelled.
     await rerender({ queuedMessageCount: 1, status: "idle" });

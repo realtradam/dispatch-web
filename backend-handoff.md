@@ -18,6 +18,15 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Delivery warning display delay + Flush label (2026-10-21)
+
+Frontend-only: each keyed pending-input warning waits 1000 ms on mount (including
+restored/rejected copies); removal/unmount cancels it. Storage, delivery, receipts,
+and recovery remain immediate and unchanged. The queued Stop action now reads
+**Flush** (text + aria-label), retaining its tooltip and existing stop action.
+No contract/version/mirror changes or backend asks. Verification and scope:
+`reports/delivery-warning-delay.md`; no deployment or live probe.
+
 ## Milestone: Subscription and input delivery regression (2026-10-21)
 
 The user authorized one agent to implement both repositories in paired worktrees on

@@ -2,8 +2,8 @@
 export function stopButtonLabels(queuedMessageCount: number | undefined) {
   if (queuedMessageCount !== undefined && queuedMessageCount >= 1) {
     return {
-      text: "Interrupt & send queued",
-      ariaLabel: "Interrupt & send queued",
+      text: "Flush",
+      ariaLabel: "Flush",
       title: "Stop the current response and start the queued message now",
     };
   }

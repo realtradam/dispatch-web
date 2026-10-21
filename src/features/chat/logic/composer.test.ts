@@ -10,10 +10,10 @@ describe("stopButtonLabels", () => {
     });
   });
 
-  it.each([1, 2])("describes interrupt-and-send with queued count %s", (count) => {
+  it.each([1, 2])("labels the queued Stop action Flush with queued count %s", (count) => {
     expect(stopButtonLabels(count)).toEqual({
-      text: "Interrupt & send queued",
-      ariaLabel: "Interrupt & send queued",
+      text: "Flush",
+      ariaLabel: "Flush",
       title: "Stop the current response and start the queued message now",
     });
   });
