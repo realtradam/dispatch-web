@@ -2023,3 +2023,179 @@ it("reloads unknown legacy cache epochs rather than merging pre-upgrade rows", a
     vi.unstubAllGlobals();
   }
 });
+
+describe("server epoch rollback", () => {
+  it.each([
+    "tail",
+    "backfill",
+  ])("converges on %s with a real cache and a fresh bounded fetch", async (path) => {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const storage = createIdbChunkStore({ indexedDB: new IDBFactory() });
+    const cache = createConversationCache(storage);
+    const old = Array.from({ length: 20 }, (_, i) => makeStoredChunk(i + 1));
+    await cache.commit(CONV_ID, path === "backfill" ? old.slice(-7) : old, 5);
+    const history = createFakeHistorySync();
+    history.historyEpoch = 5;
+    const store = createChatStore({
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: history.impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache,
+      chatLimit: 10,
+    });
+    try {
+      await store.load();
+      history.historyEpoch = 0;
+      // Recreated ids can reuse seqs with completely different content.
+      const restored: StoredChunk = {
+        seq: 1,
+        role: "user",
+        chunk: { type: "text", text: "restored" },
+      };
+      history.returnChunks = [restored];
+      const before = history.calls.length;
+      if (path === "tail") {
+        store.resync();
+        await vi.waitFor(() => expect(store.pendingSync).toBe(false));
+      } else await store.showEarlier();
+      expect(history.calls.length - before).toBeLessThanOrEqual(2);
+      expect(history.calls.at(-1)).toMatchObject({ sinceSeq: 0, window: { limit: 7 } });
+      expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+      expect(await cache.load(CONV_ID)).toEqual([restored]);
+      expect(store.chunks.map((c) => c.chunk)).toEqual([restored.chunk]);
+      expect(store.hasEarlier).toBe(false);
+      expect(store.error).toBeNull();
+    } finally {
+      store.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("bounds reruns even when every response is invalidated by another compaction", async () => {
+    let calls = 0;
+    let churn = true;
+    let store!: ReturnType<typeof createChatStore>;
+    const sync: import("./ports").HistorySync = async () => {
+      calls++;
+      // Stop the old broken loop safely rather than hanging the test worker.
+      if (churn && calls <= 6) store.resync(calls);
+      return { chunks: [], latestSeq: 0, historyEpoch: calls - 1 };
+    };
+    store = createChatStore({
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: sync,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+    });
+    try {
+      await store.load();
+      expect(calls).toBe(3);
+      expect(store.pendingSync).toBe(false);
+      expect(store.error).toMatch(/history changed repeatedly/i);
+      churn = false;
+      store.resync();
+      await vi.waitFor(() => expect(store.pendingSync).toBe(false));
+      expect(calls).toBe(4);
+      expect(store.error).toBeNull();
+    } finally {
+      store.dispose();
+    }
+  });
+});
+
+it.each([
+  "tail",
+  "backfill",
+])("rejects a delayed old %s after a lower-epoch history is observed", async (delayed) => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const cache = createConversationCache(createIdbChunkStore({ indexedDB: new IDBFactory() }));
+  await cache.commit(
+    CONV_ID,
+    Array.from({ length: 7 }, (_, i) => makeStoredChunk(14 + i)),
+    5,
+  );
+  const restored: StoredChunk = {
+    seq: 1,
+    role: "user",
+    chunk: { type: "text", text: "new history" },
+  };
+  type Response = import("@dispatch/transport-contract").ConversationHistoryResponse;
+  let resolve!: (res: Response) => void;
+  const slow = new Promise<Response>((r) => {
+    resolve = r;
+  });
+  let delayNext = false;
+  let epoch = 5;
+  const sync = vi.fn<import("./ports").HistorySync>().mockImplementation(async () => {
+    if (delayNext) {
+      delayNext = false;
+      return slow;
+    }
+    return {
+      chunks: epoch === 5 ? [] : [restored],
+      latestSeq: epoch === 5 ? 20 : 1,
+      historyEpoch: epoch,
+    };
+  });
+  const store = createChatStore({
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: sync,
+    metricsSync: createFakeMetricsSync().impl,
+    cache,
+    chatLimit: 10,
+  });
+  try {
+    await store.load();
+    delayNext = true;
+    let earlier: Promise<void>;
+    if (delayed === "tail") {
+      store.resync();
+      await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+      epoch = 0;
+      earlier = store.showEarlier();
+      await earlier; // Invalidates the old tail and requests a sequential rerun.
+    } else {
+      earlier = store.showEarlier();
+      await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+      epoch = 0;
+      store.resync();
+      await vi.waitFor(() => expect(store.chunks.map((c) => c.chunk)).toEqual([restored.chunk]));
+    }
+    resolve({ chunks: [makeStoredChunk(21)], latestSeq: 21, historyEpoch: 5 });
+    await earlier;
+    await vi.waitFor(() => expect(store.pendingSync).toBe(false));
+    expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+    expect(await cache.load(CONV_ID)).toEqual([restored]);
+    expect(store.chunks.map((c) => c.chunk)).toEqual([restored.chunk]);
+    expect(sync).toHaveBeenCalledTimes(4);
+  } finally {
+    store.dispose();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("replaces an empty high-epoch cache with the server's empty lower epoch in one request", async () => {
+  const cache = createConversationCache(createIdbChunkStore({ indexedDB: new IDBFactory() }));
+  await cache.reset(CONV_ID, 8);
+  const history = createFakeHistorySync();
+  const store = createChatStore({
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: history.impl,
+    metricsSync: createFakeMetricsSync().impl,
+    cache,
+  });
+  try {
+    await store.load();
+    expect(history.calls).toHaveLength(1);
+    expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+    expect(await cache.load(CONV_ID)).toEqual([]);
+    expect(store.chunks).toEqual([]);
+    expect(store.hasEarlier).toBe(false);
+  } finally {
+    store.dispose();
+  }
+});

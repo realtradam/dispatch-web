@@ -339,15 +339,28 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       return;
     }
     _pendingSync = true;
+    // One request plus at most two sequential reruns. Continued churn waits for
+    // the next reconnect/seal/explicit resync, never a microtask refetch loop.
+    let attempts = 0;
     do {
+      attempts++;
       rerunRequested = false;
       try {
         const currentRevision = revision;
-        const cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
-        if (historyEpoch !== undefined && cachedEpoch !== historyEpoch)
+        let cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+        if (historyEpoch !== undefined && cachedEpoch !== historyEpoch) {
           await deps.cache.reset(deps.conversationId, historyEpoch);
+          cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+        }
         const since =
-          cachedEpoch === undefined ? 0 : await deps.cache.sinceSeq(deps.conversationId);
+          reloadWindow || cachedEpoch === undefined
+            ? 0
+            : await deps.cache.sinceSeq(deps.conversationId);
+        if (disposed) break;
+        if (revision !== currentRevision) {
+          rerunRequested = true;
+          continue;
+        }
         const limit =
           since === 0 ? (reloadWindow ? initialWindowSize(chatLimit) : coldLimit) : undefined;
         const res = await deps.historySync(
@@ -360,21 +373,43 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
           rerunRequested = true;
           continue;
         }
-        if (
+        const mismatch =
           (cachedEpoch !== undefined && cachedEpoch !== res.historyEpoch) ||
-          (historyEpoch !== undefined && historyEpoch !== res.historyEpoch)
-        ) {
-          resetTranscript(res.historyEpoch);
-          await deps.cache.reset(deps.conversationId, res.historyEpoch);
-          if (since !== 0) {
+          (historyEpoch !== undefined && historyEpoch !== res.historyEpoch);
+        if (mismatch && since !== 0) {
+          // A cursor response cannot replace a different history. Confirm with
+          // a new full-window request; don't mistake a lower epoch for staleness.
+          reloadWindow = true;
+          rerunRequested = true;
+          continue;
+        }
+        let merged: readonly StoredChunk[];
+        if (mismatch || cachedEpoch === undefined) {
+          const replaced = await deps.cache.replace(
+            deps.conversationId,
+            res.chunks,
+            res.historyEpoch,
+            cachedEpoch,
+          );
+          const replacedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+          if (disposed) break;
+          if (revision !== currentRevision || !replaced || replacedEpoch !== res.historyEpoch) {
+            rerunRequested = true;
+            continue;
+          }
+          if (mismatch) resetTranscript(res.historyEpoch);
+          merged = res.chunks;
+        } else {
+          merged = await deps.cache.commit(deps.conversationId, res.chunks, res.historyEpoch);
+          const committedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+          if (disposed) break;
+          if (revision !== currentRevision || committedEpoch !== res.historyEpoch) {
             rerunRequested = true;
             continue;
           }
         }
         reloadWindow = false;
         historyEpoch = res.historyEpoch;
-        const merged = await deps.cache.commit(deps.conversationId, res.chunks, res.historyEpoch);
-        if (disposed || historyEpoch !== res.historyEpoch) continue;
         if (since === 0 && (limit === undefined || res.chunks.length < limit))
           earliestSeq = merged[0]?.seq ?? 0;
         transcript = applyHistory(transcript, merged);
@@ -383,7 +418,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       } catch (err) {
         _error = err instanceof Error ? err.message : String(err);
       }
-    } while (rerunRequested && !disposed);
+    } while (rerunRequested && !disposed && attempts < 3);
+    if (rerunRequested && !disposed) {
+      _error = "Conversation history changed repeatedly; sync paused until the next refresh.";
+    }
     _pendingSync = false;
   }
 
@@ -419,8 +457,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       });
       if (disposed || revision !== currentRevision) return [];
       if (res.historyEpoch !== historyEpoch) {
-        resetTranscript(res.historyEpoch);
-        await deps.cache.reset(deps.conversationId, res.historyEpoch);
+        // Confirm a backfill mismatch with a fresh full window as well. Bump
+        // the local revision so an overlapping old tail cannot be applied.
+        revision++;
+        reloadWindow = true;
         await syncTail(initialWindowSize(chatLimit));
         return [];
       }

@@ -6,7 +6,7 @@ interface FakeSocket extends WebSocketLike {
   sent: string[];
   resolveOpen(): void;
   invokeMessage(data: string): void;
-  invokeClose(): void;
+  invokeClose(code?: number): void;
 }
 
 function fakeSocket(): FakeSocket {
@@ -44,8 +44,8 @@ function fakeSocket(): FakeSocket {
     invokeMessage(data: string) {
       onmessage?.({ data });
     },
-    invokeClose() {
-      onclose?.({ code: 1000, reason: "" });
+    invokeClose(code = 1000) {
+      onclose?.({ code, reason: "" });
     },
     sent,
   };
@@ -403,5 +403,76 @@ describe("createSurfaceSocket", () => {
     ws.resolveOpen();
     expect(ws.sent).toHaveLength(1);
     expect(JSON.parse(ws.sent[0] ?? "")).toEqual({ type: "chat.send", message: "queued" });
+  });
+});
+
+describe("reconnect backoff after open", () => {
+  it.each([1013, 1006, 1011])("grows and caps delays across repeated early %s closes", (code) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const sockets: FakeSocket[] = [];
+    const handle = createSurfaceSocket({
+      url: "ws://test",
+      onMessage: vi.fn(),
+      socketFactory: () => {
+        const ws = fakeSocket();
+        sockets.push(ws);
+        return ws;
+      },
+    });
+    try {
+      for (const delay of [500, 1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+        const count = sockets.length;
+        sockets.at(-1)?.resolveOpen();
+        vi.advanceTimersByTime(100);
+        sockets.at(-1)?.invokeClose(code);
+        vi.advanceTimersByTime(delay - 1);
+        expect(sockets).toHaveLength(count);
+        vi.advanceTimersByTime(1);
+        expect(sockets).toHaveLength(count + 1);
+      }
+    } finally {
+      handle.close();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    "healthy",
+    "normal",
+    "going away",
+  ])("resets accumulated backoff after a %s connection", (mode) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const sockets: FakeSocket[] = [];
+    const handle = createSurfaceSocket({
+      url: "ws://test",
+      onMessage: vi.fn(),
+      socketFactory: () => {
+        const ws = fakeSocket();
+        sockets.push(ws);
+        return ws;
+      },
+    });
+    try {
+      sockets[0]?.resolveOpen();
+      sockets[0]?.invokeClose(1013);
+      vi.advanceTimersByTime(500);
+      sockets[1]?.resolveOpen();
+      if (mode === "healthy") vi.advanceTimersByTime(30000);
+      sockets[1]?.invokeClose(mode === "normal" ? 1000 : mode === "going away" ? 1001 : 1013);
+      vi.advanceTimersByTime(499);
+      expect(sockets).toHaveLength(2);
+      vi.advanceTimersByTime(1);
+      expect(sockets).toHaveLength(3);
+      handle.close();
+      vi.advanceTimersByTime(60000);
+      expect(sockets).toHaveLength(3);
+    } finally {
+      handle.close();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
   });
 });

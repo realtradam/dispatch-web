@@ -141,6 +141,12 @@ export function createFakeCache(): FakeCache {
         store.delete(id);
         epochs.set(id, epoch);
       },
+      async replace(id, incoming, epoch, expectedEpoch) {
+        if ((epochs.get(id) ?? 0) !== expectedEpoch) return false;
+        store.set(id, [...incoming]);
+        epochs.set(id, epoch);
+        return true;
+      },
       async load(conversationId) {
         return store.get(conversationId) ?? [];
       },
