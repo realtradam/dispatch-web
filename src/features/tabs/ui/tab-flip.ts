@@ -35,11 +35,15 @@ export interface TabFlip {
   play(): void;
 }
 
-const SHRINK = 0.05;
-const MOVE = 0.075;
-const GROW = 0.05;
-const SIZE_EASE = "power2.inOut";
-const MOVE_EASE = "power3.out";
+const SHRINK = 0.1;
+const MOVE = 0.1;
+const GROW = 0.1;
+/** Close: starts slow, finishes fast (accelerates away). */
+const SHRINK_EASE = "power2.in";
+/** Move: slow → fast → slow. */
+const MOVE_EASE = "power2.inOut";
+/** Open: starts fast, settles slowly (the mirror of close). */
+const GROW_EASE = "power2.out";
 const GHOST_ATTR = "data-tab-ghost";
 /** Fully clipped from the bottom edge up / fully revealed. */
 const CLIP_HIDDEN = "inset(0% 0% 100% 0%)";
@@ -103,7 +107,7 @@ export function createTabFlip(getScroller: () => HTMLElement | undefined): TabFl
             clipPath: CLIP_SHOWN,
             duration: GROW,
             delay: growAt,
-            ease: SIZE_EASE,
+            ease: GROW_EASE,
             clearProps: "clipPath",
           },
         );
@@ -211,7 +215,7 @@ function spawnGhost(scroller: HTMLElement, el: HTMLElement, isGroup: boolean): b
   gsap.to(ghost, {
     height: 0,
     duration: SHRINK,
-    ease: SIZE_EASE,
+    ease: SHRINK_EASE,
     onComplete: () => ghost.remove(),
   });
   return true;
