@@ -425,6 +425,11 @@ describe("TabList", () => {
     });
 
     describe("FLIP animation (motion allowed)", () => {
+      /** Jump every running GSAP animation to `progress` (0–1), delays included. */
+      function seekAnimations(progress: number): void {
+        for (const t of gsap.globalTimeline.getChildren(true, true, false)) t.progress(progress);
+      }
+
       // jsdom has no matchMedia, which the grid reads as "no motion" — stub
       // the outermost edge so the GSAP Flip path actually runs.
       beforeEach(() => {
@@ -448,8 +453,13 @@ describe("TabList", () => {
       it("leaves an inert ghost of a closed tab (and its dissolved box) that is never a tab", async () => {
         const two = grouped.filter((t) => ["p", "c1", "solo"].includes(t.conversationId));
         const { rerender } = render(TabList, { props: { ...props, tabs: two } });
+        // jsdom lays nothing out (every box is 0×0) — give elements a real size.
+        const rect = vi
+          .spyOn(Element.prototype, "getBoundingClientRect")
+          .mockReturnValue(new DOMRect(0, 0, 120, 72));
         // Close c1: its card AND p's group box leave.
         await rerender({ ...props, tabs: two.filter((t) => t.conversationId !== "c1") });
+        rect.mockRestore();
 
         const ghosts = [...document.querySelectorAll<HTMLElement>("[data-tab-ghost]")];
         expect(ghosts).toHaveLength(2);
@@ -465,11 +475,15 @@ describe("TabList", () => {
         // A clipping frame around a copy of the tint only — no card copies.
         expect(boxGhost.childElementCount).toBe(1);
         expect(boxGhost.firstElementChild?.childElementCount).toBe(0);
-        // Ghosts SHRINK (a clipped height), they don't fade or scale.
-        for (const g of ghosts) {
+        // Ghosts SHRINK (a clipped height), they don't fade or scale: halfway
+        // through, each is shorter than it started; at the end they're gone.
+        const full = ghosts.map((g) => Number.parseFloat(g.style.height));
+        seekAnimations(0.5);
+        ghosts.forEach((g, i) => {
           expect(g.style.overflow).toBe("hidden");
-          expect(gsap.getTweensOf(g)).toHaveLength(1);
-        }
+          expect(g.style.opacity).toBe("");
+          expect(Number.parseFloat(g.style.height)).toBeLessThan(full[i] ?? 0);
+        });
         const cardGhost = ghosts.find((g) => g !== boxGhost);
         expect(cardGhost?.parentElement).toBe(grid.parentElement);
         expect(cardGhost).toHaveTextContent("Child 1");
@@ -479,6 +493,24 @@ describe("TabList", () => {
           "solo",
         ]);
         expect(screen.getAllByRole("button", { name: "Close tab" })).toHaveLength(2);
+        seekAnimations(1);
+        expect(document.querySelector("[data-tab-ghost]")).toBeNull();
+      });
+
+      it("measures each element at most twice per change (no layout thrash)", async () => {
+        // Regression: GSAP's Flip plugin cost ~430ms of main-thread work per
+        // close with ~40 nested tabs. The hand-rolled FLIP reads every element's
+        // box once before the change and once after — never per tween.
+        const { rerender } = render(TabList, { props: { ...props, tabs: grouped } });
+        const elements = document.querySelectorAll("[data-flip-id]").length;
+        const spy = vi.spyOn(Element.prototype, "getBoundingClientRect");
+        try {
+          await rerender({ ...props, tabs: grouped.filter((t) => t.conversationId !== "c2") });
+          // 2 per element + 1 host read per ghost (one ghost here: c2's card).
+          expect(spy.mock.calls.length).toBeLessThanOrEqual(2 * elements + 1);
+        } finally {
+          spy.mockRestore();
+        }
       });
 
       it("does not ghost anything when a subagent is summoned", async () => {
@@ -487,10 +519,14 @@ describe("TabList", () => {
         await rerender({ ...props, tabs: grouped });
         expect(document.querySelector("[data-tab-ghost]")).toBeNull();
         expect(screen.getAllByRole("tab")).toHaveLength(grouped.length);
-        // New cards start fully clipped (0 visible height) and grow in.
-        for (const id of ["c1", "c2", "g"]) {
-          expect(card(id).style.clipPath).toBe("inset(0% 0% 100% 0%)");
-          expect(gsap.getTweensOf(card(id))).toHaveLength(1);
+        // New cards start fully clipped (0 visible height) and grow in from
+        // the top edge; once done no motion style is left behind.
+        const ids = ["c1", "c2", "g"];
+        for (const id of ids) expect(card(id).style.clipPath).toBe("inset(0% 0% 100% 0%)");
+        seekAnimations(1);
+        for (const id of ids) {
+          expect(card(id).style.clipPath).toBe("");
+          expect(card(id).style.transform).toBe("");
         }
       });
     });
