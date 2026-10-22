@@ -208,6 +208,7 @@ export function foldCacheTimerEvent(
 
     case "text-delta":
     case "reasoning-delta":
+    case "reasoning-end":
     case "provider-retry":
       // Output (or a retry) from the next request: the gap is over.
       return r?.kind === "step" ? stopStep(state, now) : state;

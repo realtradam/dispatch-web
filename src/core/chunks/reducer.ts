@@ -284,6 +284,8 @@ export function applyHistory(
  *   optimistic echo) so a watcher renders it mid-turn.
  * - `text-delta` extends the current accumulating TextChunk (or starts one).
  * - `reasoning-delta` extends the current accumulating ThinkingChunk (or starts one).
+ * - `reasoning-end` closes the open ThinkingChunk as its own chunk; with none open
+ *   (a redacted/empty block) it appends an empty thinking chunk, mirroring history.
  * - `tool-call` / `tool-result` / `error` finalize any accumulating chunk and
  *   add a new provisional chunk.
  * - `steering` appends a user bubble mid-turn (drained from the message queue
@@ -411,6 +413,30 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
         ...state,
         provisional,
         accumulating: { kind: "thinking", text: event.delta, turnId: event.turnId },
+        generating: true,
+      };
+    }
+
+    case "reasoning-end": {
+      const acc = state.accumulating;
+      // Close the open thinking block of this turn: flush it as its own provisional chunk.
+      if (acc !== null && acc.kind === "thinking" && acc.turnId === event.turnId) {
+        return {
+          ...state,
+          provisional: flushAccumulating(state.provisional, acc),
+          accumulating: null,
+          generating: true,
+        };
+      }
+      // No open thinking (a redacted/empty block with no deltas): history persists an
+      // EMPTY thinking chunk for it, so mirror that 1:1.
+      return {
+        ...state,
+        provisional: [
+          ...flushAccumulating(state.provisional, acc),
+          { role: "assistant", chunk: { type: "thinking", text: "" }, turnId: event.turnId },
+        ],
+        accumulating: null,
         generating: true,
       };
     }
@@ -568,6 +594,7 @@ const RETRY_CLEARING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
   "turn-start",
   "text-delta",
   "reasoning-delta",
+  "reasoning-end",
   "tool-call",
   "tool-result",
   "error",

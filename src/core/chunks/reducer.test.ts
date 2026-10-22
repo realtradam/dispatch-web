@@ -7,6 +7,7 @@ import type {
   TurnInputEvent,
   TurnProviderRetryEvent,
   TurnReasoningDeltaEvent,
+  TurnReasoningEndEvent,
   TurnSealedEvent,
   TurnStartEvent,
   TurnSteeringEvent,
@@ -43,6 +44,12 @@ const reasoningDelta = (turnId: string, delta: string): TurnReasoningDeltaEvent 
   conversationId: "c1",
   turnId,
   delta,
+});
+
+const reasoningEnd = (turnId: string): TurnReasoningEndEvent => ({
+  type: "reasoning-end",
+  conversationId: "c1",
+  turnId,
 });
 
 const toolCall = (
@@ -275,6 +282,72 @@ describe("foldEvent — reasoning-delta", () => {
     s = foldEvent(s, reasoningDelta("t1", "hmm "));
     s = foldEvent(s, reasoningDelta("t1", "ok"));
     expect(s.accumulating).toEqual({ kind: "thinking", text: "hmm ok", turnId: "t1" });
+  });
+});
+
+describe("foldEvent — reasoning-end (thinking block boundary)", () => {
+  it("closes each block so consecutive deltas become separate chunks", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, reasoningDelta("t1", "a"));
+    s = foldEvent(s, reasoningEnd("t1"));
+    s = foldEvent(s, reasoningDelta("t1", "b"));
+    s = foldEvent(s, reasoningEnd("t1"));
+    expect(s.provisional.map((p) => p.chunk)).toEqual([
+      { type: "thinking", text: "a" },
+      { type: "thinking", text: "b" },
+    ]);
+    expect(s.accumulating).toBeNull();
+  });
+
+  it("still merges legacy deltas with no boundary (no reasoning-end)", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, reasoningDelta("t1", "a"));
+    s = foldEvent(s, reasoningDelta("t1", "b"));
+    expect(s.accumulating).toEqual({ kind: "thinking", text: "ab", turnId: "t1" });
+  });
+
+  it("end with nothing open appends an empty thinking chunk for the turn", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, reasoningEnd("t1"));
+    expect(s.provisional).toHaveLength(1);
+    expect(s.provisional[0]?.chunk).toEqual({ type: "thinking", text: "" });
+    expect(s.provisional[0]?.turnId).toBe("t1");
+    expect(s.accumulating).toBeNull();
+  });
+
+  it("text-delta then end flushes the text, then appends an empty thinking chunk", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, textDelta("t1", "x"));
+    s = foldEvent(s, reasoningEnd("t1"));
+    expect(s.provisional.map((p) => p.chunk)).toEqual([
+      { type: "text", text: "x" },
+      { type: "thinking", text: "" },
+    ]);
+  });
+
+  it("end for another turn flushes the open thinking and appends an empty one", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, reasoningDelta("t1", "open"));
+    s = foldEvent(s, reasoningEnd("t2"));
+    expect(s.provisional.map((p) => [p.turnId, p.chunk])).toEqual([
+      ["t1", { type: "thinking", text: "open" }],
+      ["t2", { type: "thinking", text: "" }],
+    ]);
+    expect(s.accumulating).toBeNull();
+  });
+
+  it("clears a pending provider-retry banner", () => {
+    let s = initialState();
+    s = foldEvent(s, turnStart("t1"));
+    s = foldEvent(s, providerRetry("t1", 0, 5000));
+    expect(selectProviderRetry(s)).not.toBeNull();
+    s = foldEvent(s, reasoningEnd("t1"));
+    expect(selectProviderRetry(s)).toBeNull();
   });
 });
 

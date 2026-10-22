@@ -20,6 +20,7 @@ const think = (delta: string): AgentEvent => ({
   turnId: T,
   delta,
 });
+const thinkEnd: AgentEvent = { type: "reasoning-end", conversationId: C, turnId: T };
 const text = (delta: string): AgentEvent => ({
   type: "text-delta",
   conversationId: C,
@@ -297,6 +298,72 @@ describe("selectChunks — de-dup of a late-join replay against committed histor
     s = fold(s, [call("b", 1)]);
     const provisional = selectChunks(s).filter((r) => r.provisional);
     expect(provisional.map((r) => r.chunk)).toMatchObject([{ type: "tool-call", toolCallId: "b" }]);
+  });
+
+  it("aligns a boundary-carrying replay 1:1 against split committed blocks", () => {
+    const split: StoredChunk[] = [
+      committedStep0[0] as StoredChunk,
+      { seq: 2, role: "assistant", chunk: { type: "thinking", text: "first. " }, turnId: T },
+      { seq: 3, role: "assistant", chunk: { type: "thinking", text: "second." }, turnId: T },
+      { ...(committedStep0[2] as StoredChunk), seq: 4 },
+      { ...(committedStep0[3] as StoredChunk), seq: 5 },
+    ];
+    let s = applyHistory(initialState(), split);
+    s = fold(s, [
+      userMsg,
+      turnStart,
+      think("first. "),
+      thinkEnd,
+      think("second."),
+      thinkEnd,
+      call("a"),
+      result("a"),
+      text("next"),
+    ]);
+    const rendered = selectChunks(s);
+    expect(rendered.map((r) => [r.seq, r.chunk.type])).toEqual([
+      [1, "text"],
+      [2, "thinking"],
+      [3, "thinking"],
+      [4, "tool-call"],
+      [5, "tool-result"],
+      [null, "text"],
+    ]);
+    expect(rendered[5]?.streaming).toBe(true);
+  });
+
+  it("aligns a redacted empty block with a bare reasoning-end", () => {
+    const split: StoredChunk[] = [
+      committedStep0[0] as StoredChunk,
+      { seq: 2, role: "assistant", chunk: { type: "thinking", text: "first. " }, turnId: T },
+      { seq: 3, role: "assistant", chunk: { type: "thinking", text: "" }, turnId: T },
+      { seq: 4, role: "assistant", chunk: { type: "thinking", text: "second." }, turnId: T },
+      { ...(committedStep0[2] as StoredChunk), seq: 5 },
+      { ...(committedStep0[3] as StoredChunk), seq: 6 },
+    ];
+    let s = applyHistory(initialState(), split);
+    s = fold(s, [
+      userMsg,
+      turnStart,
+      think("first. "),
+      thinkEnd,
+      thinkEnd,
+      think("second."),
+      thinkEnd,
+      call("a"),
+      result("a"),
+      text("next"),
+    ]);
+    const rendered = selectChunks(s);
+    expect(rendered.map((r) => [r.seq, r.chunk.type])).toEqual([
+      [1, "text"],
+      [2, "thinking"],
+      [3, "thinking"],
+      [4, "thinking"],
+      [5, "tool-call"],
+      [6, "tool-result"],
+      [null, "text"],
+    ]);
   });
 
   it("is the identity when there is no committed history", () => {
