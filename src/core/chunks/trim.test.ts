@@ -103,6 +103,19 @@ describe("trimTranscript", () => {
     expect(next.accumulating).not.toBeNull();
   });
 
+  it("does not count a late-join replay's duplicates of committed chunks", () => {
+    // An in-flight turn of 8 persisted chunks + its late-join replay (8 more
+    // provisional copies). Only 8 are rendered, so a limit of 10 keeps them all
+    // instead of unloading real history to make room for invisible duplicates.
+    const T = "turn";
+    const committed = chunks(1, 8).map((c) => ({ ...c, turnId: T }));
+    const state: TranscriptState = {
+      ...stateWith(committed),
+      provisional: committed.map((c) => ({ role: c.role, chunk: c.chunk, turnId: T })),
+    };
+    expect(trimTranscript(state, 10)).toBe(state);
+  });
+
   it("drops oldest provisional when committed is exhausted", () => {
     const base = stateWith(chunks(1, 2));
     const provisional = Array.from({ length: 20 }, (_, i) => ({

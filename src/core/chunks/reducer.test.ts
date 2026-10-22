@@ -1085,3 +1085,52 @@ describe("foldEvent — authoritative turn terminal", () => {
     expect(before.accumulating?.text).toBe("partial");
   });
 });
+
+describe("foldEvent — re-replay of an in-flight turn (re-subscribe after tab switch / reconnect)", () => {
+  const userMessage = (turnId: string, text: string): TurnInputEvent => ({
+    type: "user-message",
+    conversationId: "c1",
+    turnId,
+    text,
+  });
+  const replay = (upTo: number) =>
+    [
+      userMessage("t1", "go"),
+      turnStart("t1"),
+      reasoningDelta("t1", "plan"),
+      toolCall("t1", "tc1", "read", {}),
+      toolResult("t1", "tc1", "read", "out"),
+      { type: "steering", conversationId: "c1", turnId: "t1", text: "also this" } as const,
+      reasoningDelta("t1", "more"),
+      toolCall("t1", "tc2", "read", {}),
+    ].slice(0, upTo);
+
+  it("replaces the stale copy instead of appending a duplicate turn", () => {
+    let s = replay(7).reduce(foldEvent, initialState()); // first view, mid-thinking
+    s = replay(8).reduce(foldEvent, s); // came back: the whole turn replays again
+    const once = replay(8).reduce(foldEvent, initialState());
+    expect(selectChunks(s)).toEqual(selectChunks(once));
+    expect(s.accumulating).toBeNull();
+  });
+
+  it("drops a stale steering bubble that ended the old copy", () => {
+    let s = replay(6).reduce(foldEvent, initialState()); // old copy ends in steering
+    s = replay(8).reduce(foldEvent, s);
+    expect(selectChunks(s).filter((c) => c.role === "user")).toHaveLength(2); // opening + steer
+  });
+
+  it("keeps other turns' provisional chunks", () => {
+    let s = [turnStart("t0"), textDelta("t0", "earlier"), doneEvent("t0")].reduce(
+      foldEvent,
+      initialState(),
+    );
+    s = replay(4).reduce(foldEvent, s);
+    s = replay(4).reduce(foldEvent, s);
+    expect(selectChunks(s).map((c) => c.chunk.type)).toEqual([
+      "text",
+      "text",
+      "thinking",
+      "tool-call",
+    ]);
+  });
+});

@@ -14,6 +14,7 @@
 // "Show earlier messages" affordance knows where to page back in from.
 
 import type { StoredChunk } from "@dispatch/wire";
+import { selectRenderedCount } from "./selectors";
 import type { TranscriptState } from "./types";
 
 /** Default chat limit (max loaded chunks per conversation). */
@@ -46,9 +47,14 @@ export function initialWindowSize(limit: number): number {
   return Math.max(1, Math.floor(limit * 0.75));
 }
 
-/** Total loaded (rendered) chunk count: committed + provisional + accumulating. */
+/**
+ * Total loaded (rendered) chunk count: committed + provisional + accumulating,
+ * EXCLUDING provisional replay duplicates of committed chunks (a late-join
+ * replay re-delivers an in-flight turn's already-persisted steps). Counting
+ * those invisible duplicates unloaded real history to make room for them.
+ */
 function totalCount(state: TranscriptState): number {
-  return state.committed.length + state.provisional.length + (state.accumulating !== null ? 1 : 0);
+  return selectRenderedCount(state);
 }
 
 function countThinking(chunks: readonly StoredChunk[]): number {
