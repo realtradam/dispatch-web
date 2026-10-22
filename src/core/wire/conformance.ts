@@ -18,6 +18,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
       return "text-delta";
     case "reasoning-delta":
       return "reasoning-delta";
+    case "reasoning-end":
+      return "reasoning-end";
     case "tool-call":
       return "tool-call";
     case "tool-result":

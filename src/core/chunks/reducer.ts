@@ -77,6 +77,26 @@ function tagTrailingUserEcho(
 }
 
 /**
+ * Drop the previous copy of a turn that is being replayed from its start.
+ * Keeps the trailing user run — the opening this replay's `user-message` just
+ * appended (or the sender's echo that `turn-start` just tagged) — and every
+ * other turn's chunks.
+ */
+function dropReplayedTurn(
+  provisional: readonly ProvisionalChunk[],
+  turnId: string,
+): readonly ProvisionalChunk[] {
+  let tail = provisional.length;
+  while (tail > 0 && provisional[tail - 1]?.role === "user") tail--;
+  // A stale steering bubble (replayed again as its own `steering` event) can
+  // end the old copy and so sit inside the trailing user run.
+  const stale = (p: ProvisionalChunk, i: number): boolean =>
+    p.turnId === turnId && (i < tail || p.afterToolCallId !== undefined);
+  if (!provisional.some(stale)) return provisional;
+  return provisional.filter((p, i) => !stale(p, i));
+}
+
+/**
  * Content equality for two chunks of the SAME role (used to de-dup an
  * optimistic echo against the authoritative committed version). Compares the
  * discriminating payload only — `stepId` (generation provenance) is ignored
@@ -264,6 +284,8 @@ export function applyHistory(
  *   optimistic echo) so a watcher renders it mid-turn.
  * - `text-delta` extends the current accumulating TextChunk (or starts one).
  * - `reasoning-delta` extends the current accumulating ThinkingChunk (or starts one).
+ * - `reasoning-end` closes the open ThinkingChunk as its own chunk; with none open
+ *   (a redacted/empty block) it appends an empty thinking chunk, mirroring history.
  * - `tool-call` / `tool-result` / `error` finalize any accumulating chunk and
  *   add a new provisional chunk.
  * - `steering` appends a user bubble mid-turn (drained from the message queue
@@ -288,17 +310,26 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
     case "tool-output":
       return state;
 
-    case "turn-start":
+    case "turn-start": {
+      // A turn starts exactly once live, so a `turn-start` for a turn that
+      // already has provisional content is a late-join REPLAY restarting from
+      // the top (re-subscribe after a tab switch / WS reconnect): the server
+      // re-delivers the whole in-flight turn. Replace the stale copy instead of
+      // appending a second one (a duplicate copy rendered as a tail of thinking
+      // blocks with its tool cards collapsed onto the first copy's).
+      const stale = state.accumulating?.turnId === event.turnId;
+      const provisional = tagTrailingUserEcho(
+        flushAccumulating(state.provisional, stale ? null : state.accumulating),
+        event.turnId,
+      );
       return {
         ...state,
-        provisional: tagTrailingUserEcho(
-          flushAccumulating(state.provisional, state.accumulating),
-          event.turnId,
-        ),
+        provisional: dropReplayedTurn(provisional, event.turnId),
         accumulating: null,
         currentTurnId: event.turnId,
         generating: true,
       };
+    }
 
     case "user-message": {
       // The turn's USER prompt, surfaced on the event stream (backend CR-3) so a
@@ -382,6 +413,30 @@ function reduceEvent(state: TranscriptState, event: AgentEvent): TranscriptState
         ...state,
         provisional,
         accumulating: { kind: "thinking", text: event.delta, turnId: event.turnId },
+        generating: true,
+      };
+    }
+
+    case "reasoning-end": {
+      const acc = state.accumulating;
+      // Close the open thinking block of this turn: flush it as its own provisional chunk.
+      if (acc !== null && acc.kind === "thinking" && acc.turnId === event.turnId) {
+        return {
+          ...state,
+          provisional: flushAccumulating(state.provisional, acc),
+          accumulating: null,
+          generating: true,
+        };
+      }
+      // No open thinking (a redacted/empty block with no deltas): history persists an
+      // EMPTY thinking chunk for it, so mirror that 1:1.
+      return {
+        ...state,
+        provisional: [
+          ...flushAccumulating(state.provisional, acc),
+          { role: "assistant", chunk: { type: "thinking", text: "" }, turnId: event.turnId },
+        ],
+        accumulating: null,
         generating: true,
       };
     }
@@ -539,6 +594,7 @@ const RETRY_CLEARING_EVENTS: ReadonlySet<AgentEvent["type"]> = new Set([
   "turn-start",
   "text-delta",
   "reasoning-delta",
+  "reasoning-end",
   "tool-call",
   "tool-result",
   "error",

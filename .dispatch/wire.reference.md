@@ -1,5 +1,15 @@
 # `@dispatch/wire` — in-repo reference (read THIS, not node_modules)
 
+> **2026-10-22 delta (reasoning block boundaries — ADDITIVE, no version bump):** `AgentEvent`
+> gains `TurnReasoningEndEvent` `{ type: "reasoning-end", conversationId, turnId }`. The kernel emits
+> one per provider reasoning block (Anthropic signs each thinking block separately), carrying NO
+> opaque payload (signature/redacted data never leave the server). A live consumer splits thinking
+> exactly as HTTP history persists it: the open thinking chunk closes; with none open (a redacted
+> empty block) an empty thinking chunk is implied. Providers without block structure never emit it.
+> The FE reducer mirrors the kernel's chunk builder; the old merged-run alignment stays as a fallback
+> for older servers/replays. See `backend-handoff.md` and the backend's
+> `notes/reasoning-end-live-event-plan.md`.
+>
 > **2026-10-20 review 3.5:** history replacements preserve monotonic seqs (retained history need not start at 1). HTTP history and WS compaction carry required `historyEpoch`; unknown cached epochs must be reloaded. Consumed by review 3.6.
 >
 > MIRRORS the backend's `@dispatch/wire` package source so headless FE agents can read the wire
@@ -414,6 +424,7 @@ export type AgentEvent =
 	| TurnInputEvent
 	| TurnTextDeltaEvent
 	| TurnReasoningDeltaEvent
+	| TurnReasoningEndEvent
 	| TurnToolCallEvent
 	| TurnToolResultEvent
 	| TurnToolOutputEvent
@@ -472,6 +483,21 @@ export interface TurnReasoningDeltaEvent {
 	readonly conversationId: string;
 	readonly turnId: string;
 	readonly delta: string;
+}
+
+/**
+ * End of one reasoning / thinking block. Emitted once per block by providers with
+ * block-structured reasoning (e.g. Anthropic, whose consecutive thinking blocks — each
+ * separately signed — persist as separate thinking chunks). Lets a live consumer split
+ * thinking exactly as history does: the open thinking chunk closes; if none is open (a
+ * redacted/empty block with no deltas) an EMPTY thinking chunk is implied. Carries no
+ * content: the opaque replay payloads (signature / redacted data) never leave the
+ * server. Providers without block structure never emit it (deltas merge as before).
+ */
+export interface TurnReasoningEndEvent {
+	readonly type: "reasoning-end";
+	readonly conversationId: string;
+	readonly turnId: string;
 }
 
 /** The model has requested a tool to be run. */

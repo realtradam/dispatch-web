@@ -18,6 +18,18 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: reasoning block boundaries on the live stream (2026-10-22)
+
+FE slice consuming a new ADDITIVE backend wire event. The kernel now emits one payload-free
+`reasoning-end` `AgentEvent` per provider reasoning block (no version bump; opaque
+signature/redacted data never leave the server). The pure chunk reducer mirrors the kernel's
+builder — an open thinking chunk is flushed as its own provisional chunk; with none open it
+appends an empty thinking chunk — so live thinking splits identically to HTTP history and the
+replay/history de-dup lines up 1:1. The old merged-run alignment (`mergedRun`) stays as a
+fallback for older servers/replays. The cache timer treats `reasoning-end` as resumed output;
+`assertAgentEventExhaustive` covers it. Mirrored in `.dispatch/wire.reference.md`
+(`TurnReasoningEndEvent`). No backend asks.
+
 ## Milestone: Delivery warning display delay + Flush label (2026-10-21)
 
 Frontend-only: each keyed pending-input warning waits 1000 ms on mount (including

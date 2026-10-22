@@ -32,6 +32,11 @@ const ev = {
     turnId,
     delta: "x",
   }),
+  reasoningEnd: (turnId: string): AgentEvent => ({
+    type: "reasoning-end",
+    conversationId: C,
+    turnId,
+  }),
   call: (turnId: string, stepId: string, toolCallId: string): AgentEvent => ({
     type: "tool-call",
     conversationId: C,
@@ -146,6 +151,16 @@ describe("foldCacheTimerEvent — step gaps", () => {
       [0, ev.call("t1", "t1#0", "a")],
       [1_000, ev.stepComplete("t1", "t1#0")],
       [9_000, ev.text("t1")],
+    ]);
+    expect(s.running).toBeNull();
+    expect(s.stepStamps.get("t1#0")).toBe(8_000);
+  });
+
+  it("treats a reasoning-end boundary as resumed output too", () => {
+    const s = run([
+      [0, ev.call("t1", "t1#0", "a")],
+      [1_000, ev.stepComplete("t1", "t1#0")],
+      [9_000, ev.reasoningEnd("t1")],
     ]);
     expect(s.running).toBeNull();
     expect(s.stepStamps.get("t1#0")).toBe(8_000);
