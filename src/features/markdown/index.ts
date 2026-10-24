@@ -6,3 +6,6 @@ export const manifest = {
   name: "markdown",
   description: "Renders assistant messages as sanitized Markdown (GFM + syntax highlighting)",
 } as const;
+
+export { createTextFileClient } from "./adapter/text-file";
+export type { TextFileClient, TextFileContext, TextFileState } from "./types";

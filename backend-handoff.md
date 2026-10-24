@@ -648,3 +648,32 @@ changes, NO contract changes — the wire types and every endpoint consumed are 
   toggle default/reversibility/caching/fallback/mimeType); biome clean; `build` succeeds.
   Manual browser sanity (paste a ~3MB PNG → staged size drops; uncheck → original;
   re-check → no visible re-encode; send works) still needs a human at the page.
+
+## 2026-10-24 — feature/text-file-embeds
+
+Implemented saved text-file chat embeds using standalone `[Plan](text-file:notes/plan.md)`.
+Markdown renders inside a tool-call-style inset well with first/last six-source-line
+preview, Expand/Collapse, Refresh/Retry, loading/empty/error states. Other text/code
+files remain literal. Backend adds authoritative `/text-file-context` preflight and
+bounded `/text-file` read routes; `TextFileQuery`, `TextFileResponse`, and
+`TextFileContextResponse` are additive transport-contract0.26.0 exports mirrored in
+`.dispatch/transport-contract.reference.md` (local file dependency unchanged).
+Both guards are supplied; remote computer never falls back to local.
+
+256KiB strict UTF-8, regular local files only, no truncation/final symlinks, live
+current-disk views (not snapshots/watchers), no history injection/nested fetches.
+Cache per mounted chat:32 active paths/4 loads; max8 embeds/message. Existing
+Host/Origin trusted-network boundary retained (not new bearer/session auth).
+Initial guidance reaches custom/default newly constructed prompts; persisted old
+prompts unchanged until ordinary reconstruction. Warm parity verified. Explicit
+per-turn systemPrompt bypass preserved.
+
+Verification: typecheck0 errors/0warnings; Biome clean308 files; Vite build succeeds;
+2586 tests pass twice with `NODE_OPTIONS=--no-experimental-webstorage`; two real
+cross-repo ephemeral HTTP/Svelte integration tests pass opt-in. Plain Node26 test
+run has26 baseline localStorage failures independently reproduced on unmodified
+HEAD archive. Backend4277 Vitest/190 Bun green, typecheck/lint/standalone compile
+green; standard external-Claude bundle has existing missing @dispatch/kernel issue.
+No merge/push/deployment/shared restart. Full report:
+`notes/text-file-embeds-implementation.md`. Human graphical desktop/mobile check
+remains; no cross-repo contract asks open for this slice.

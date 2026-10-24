@@ -21,6 +21,7 @@ import {
   createLayoutStore,
   listPanelViews,
 } from "../features/layout";
+import { createTextFileClient } from "../features/markdown";
 import type { NamedAgent, NamedAgentSelectionSnapshot } from "../features/named-agents";
 import type { PluginsStore } from "../features/plugins";
 import { createPluginsHttp, createPluginsStore } from "../features/plugins";
@@ -471,6 +472,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
     get storage() {
       return localStorageOpt;
+    },
+    get textFileContextRevision(): number {
+      return settings.textFileContextRevision;
+    },
+    createTextFileClient(conversationId) {
+      return createTextFileClient(httpBase, conversationId, fetchImpl);
     },
     get cwd(): string | null {
       return settings.cwd;
