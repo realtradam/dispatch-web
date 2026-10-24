@@ -2,23 +2,9 @@ import { type ChildProcess, spawn } from "node:child_process";
 import { rm, writeFile } from "node:fs/promises";
 import { resolve as resolvePath } from "node:path";
 import { createInterface } from "node:readline";
-import { transferableAbortController } from "node:util";
 import { fireEvent, render, screen } from "@testing-library/svelte";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createTextFileClient, Markdown } from "../src/features/markdown";
-
-// Bridge only the outer fetch edge's jsdom signal to Node's native signal.
-const networkFetch: typeof fetch = async (input, init) => {
-  const controller = transferableAbortController();
-  const abort = () => controller.abort();
-  init?.signal?.addEventListener("abort", abort, { once: true });
-  if (init?.signal?.aborted) controller.abort();
-  try {
-    return await fetch(input, { ...init, signal: controller.signal });
-  } finally {
-    init?.signal?.removeEventListener("abort", abort);
-  }
-};
 
 interface Fixture {
   url: string;
@@ -30,7 +16,7 @@ interface Fixture {
 
 // Opt-in real cross-repo UI/network probe. Owns an ephemeral loopback server and
 // temporary files only; never connects to or restarts the deployed application.
-// TEXT_FILE_LIVE_PROBE=1 bunx vitest run scripts/text-file-live.test.ts
+// bun run test:text-file-live
 // The backend must be installed and typechecked first (workspace public dists).
 describe.skipIf(process.env.TEXT_FILE_LIVE_PROBE !== "1")("live saved-file chat display", () => {
   let child: ChildProcess;
@@ -86,7 +72,7 @@ describe.skipIf(process.env.TEXT_FILE_LIVE_PROBE !== "1")("live saved-file chat 
     const saved = Array.from({ length: 20 }, (_, i) => `## Saved step ${i + 1}`).join("\n");
     await writeFile(fixture.path, saved);
     const reply = "I saved the implementation plan.\n\n[Plan](text-file:plan%20100%25.md)";
-    const client = createTextFileClient(fixture.url, fixture.conversationId, networkFetch);
+    const client = createTextFileClient(fixture.url, fixture.conversationId, fetch);
     let view = render(Markdown, { text: reply, textFiles: client });
     try {
       await screen.findByRole("heading", { name: "Saved step 1" });
@@ -115,7 +101,7 @@ describe.skipIf(process.env.TEXT_FILE_LIVE_PROBE !== "1")("live saved-file chat 
   });
 
   it("does not read the same local path for an authoritative remote conversation", async () => {
-    const client = createTextFileClient(fixture.url, fixture.remoteConversationId, networkFetch);
+    const client = createTextFileClient(fixture.url, fixture.remoteConversationId, fetch);
     const view = render(Markdown, {
       text: `[Remote](text-file:${encodeURI(fixture.path)})`,
       textFiles: client,

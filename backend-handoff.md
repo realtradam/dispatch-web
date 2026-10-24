@@ -677,3 +677,21 @@ green; standard external-Claude bundle has existing missing @dispatch/kernel iss
 No merge/push/deployment/shared restart. Full report:
 `notes/text-file-embeds-implementation.md`. Human graphical desktop/mobile check
 remains; no cross-repo contract asks open for this slice.
+
+### Bun-native verification correction (2026-10-24)
+
+Supersedes the Node-backed verification paragraph above: both repository test
+scripts now explicitly launch Vitest with Bun (`bun --bun .../vitest.mjs`).
+`bun run test` passes under Bun with no NODE_OPTIONS: frontend2587 passed/2
+opt-in skipped repeatedly; backend4278 passed/9 existing SSH skips twice;
+native Bun tests190 passed. `bun run test:text-file-live` passes2 against the
+real ephemeral HTTP transport. Bun-run typecheck/lint/build pass (FE309 files,
+backend754); existing build advisories/external-Claude wrapper limitation remain.
+
+Corrected pre-existing Bun test assumptions (Bun.serve spy instead of global
+replacement, directory ordering, homedir caching). Added prompt cycle detection
+in tool-call summary serialization plus shared-reference regression test; the
+Bun timeout is fixed, not increased. Live probe uses a native-signal jsdom
+environment instead of Node-only utility APIs. No production wire/feature
+semantics changed, no subagents/deployment/merge/push. Full final verification
+is in the Bun-native follow-up of notes/text-file-embeds-implementation.md.

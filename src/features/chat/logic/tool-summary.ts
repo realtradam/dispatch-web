@@ -74,7 +74,24 @@ function asArgs(input: unknown): Args {
 function serialize(input: unknown, pretty = false): string {
   if (typeof input === "string") return input;
   try {
-    return JSON.stringify(input, null, pretty ? 2 : undefined) ?? String(input);
+    // Detect ancestor cycles before the native serializer recurses. Bun's
+    // pretty JSON cycle detection can otherwise consume seconds of UI time.
+    // Track ancestors, not every visited object: shared non-cyclic values are valid.
+    const ancestors: object[] = [];
+    return (
+      JSON.stringify(
+        input,
+        function (this: unknown, _key, value: unknown) {
+          if (value !== null && typeof value === "object") {
+            while (ancestors.length && ancestors.at(-1) !== this) ancestors.pop();
+            if (ancestors.includes(value)) throw new TypeError("Circular tool input");
+            ancestors.push(value);
+          }
+          return value;
+        },
+        pretty ? 2 : undefined,
+      ) ?? String(input)
+    );
   } catch {
     return "[unserializable input]";
   }
