@@ -18,6 +18,66 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Close-tab cascade subagents (`feature/close-tab-cascade-subagents`, 2026-10-24)
+
+**Slice status: COMPLETE across the isolated frontend + backend feature branches.**
+
+- Frontend integrated local `dev` at `913cc7b` (merge `b462f17`), preserving the new
+  tab colors, 70vh grid, FLIP close/reflow animations and current reliability fixes.
+- Closing a tab with a nonempty **visible tab-group** subtree prompts once:
+  **Yes, close all N** closes the snapshotted transitive subtree; **No, keep them open**
+  closes only the parent; Cancel/Escape/backdrop close nothing. Leaf tabs close directly.
+  New tabs arriving after confirmation opens are not silently added to its close set.
+  This is visual `tabGroupParentId` grouping, NOT backend lineage traversal or an implicit
+  server cascade. Other workspaces and unopened conversations are outside this close set.
+- Native modal dialog renders in the browser top layer (not clipped by animated/sidebar
+  containers), traps keyboard focus, starts on Cancel, restores focus on dismissal, and
+  wraps actions at mobile widths. Remote target closure/workspace switch dismisses stale UI.
+- Each id uses the existing `AppStore.closeTab` → single `POST /conversations/:id/close`
+  route; real-store component regressions cover persistence + workspace isolation for
+  all/parent/cancel. No double-close workaround or new FE cross-unit port.
+
+**Backend race discovered and FIXED, not waived:** explicit Close aborted the turn, but
+its finalization unconditionally persisted/published `idle` afterward, reopening the tab.
+The original companion symlink to main was replaced (with user authorization) by a real
+backend `feature/close-tab-cascade-subagents` worktree at local `dev` `4bf4dd9`.
+Commit **`fd07259`** preserves Close through deferred lifecycle work and settlement,
+keeps Stop → idle + explicit reopen behavior, suppresses stale broadcasts/auto-compaction,
+and cleans per-turn lifecycle tracking. Five real-store regressions cover the race.
+See backend `notes/close-tab-cascade-subagents.md` for reproducible direct HTTP steps.
+Neither main checkout nor the user's running backend process was edited/restarted.
+
+**Contract pins/mirrors:** unchanged `file:../backend/packages/*` deps; `wire@0.12.0`,
+`transport-contract@0.26.0`, `ui-contract@0.2.0` (existing additive mirrors retained).
+Dependencies were refreshed after replacing the companion with its real worktree.
+No API/type/version delta to mirror; no remaining backend asks.
+
+**Verification:**
+- FE: `bun run typecheck` **0 errors/0 warnings**; full suite **2,516 passed ×2**
+  (127 files; an earlier pass before the final focus regression was 2,515);
+  `bun run check` clean; `bun run build` succeeds (existing Svelte capture/chunk-size warnings).
+- BE: typecheck clean; Vitest **4,214 passed / 10 skipped**; Biome clean;
+  Bun suite final combined run **188 passed**, also all seven groups pass independently.
+  Two earlier combined Bun runs hit native Bun 1.3.14 crashes; subsequent combined run passed.
+- Writable live verification used ONLY a private source backend at **24303/24305**, with
+  fresh SQLite/trace/journal/image/plugin paths under `/tmp/close-tab-isolated` and
+  inherited real credentials (never printed or replaced). Standard live probe **22/22**.
+- Direct HTTP active-turn close now returns `abortedTurn: true`, seals/ends aborted and
+  stays absent from active/idle list after stream completion. Real Chromium end-to-end
+  cascade does the same for the nested active child, leaves unrelated tabs and stays
+  closed after reload. Desktop 1280px + mobile 420px checks pass: all/parent-only,
+  Cancel/Escape/backdrop, leaf close, remote target close, top-layer modal, focus containment
+  and restoration, mobile bounds; no uncaught browser exceptions.
+- Fixture conversations closed/workspaces archived. Reports, screenshots and probe harnesses:
+  `reports/close-tab-cascade/` (gitignored). Private server + collector and browser/Vite
+  processes are cleaned up after verification. No merge back or push.
+
+**Human smoke check still requested:** open a real parent with nested subagent tabs;
+close → Cancel/Escape, close → No (children stay), then close another group → Yes
+(all descendants stop/close). At mobile width open the sidebar first; confirm all three
+buttons remain reachable and the dialog is not clipped. Browser automation passed this
+flow, but theme/layout should still be confirmed in the user's own browser.
+
 ## Milestone: reasoning block boundaries on the live stream (2026-10-22)
 
 FE slice consuming a new ADDITIVE backend wire event. The kernel now emits one payload-free

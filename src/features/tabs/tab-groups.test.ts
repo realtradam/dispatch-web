@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildTabGroups,
+  cascadeCloseIds,
   directGroupChildren,
   groupBleedPx,
   groupDescendants,
@@ -101,6 +102,43 @@ describe("groupDescendants / directGroupChildren / groupParentCandidates", () =>
     expect(ids(groupParentCandidates(tabs, "c1"))).toEqual(["c2", "solo"]);
     expect(ids(groupParentCandidates(tabs, "p"))).toEqual(["solo"]);
     expect(ids(groupParentCandidates(tabs, "solo"))).toEqual(["p", "c1", "c2", "g"]);
+  });
+});
+
+describe("cascadeCloseIds (the ids a cascading tab close removes)", () => {
+  const tabs = [
+    tab("p"),
+    tab("c1", "p"),
+    tab("c2", "p"),
+    tab("g", "c1"), // sub-sub-agent: grouped under c1, still cascades from p
+    tab("solo"),
+  ];
+
+  it("returns the tab first, then its transitive descendants in tab order", () => {
+    expect(cascadeCloseIds(tabs, "p")).toEqual(["p", "c1", "c2", "g"]);
+  });
+
+  it("starts the cascade at a mid-level tab, taking only its own subtree", () => {
+    expect(cascadeCloseIds(tabs, "c1")).toEqual(["c1", "g"]);
+  });
+
+  it("returns just the tab itself when it has no subagents (closes without a prompt)", () => {
+    expect(cascadeCloseIds(tabs, "solo")).toEqual(["solo"]);
+    expect(cascadeCloseIds(tabs, "c2")).toEqual(["c2"]);
+  });
+
+  it("matches the rendered forest for cycles and manual regrouping", () => {
+    const cycle = [tab("p", "c1"), tab("c1", "p"), tab("g", "c1")];
+    expect(cascadeCloseIds(cycle, "p")).toEqual(["p"]);
+    expect(cascadeCloseIds(cycle, "c1")).toEqual(["c1", "g"]);
+    const regrouped = [tab("p"), tab("c1", "solo"), tab("g", "c1"), tab("solo")];
+    expect(cascadeCloseIds(regrouped, "p")).toEqual(["p"]);
+    expect(cascadeCloseIds(regrouped, "solo")).toEqual(["solo", "c1", "g"]);
+  });
+
+  it("ignores tabs whose group parent is no longer open", () => {
+    const stale = [tab("p"), tab("orphan", "gone")];
+    expect(cascadeCloseIds(stale, "p")).toEqual(["p"]);
   });
 });
 

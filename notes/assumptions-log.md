@@ -2,6 +2,38 @@
 
 > Recorded while working autonomously (user away). Raise these when the user returns.
 
+## 2026-10-24 — Close-tab cascade completion
+
+- Retained the original visible-group + snapshot semantics below, including one close
+  request per id; no backend lineage cascade and no close-all retry workaround.
+- User explicitly authorized replacing the companion backend symlink with an isolated
+  feature worktree to fix the reproducible active-turn Close → idle finalization race.
+  Backend commit `fd07259` fixes this and adds regression coverage. Verification writes
+  for the fixed backend use fresh private runtime paths, never the user's instance.
+- Native modal lifecycle (top layer/focus containment/safe initial focus) replaces the
+  original CSS-only overlay; stale target dialogs dismiss on workspace/remote removal.
+- Final verification and cross-repo handoff: `backend-handoff.md` close-tab milestone.
+
+## 2026-10-16 — Close-tab cascade confirm dialog (subagent groups)
+
+1. **"Subagents" of a tab = its VISIBLE subagent group (open tabs only).** The confirm dialog
+   triggers when the closed tab has descendants in the tab grid's grouping
+   (`tabGroupParentId` forest, transitive). Subagent conversations that were never opened as
+   tabs are NOT closed — the FE has no knowledge of them (no lineage API consumed here). The
+   backend's `POST /conversations/:id/close` does not cascade either, so this matches the
+   visible mental model.
+
+2. **The cascade issues one `POST /close` per conversation** (via the existing `onClose` →
+   `store.closeTab` port, unchanged). The backend close is idempotent, so a descendant closed
+   by another client mid-dialog is a harmless no-op. No new cross-unit contract was needed:
+   the decision logic is pure (`cascadeCloseIds` in the tabs unit) and the dialog lives inside
+   `TabList`.
+
+3. **Dialog offers three outs:** "Yes, close all N" (cascade), "No, keep them open" (close
+   only the target tab — the pre-change behavior), and Cancel/Escape/backdrop (close nothing).
+   The user asked for a yes/no prompt; Cancel was added as the safe dismissal path. The
+   cascade-order snapshot (ids) is taken when the dialog opens.
+
 ## 2026-06-24 — CR-10: workspaceId on conversation.open / statusChanged
 
 1. **Contract version already at 0.19.0 in the backend repo.** The `file:` dep in `package.json`

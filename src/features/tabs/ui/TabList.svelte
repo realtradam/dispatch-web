@@ -3,6 +3,7 @@
   import { forestFlipIds } from "../tab-flip";
   import {
     buildTabGroups,
+    cascadeCloseIds,
     directGroupChildren,
     groupGutterPx,
     groupParentCandidates,
@@ -10,6 +11,7 @@
   } from "../tab-groups";
   import type { Tab } from "../tabs";
   import { shortHandle } from "../tabs";
+  import CloseSubagentsConfirm from "./CloseSubagentsConfirm.svelte";
   import TabCard from "./TabCard.svelte";
   import TabGroupBox from "./TabGroupBox.svelte";
   import TabMenu from "./TabMenu.svelte";
@@ -89,6 +91,38 @@
     if (onSetTabGroup === undefined) return;
     menu = { conversationId, x, y };
   }
+
+  // Close-with-confirm: a tab whose (visible) subagent group is non-empty
+  // gets ONE confirm dialog covering its whole subtree (never one per level).
+  // The dialog's ids are snapshotted at open time; a tab the backend closed
+  // in the meantime is a no-op for `onClose`. A plain tab closes directly.
+  let closeConfirm = $state<{ tab: Tab; cascadeIds: readonly string[] } | null>(null);
+
+  // A remote close or workspace switch must not leave an actionable dialog
+  // for a tab that is no longer in this list.
+  $effect(() => {
+    if (
+      closeConfirm !== null &&
+      !tabs.some((tab) => tab.conversationId === closeConfirm?.tab.conversationId)
+    ) {
+      closeConfirm = null;
+    }
+  });
+
+  function requestClose(conversationId: string): void {
+    menu = null;
+    const cascadeIds = cascadeCloseIds(tabs, conversationId);
+    if (cascadeIds.length <= 1) {
+      onClose(conversationId);
+      return;
+    }
+    const tab = tabs.find((t) => t.conversationId === conversationId);
+    if (tab === undefined) {
+      onClose(conversationId);
+      return;
+    }
+    closeConfirm = { tab, cascadeIds };
+  }
 </script>
 
 {#snippet card(tab: Tab, wide: boolean, subagentCount: number)}
@@ -100,7 +134,7 @@
     {wide}
     {subagentCount}
     {onSelect}
-    {onClose}
+    onClose={requestClose}
     {onRename}
     onMenu={openMenu}
   />
@@ -163,5 +197,24 @@
       for (const id of children) setGroup(id, null);
     }}
     onDismiss={() => (menu = null)}
+  />
+{/if}
+
+{#if closeConfirm !== null}
+  {@const target = closeConfirm.tab}
+  {@const cascadeIds = [...closeConfirm.cascadeIds]}
+  {@const closeOwner = onClose}
+  <CloseSubagentsConfirm
+    tab={target}
+    subagentCount={cascadeIds.length - 1}
+    onKeep={() => {
+      closeOwner(target.conversationId);
+      closeConfirm = null;
+    }}
+    onCloseAll={() => {
+      for (const id of cascadeIds) closeOwner(id);
+      closeConfirm = null;
+    }}
+    onDismiss={() => (closeConfirm = null)}
   />
 {/if}

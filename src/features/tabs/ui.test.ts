@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { gsap } from "gsap";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -679,6 +679,147 @@ describe("TabList", () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+
+    describe("closing a tab with subagents (confirm + cascade)", () => {
+      const dialog = (): HTMLElement =>
+        screen.getByRole("dialog", { name: "Close subagents too?" });
+
+      async function clickCloseOn(id: string): Promise<void> {
+        await fireEvent.click(within(card(id)).getByRole("button", { name: "Close tab" }));
+      }
+
+      function renderClosable(onClose = vi.fn()) {
+        render(TabList, {
+          props: {
+            tabs: grouped,
+            activeConversationId: "p",
+            onSelect: vi.fn(),
+            onClose,
+            onNewDraft: vi.fn(),
+          },
+        });
+        return onClose;
+      }
+
+      it("closes a tab WITHOUT subagents directly — no confirm dialog", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("solo");
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledWith("solo");
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("shows ONE confirm dialog for a group parent (never one per descendant)", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        // 3 subagent tabs: c1, c2 and the nested grandchild g.
+        expect(dialog()).toHaveTextContent("3 subagent tabs");
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      it("'No, keep them open' closes only the tab itself", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        await fireEvent.click(screen.getByRole("button", { name: /No, keep them open/ }));
+        expect(onClose).toHaveBeenCalledTimes(1);
+        expect(onClose).toHaveBeenCalledWith("p");
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("'Yes, close all' cascades to every descendant — no further prompts", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        await fireEvent.click(screen.getByRole("button", { name: /Yes, close all/ }));
+        // p first, then its transitive descendants in tab order (c1, c2, g).
+        expect(onClose.mock.calls.map((c) => c[0])).toEqual(["p", "c1", "c2", "g"]);
+        expect(screen.queryByRole("dialog")).toBeNull();
+      });
+
+      it("cascades from a mid-level subagent, taking only its own subtree", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("c1");
+        expect(dialog()).toHaveTextContent("1 subagent tab");
+        await fireEvent.click(screen.getByRole("button", { name: /Yes, close all/ }));
+        expect(onClose.mock.calls.map((c) => c[0])).toEqual(["c1", "g"]);
+      });
+
+      it("restores keyboard focus to the opener after cancellation", async () => {
+        renderClosable();
+        const user = userEvent.setup();
+        const opener = within(card("p")).getByRole("button", { name: "Close tab" });
+        await user.click(opener);
+        expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(opener).toHaveFocus();
+      });
+
+      it("Cancel and backdrop dismiss without closing any tab", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+        await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(screen.queryByRole("dialog")).toBeNull();
+        await clickCloseOn("p");
+        await fireEvent.submit(dialog().querySelector("form") as HTMLFormElement);
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      it("keeps the confirmed subtree snapshot when new tabs arrive", async () => {
+        const onClose = vi.fn();
+        const props = {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose,
+          onNewDraft: vi.fn(),
+        };
+        const { rerender } = render(TabList, { props });
+        await clickCloseOn("p");
+        await rerender({
+          ...props,
+          tabs: [
+            ...grouped,
+            {
+              conversationId: "late",
+              model: "m",
+              title: "Late",
+              workspaceId: "w",
+              tabGroupParentId: "p",
+            },
+          ],
+        });
+        expect(dialog()).toHaveTextContent("3 subagent tabs");
+        await fireEvent.click(screen.getByRole("button", { name: /Yes, close all/ }));
+        expect(onClose.mock.calls.map((call) => call[0])).toEqual(["p", "c1", "c2", "g"]);
+      });
+
+      it("dismisses when the target disappears (remote close or workspace switch)", async () => {
+        const onClose = vi.fn();
+        const props = {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose,
+          onNewDraft: vi.fn(),
+        };
+        const { rerender } = render(TabList, { props });
+        await clickCloseOn("p");
+        await rerender({ ...props, tabs: grouped.filter((tab) => tab.conversationId !== "p") });
+        expect(screen.queryByRole("dialog")).toBeNull();
+        await rerender(props);
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      it("Escape dismisses the dialog without closing anything", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        await fireEvent(dialog(), new Event("cancel", { cancelable: true }));
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
     });
   });
 });

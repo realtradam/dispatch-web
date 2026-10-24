@@ -1,6 +1,7 @@
 export type { GroupTone, TabGroupForest, TabGroupNode } from "./tab-groups";
 export {
   buildTabGroups,
+  cascadeCloseIds,
   directGroupChildren,
   GROUP_TONES,
   groupBleedPx,

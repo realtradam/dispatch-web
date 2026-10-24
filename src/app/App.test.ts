@@ -2,7 +2,7 @@ import type { LayoutTree } from "@dispatch/layout-contract";
 import { DEFAULT_LAYOUT } from "@dispatch/layout-contract";
 import type { SetCwdRequest, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
@@ -180,6 +180,119 @@ function activeConversationId(store: ReturnType<typeof createAppStore>): string 
 }
 
 describe("App component interaction tests", () => {
+  it.each([
+    "all",
+    "parent",
+    "cancel",
+  ] as const)("group close %s flows through the real store, persistence and HTTP close port", async (choice) => {
+    const ws = fakeSocket();
+    const storage = createFakeStorage();
+    const closed: string[] = [];
+    const base = fakeFetchWithLayout(["tabs"]);
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: async (input, init) => {
+        const url =
+          typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+        if (url.includes("/conversations?status=")) {
+          return new Response(
+            JSON.stringify({
+              conversations: [
+                { id: "p", workspaceId: "default" },
+                { id: "c1", workspaceId: "default", tabGroupParentId: "p" },
+                { id: "c2", workspaceId: "default", tabGroupParentId: "p" },
+                { id: "g", workspaceId: "default", tabGroupParentId: "c1" },
+                { id: "solo", workspaceId: "default" },
+                { id: "other-workspace", workspaceId: "other", tabGroupParentId: "p" },
+              ].map((conversation) => ({
+                ...conversation,
+                title: conversation.id,
+                status: "idle",
+                lastActivityAt: 0,
+              })),
+            }),
+            { status: 200 },
+          );
+        }
+        if (url.endsWith("/close")) {
+          expect(init?.method).toBe("POST");
+          const id = url.split("/").at(-2) as string;
+          closed.push(id);
+          return new Response(JSON.stringify({ conversationId: id, abortedTurn: false }), {
+            status: 200,
+          });
+        }
+        return base(input, init);
+      },
+      localStorage: storage,
+    });
+    try {
+      ws.resolveOpen();
+      render(App, { props: { store, onNavigate: vi.fn() } });
+      await screen.findByRole("tablist");
+      for (const [id, parent] of [
+        ["p", null],
+        ["c1", "p"],
+        ["c2", "p"],
+        ["g", "c1"],
+        ["solo", null],
+      ] as const) {
+        ws.feedServerMessage({
+          type: "conversation.open",
+          conversationId: id,
+          workspaceId: "default",
+          ...(parent === null ? {} : { tabGroupParentId: parent }),
+        });
+      }
+      ws.feedServerMessage({
+        type: "conversation.open",
+        conversationId: "other-workspace",
+        workspaceId: "other",
+        tabGroupParentId: "p",
+      });
+      await waitFor(() => expect(screen.getAllByRole("tab")).toHaveLength(5));
+      store.selectTab("p");
+      const parent = await waitFor(() => {
+        const tab = document.querySelector<HTMLElement>('[role="tab"][data-conversation-id="p"]');
+        expect(tab).not.toBeNull();
+        return tab;
+      });
+      if (parent === null) throw new Error("Parent tab missing");
+      await fireEvent.click(within(parent).getByRole("button", { name: "Close tab" }));
+      const dialog = screen.getByRole("dialog", { name: "Close subagents too?" });
+      expect(dialog).toHaveTextContent("3 subagent tabs");
+      expect(closed).toEqual([]);
+      await fireEvent.click(
+        within(dialog).getByRole("button", {
+          name:
+            choice === "all"
+              ? /Yes, close all 4/
+              : choice === "parent"
+                ? /No, keep them open/
+                : "Cancel",
+        }),
+      );
+      const expected = choice === "all" ? ["p", "c1", "c2", "g"] : choice === "parent" ? ["p"] : [];
+      expect(closed).toEqual(expected);
+      expect(store.tabs.map((tab) => tab.conversationId)).toEqual(
+        ["p", "c1", "c2", "g", "solo"].filter((id) => !expected.includes(id)),
+      );
+      expect(screen.queryByRole("dialog")).toBeNull();
+      if (choice !== "cancel") {
+        const persisted = JSON.parse(storage.getItem("dispatch.tabs") as string) as {
+          tabs: { conversationId: string }[];
+        };
+        expect(persisted.tabs.map((tab) => tab.conversationId)).toEqual([
+          ...["p", "c1", "c2", "g", "solo"].filter((id) => !expected.includes(id)),
+          "other-workspace",
+        ]);
+        expect(store.activeConversationId).not.toBe("p");
+      }
+    } finally {
+      store.dispose();
+    }
+  });
+
   it("renders the model selector and composer in draft mode", () => {
     const ws = fakeSocket();
     const store = createAppStore({
