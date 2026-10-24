@@ -850,6 +850,20 @@ describe("ChatView", () => {
 
 describe("Composer", () => {
   it.each([
+    { status: "idle", queuedMessageCount: 0, text: "", label: "Send" },
+    { status: "running", queuedMessageCount: 0, text: "next", label: "Queue" },
+    { status: "running", queuedMessageCount: 0, text: "", label: "Stop generation" },
+    { status: "running", queuedMessageCount: 1, text: "", label: "Flush" },
+  ] as const)("keeps $label at the same fixed width", async ({ label, text, ...props }) => {
+    const user = userEvent.setup();
+    render(Composer, { props: { ...props, onSend: vi.fn(), onQueue: vi.fn(), onStop: vi.fn() } });
+    if (text) await user.type(screen.getByRole("textbox", { name: "Message input" }), text);
+    const button = screen.getByRole("button", { name: label });
+    expect(button).toHaveClass("w-20", "shrink-0");
+    expect(button).not.toHaveClass("w-36");
+  });
+
+  it.each([
     "running",
     "queued",
   ] as const)("relabels Stop only with queued input while %s and preserves its action", async (status) => {

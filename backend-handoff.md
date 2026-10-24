@@ -50,6 +50,14 @@ Final current-file scan has no known private literals. Report: `reports/privacy-
 (gitignored).
 No browser-facing runtime or wire changes; no shared backend process started or modified.
 
+## Milestone: Consistent composer action width (`dev`, 2026-10-24)
+
+- Send, Queue, Stop, and Flush now share the same fixed `w-20` width; Flush no longer
+  widens the composer or changes text wrapping. Button actions and labels are unchanged.
+- Added regression coverage for the shared width across all four labels.
+- Verified: typecheck (0 errors/warnings), tests (2,591 passed; 2 skipped), Biome, and build.
+- Backend contracts, pins, and mirrors unchanged; no backend work required.
+
 ## Milestone: Close-tab cascade subagents (`feature/close-tab-cascade-subagents`, 2026-10-24)
 
 **Slice status: COMPLETE across the isolated frontend + backend feature branches.**
