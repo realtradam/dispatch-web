@@ -18,6 +18,38 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: Current frontend privacy cleanup (`feature/privacy-cleanup`, 2026-10-24)
+
+**Slice status:** COMPLETE; frontend-only cleanup verified.
+
+- Personal machine, tailnet DNS, IPv4 and IPv6 literals in network-policy and URL
+  resolver fixtures are replaced with synthetic names and documentation-only addresses
+  (`dev-node.tailnet.example`, `192.0.2.10`, `2001:db8::10`). The Vite guard fixture
+  uses the same reserved examples. Host/Origin, mapped-address, interface-selection,
+  fail-closed and env-override coverage is retained; runtime network policy is unchanged.
+- Ownership-repair documentation resolves the current user's name/group instead of
+  naming a personal local account. Generic home-directory fixtures, intentional public
+  repository-owner references, human identity and legitimate product/model references remain.
+- The conversation-specific diagnostic is now `scripts/probe-tab.ts <conversationId>`;
+  it requires an explicit target before any request and reports the actual chunk count.
+  Regression comments describe the duplicate-emission pattern without a real conversation id.
+- Audited tracked current files, including hidden config, contract mirrors and the lockfile.
+  No application defaults, stored user data, endpoint contracts or dependency pins changed.
+  Existing `file:../backend/packages/*` dependencies and additive mirrors remain unchanged
+  (`wire@0.12.0`, `transport-contract@0.26.0`, `ui-contract@0.2.0`). No backend ask.
+- History/backups and removal of AI-attribution text from historical commit messages
+  belong to the coordinating task; this slice does not rewrite refs, merge or push.
+  Legitimate AI functionality/product references are not attribution and are retained.
+
+**Verification:** `bun install` succeeds without lockfile changes; `bun run typecheck`
+0 errors/0 warnings; `bun run test` 2,587 passed/2 opt-in skipped twice;
+`bun run check` clean (309 files); `bun run build` succeeds with existing Svelte
+capture and chunk-size advisories. Diagnostic usage fails safely without a target;
+an ephemeral loopback HTTP fixture verifies its two requests and dynamic chunk count.
+Final current-file scan has no known private literals. Report: `reports/privacy-cleanup.md`
+(gitignored).
+No browser-facing runtime or wire changes; no shared backend process started or modified.
+
 ## Milestone: Close-tab cascade subagents (`feature/close-tab-cascade-subagents`, 2026-10-24)
 
 **Slice status: COMPLETE across the isolated frontend + backend feature branches.**

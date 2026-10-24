@@ -9,9 +9,10 @@ import {
   tailscaleSelf,
 } from "./network-policy";
 
+// Synthetic status: reserved .example DNS and documentation-only IPv4/IPv6 addresses.
 const tailscaleStatusJson = `{"Self":{"HostName":"laptop",
-  "DNSName":"PII_REDACTED_TAILSCALE_HOST_01.",
-  "TailscaleIPs":["PII_REDACTED_DEV_IPV4_01","PII_REDACTED_DEV_IPV6_01"]}}`;
+  "DNSName":"dev-node.tailnet.example.",
+  "TailscaleIPs":["192.0.2.10","2001:db8::10"]}}`;
 const allowedHosts = buildAllowedHosts({ tailscaleStatusJson, env: {} });
 const allowedAddresses = new Set(["127.0.0.1", "::1", ...tailscaleSelf(tailscaleStatusJson).ips]);
 const policy = { allowedHosts, allowedAddresses };
@@ -23,10 +24,10 @@ describe("backend-compatible hosts", () => {
     ["LOCALHOST.:34204", "localhost"],
     ["127.0.0.1:34204", "127.0.0.1"],
     ["[0:0:0:0:0:0:0:1]:34204", "::1"],
-    ["PII_REDACTED_DEVICE_01", "PII_REDACTED_DEVICE_01"],
-    ["PII_REDACTED_TAILSCALE_HOST_01.:34204", "PII_REDACTED_TAILSCALE_HOST_01"],
-    ["PII_REDACTED_DEV_IPV4_01:34204", "PII_REDACTED_DEV_IPV4_01"],
-    ["[PII_REDACTED_DEV_IPV6_01]:34204", "PII_REDACTED_DEV_IPV6_01"],
+    ["DEV-NODE", "dev-node"],
+    ["DEV-NODE.tailnet.example.:34204", "dev-node.tailnet.example"],
+    ["192.0.2.10:34204", "192.0.2.10"],
+    ["[2001:db8::10]:34204", "2001:db8::10"],
   ])("normalizes and allows %s", (raw, expected) => {
     expect(normalizeHost(raw)).toBe(expected);
     expect(checkHost(raw, allowedHosts)).toBe("ok");
@@ -34,7 +35,7 @@ describe("backend-compatible hosts", () => {
 
   it.each(
     (
-      "evil.com|PII_REDACTED_DEVICE_01.evil.com|PII_REDACTED_DEV_IPV4_01.nip.io|laptop|localhost.evil.com|" +
+      "evil.com|dev-node.evil.com|192.0.2.10.nip.io|laptop|localhost.evil.com|" +
       "sub.localhost|127.0.0.2|100.1.2.3|172.17.0.1|localhost@evil.com|localhost/path|" +
       "localhost:bad|localhost:65536|[::1]suffix|localhost\n|localhost..|%6cocalhost|"
     ).split("|"),
@@ -48,10 +49,10 @@ describe("backend-compatible hosts", () => {
       ...(json !== undefined ? { tailscaleStatusJson: json } : {}),
       env: {
         DISPATCH_ALLOWED_HOSTS: " EXTRA.example.:8080, https://evil.com",
-        DISPATCH_TAILSCALE_NAME: "PII_REDACTED_DEVICE_01",
+        DISPATCH_TAILSCALE_NAME: "DEV-NODE",
       },
     };
-    const expected = "localhost,127.0.0.1,::1,extra.example,PII_REDACTED_DEVICE_01".split(",");
+    const expected = "localhost,127.0.0.1,::1,extra.example,dev-node".split(",");
     expect([...buildAllowedHosts(input)]).toEqual(expected);
     expect(tailscaleSelf(json)).toEqual({ ips: [] });
   });
@@ -61,20 +62,20 @@ describe("backend-compatible hosts", () => {
       tailscaleStatusJson,
       env: { DISPATCH_ALLOWED_HOSTS: "extra.example" },
     });
-    expect(hosts.has("PII_REDACTED_TAILSCALE_HOST_01")).toBe(true);
+    expect(hosts.has("dev-node.tailnet.example")).toBe(true);
     expect(hosts.has("extra.example")).toBe(true);
     expect(hosts.has("laptop")).toBe(false);
     expect(tailscaleSelf(tailscaleStatusJson).hostName).toBe("laptop");
-    expect(
-      tailscaleSelf('{"Self":{"TailscaleIPs":[null,"evil.com","PII_REDACTED_DEV_IPV4_01"]}}').ips,
-    ).toEqual(["PII_REDACTED_DEV_IPV4_01"]);
+    expect(tailscaleSelf('{"Self":{"TailscaleIPs":[null,"evil.com","192.0.2.10"]}}').ips).toEqual([
+      "192.0.2.10",
+    ]);
   });
 
   it.each([
     ["LOCALHOST.:34204", "localhost:34204"],
     ["[0:0:0:0:0:0:0:1]:34204", "[::1]:34204"],
     ["[::1]", "[::1]"],
-    ["PII_REDACTED_DEVICE_01.", "PII_REDACTED_DEVICE_01"],
+    ["DEV-NODE.", "dev-node"],
   ])("preserves valid authorities for Vite: %s", (raw, expected) => {
     expect(normalizeHostHeader(raw)).toBe(expected);
   });
@@ -84,7 +85,7 @@ describe("destination interfaces (not remote peer addresses)", () => {
   it.each(
     (
       "127.0.0.1|::1|0:0:0:0:0:0:0:1|::ffff:127.0.0.1|::ffff:7f00:1|" +
-      "PII_REDACTED_DEV_IPV4_01|::ffff:PII_REDACTED_DEV_IPV4_01|PII_REDACTED_DEV_IPV6_01"
+      "192.0.2.10|::ffff:192.0.2.10|2001:db8::10"
     ).split("|"),
   )("allows local address %s", (address) => {
     expect(isAllowedLocalAddress(address, allowedAddresses)).toBe(true);
@@ -115,10 +116,10 @@ describe("destination interfaces (not remote peer addresses)", () => {
 describe("shared HTTP / HMR request decision", () => {
   it.each([
     undefined,
-    "http://PII_REDACTED_DEVICE_01.:34204",
-    "https://[PII_REDACTED_DEV_IPV6_01]:443",
+    "http://DEV-NODE.:34204",
+    "https://[2001:db8::10]:443",
   ])("allows trusted or absent Origin %j", (origin) => {
-    expect(request("::ffff:PII_REDACTED_DEV_IPV4_01", "PII_REDACTED_DEVICE_01", origin)).toBe("ok");
+    expect(request("::ffff:192.0.2.10", "dev-node", origin)).toBe("ok");
   });
   const badOrigins =
     "null|file://localhost|https://evil.com|http://localhost/|http://user@localhost";

@@ -45,7 +45,7 @@
 2. **The `dist/` directory is owned by root** (likely from a previous root-run build). `bun run build`
    fails with `EACCES` when Vite tries to empty `dist/assets`. This is an environment issue, not a
    code issue — I verified the build succeeds with `--outDir dist-tmp` (a fresh directory I own, then
-   removed). The user may want to `sudo chown -R PII_REDACTED_USER_01:PII_REDACTED_USER_01 dist/` or remove it.
+   removed). The user may want to `sudo chown -R "$(id -un):$(id -gn)" dist/` or remove it.
 
 3. **Parser now rejects broadcasts missing `workspaceId`.** The WS parser (`logic.ts`) returns `null`
    for `conversation.open` / `conversation.statusChanged` messages that lack a string `workspaceId`.

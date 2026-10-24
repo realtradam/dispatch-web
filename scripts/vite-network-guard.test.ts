@@ -5,8 +5,14 @@ import { describe, expect, it, vi } from "vitest";
 import { applyViteNetworkPolicy, devNetworkGuard } from "./vite-network-guard";
 
 const policy = {
-  allowedHosts: new Set(["localhost", "127.0.0.1", "::1", "node.ts.net", "100.64.0.10"]),
-  allowedAddresses: new Set(["127.0.0.1", "::1", "100.64.0.10"]),
+  allowedHosts: new Set([
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    "dev-node.tailnet.example",
+    "192.0.2.10",
+  ]),
+  allowedAddresses: new Set(["127.0.0.1", "::1", "192.0.2.10"]),
 };
 
 function install(mode: "dev" | "preview") {
@@ -39,7 +45,13 @@ const cases = [
   ["loopback", "127.0.0.1", "localhost", undefined, 200],
   ["IPv6 loopback", "::1", "[::1]:34204", undefined, 200],
   ["mapped address / canonical Host", "::ffff:127.0.0.1", "LOCALHOST.:34204", undefined, 200],
-  ["tailnet", "100.64.0.10", "node.ts.net", "https://node.ts.net:34204", 200],
+  [
+    "tailnet",
+    "192.0.2.10",
+    "dev-node.tailnet.example",
+    "https://dev-node.tailnet.example:34204",
+    200,
+  ],
   ["unselected interface with trusted Host", "172.17.0.1", "localhost", undefined, 403],
   ["missing interface", undefined, "localhost", undefined, 403],
   ["arbitrary IP Host", "127.0.0.1", "127.0.0.2", undefined, 421],

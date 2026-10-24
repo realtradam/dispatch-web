@@ -14,7 +14,7 @@ async function openAllCollapses(container: HTMLElement): Promise<void> {
 }
 
 // Defensive rendering: a conversation transcript can contain duplicate
-// `toolCallId`s (provider double-emission, persisted — e.g. PII_REDACTED_CONVERSATION_SHORT_01). The
+// `toolCallId`s (persisted provider double-emission). The
 // grouped render path MUST dedupe them so the keyed {#each} never throws
 // Svelte `each_key_duplicate` (which aborts the reactive flush and makes the
 // tab appear dead). See fix-toolcall-duplicate-keys plan Part 1.
@@ -45,7 +45,7 @@ describe("ChatView — duplicate toolCallIds", () => {
         },
         provisional: false,
       },
-      // The PII_REDACTED_CONVERSATION_SHORT_01 pattern: the same ids re-emitted immediately after.
+      // The duplicate-emission pattern: the same ids re-emitted immediately after.
       {
         seq: 3,
         role: "assistant",

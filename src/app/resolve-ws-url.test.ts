@@ -19,13 +19,13 @@ describe("resolveWsUrl", () => {
   });
 
   it("derives ws://<hostname>:24205 from http location", () => {
-    const result = resolveWsUrl({}, { protocol: "http:", hostname: "PII_REDACTED_DEV_IPV4_01" });
-    expect(result).toBe("ws://PII_REDACTED_DEV_IPV4_01:24205");
+    const result = resolveWsUrl({}, { protocol: "http:", hostname: "192.0.2.10" });
+    expect(result).toBe("ws://192.0.2.10:24205");
   });
 
   it("derives wss://<hostname>:24205 from https location", () => {
-    const result = resolveWsUrl({}, { protocol: "https:", hostname: "PII_REDACTED_DEVICE_01" });
-    expect(result).toBe("wss://PII_REDACTED_DEVICE_01:24205");
+    const result = resolveWsUrl({}, { protocol: "https:", hostname: "dev-node" });
+    expect(result).toBe("wss://dev-node:24205");
   });
 
   it("uses VITE_WS_PORT when set", () => {

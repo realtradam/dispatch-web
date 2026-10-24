@@ -1,8 +1,8 @@
 /**
- * Focused probe: load conversation PII_REDACTED_CONVERSATION_SHORT_01 through the FE's REAL pure modules
+ * Focused probe: load a selected conversation through the FE's REAL pure modules
  * and see whether the tab's render path would throw. Not part of the test suite.
  *
- *   bun scripts/probe-tab-PII_REDACTED_CONVERSATION_SHORT_01.ts
+ *   bun scripts/probe-tab.ts <conversationId>
  */
 import "fake-indexeddb/auto";
 import type {
@@ -23,7 +23,11 @@ import {
 } from "../src/core/metrics/index.ts";
 
 const HTTP_BASE = process.env.PROBE_HTTP ?? "http://localhost:24991";
-const CONV = "PII_REDACTED_CONVERSATION_01";
+const CONV = process.argv[2];
+if (!CONV) {
+  console.error("Usage: bun scripts/probe-tab.ts <conversationId>");
+  process.exit(1);
+}
 
 async function historySync(id: string, sinceSeq: number): Promise<ConversationHistoryResponse> {
   const url = `${HTTP_BASE}/conversations/${encodeURIComponent(id)}?sinceSeq=${sinceSeq}`;
@@ -56,7 +60,11 @@ try {
   let state = initialState();
   try {
     state = applyHistory(state, chunks as never);
-    record("applyHistory(145 chunks)", true, `state=${JSON.stringify(state).length} bytes`);
+    record(
+      `applyHistory(${chunks.length} chunks)`,
+      true,
+      `state=${JSON.stringify(state).length} bytes`,
+    );
   } catch (e) {
     record("applyHistory", false, String(e));
   }

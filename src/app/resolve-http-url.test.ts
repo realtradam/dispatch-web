@@ -19,13 +19,13 @@ describe("resolveHttpUrl", () => {
   });
 
   it("derives http://<hostname>:24203 from http location", () => {
-    const result = resolveHttpUrl({}, { protocol: "http:", hostname: "PII_REDACTED_DEV_IPV4_01" });
-    expect(result).toBe("http://PII_REDACTED_DEV_IPV4_01:24203");
+    const result = resolveHttpUrl({}, { protocol: "http:", hostname: "192.0.2.10" });
+    expect(result).toBe("http://192.0.2.10:24203");
   });
 
   it("derives https://<hostname>:24203 from https location", () => {
-    const result = resolveHttpUrl({}, { protocol: "https:", hostname: "PII_REDACTED_DEVICE_01" });
-    expect(result).toBe("https://PII_REDACTED_DEVICE_01:24203");
+    const result = resolveHttpUrl({}, { protocol: "https:", hostname: "dev-node" });
+    expect(result).toBe("https://dev-node:24203");
   });
 
   it("uses VITE_HTTP_PORT when set", () => {
