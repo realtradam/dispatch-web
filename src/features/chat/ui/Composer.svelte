@@ -376,11 +376,7 @@
 
     {#if buttonMode === "stop"}
       <button
-        class="btn btn-error shrink-0"
-        class:w-20={stopButton.text === "Stop"}
-        class:w-36={stopButton.text !== "Stop"}
-        class:whitespace-normal={stopButton.text !== "Stop"}
-        class:leading-tight={stopButton.text !== "Stop"}
+        class="btn btn-error w-20 shrink-0"
         type="button"
         aria-label={stopButton.ariaLabel}
         title={stopButton.title}
