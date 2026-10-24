@@ -744,10 +744,79 @@ describe("TabList", () => {
         expect(onClose.mock.calls.map((c) => c[0])).toEqual(["c1", "g"]);
       });
 
+      it("restores keyboard focus to the opener after cancellation", async () => {
+        renderClosable();
+        const user = userEvent.setup();
+        const opener = within(card("p")).getByRole("button", { name: "Close tab" });
+        await user.click(opener);
+        expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+        await user.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(opener).toHaveFocus();
+      });
+
+      it("Cancel and backdrop dismiss without closing any tab", async () => {
+        const onClose = renderClosable();
+        await clickCloseOn("p");
+        expect(screen.getByRole("button", { name: "Cancel" })).toHaveFocus();
+        await fireEvent.click(screen.getByRole("button", { name: "Cancel" }));
+        expect(screen.queryByRole("dialog")).toBeNull();
+        await clickCloseOn("p");
+        await fireEvent.submit(dialog().querySelector("form") as HTMLFormElement);
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
+      it("keeps the confirmed subtree snapshot when new tabs arrive", async () => {
+        const onClose = vi.fn();
+        const props = {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose,
+          onNewDraft: vi.fn(),
+        };
+        const { rerender } = render(TabList, { props });
+        await clickCloseOn("p");
+        await rerender({
+          ...props,
+          tabs: [
+            ...grouped,
+            {
+              conversationId: "late",
+              model: "m",
+              title: "Late",
+              workspaceId: "w",
+              tabGroupParentId: "p",
+            },
+          ],
+        });
+        expect(dialog()).toHaveTextContent("3 subagent tabs");
+        await fireEvent.click(screen.getByRole("button", { name: /Yes, close all/ }));
+        expect(onClose.mock.calls.map((call) => call[0])).toEqual(["p", "c1", "c2", "g"]);
+      });
+
+      it("dismisses when the target disappears (remote close or workspace switch)", async () => {
+        const onClose = vi.fn();
+        const props = {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose,
+          onNewDraft: vi.fn(),
+        };
+        const { rerender } = render(TabList, { props });
+        await clickCloseOn("p");
+        await rerender({ ...props, tabs: grouped.filter((tab) => tab.conversationId !== "p") });
+        expect(screen.queryByRole("dialog")).toBeNull();
+        await rerender(props);
+        expect(screen.queryByRole("dialog")).toBeNull();
+        expect(onClose).not.toHaveBeenCalled();
+      });
+
       it("Escape dismisses the dialog without closing anything", async () => {
         const onClose = renderClosable();
         await clickCloseOn("p");
-        await fireEvent.keyDown(window, { key: "Escape" });
+        await fireEvent(dialog(), new Event("cancel", { cancelable: true }));
         expect(screen.queryByRole("dialog")).toBeNull();
         expect(onClose).not.toHaveBeenCalled();
       });

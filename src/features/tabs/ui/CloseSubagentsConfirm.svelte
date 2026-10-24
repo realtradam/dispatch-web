@@ -7,7 +7,8 @@
    * the whole subtree — "Yes" cascades the close to every transitive
    * descendant (sub-sub-agents included, no further prompts); "No" closes
    * only the tab itself. Escape / backdrop dismisses without closing anything.
-   * daisyUI `modal` (controlled: `modal-open`).
+   * Native modal dialog with daisyUI chrome: top-layer rendering, focus
+   * containment, and inert background even inside the animated sidebar.
    */
   let {
     tab,
@@ -27,14 +28,31 @@
     /** Escape / backdrop — close nothing. */
     onDismiss: () => void;
   } = $props();
+  function openModal(node: HTMLDialogElement) {
+    const opener = document.activeElement;
+    node.showModal();
+    return {
+      destroy() {
+        node.close();
+        if (opener instanceof HTMLElement && opener.isConnected) opener.focus();
+      },
+    };
+  }
 </script>
 
-<svelte:window onkeydown={(e) => e.key === "Escape" && onDismiss()} />
-
-<div class="modal modal-open" role="dialog" aria-label="Close subagents too?">
+<dialog
+  use:openModal
+  class="modal"
+  aria-label="Close subagents too?"
+  aria-describedby="close-subagents-description"
+  oncancel={(event) => {
+    event.preventDefault();
+    onDismiss();
+  }}
+>
   <div class="modal-box max-w-md">
     <h3 class="text-lg font-bold">Close subagents too?</h3>
-    <div class="flex flex-col gap-1 py-3">
+    <div id="close-subagents-description" class="flex flex-col gap-1 py-3">
       <p class="text-sm">
         "{tab.title}" has {subagentCount}
         {subagentCount === 1 ? "subagent tab" : "subagent tabs"} (including nested ones).
@@ -44,7 +62,7 @@
         stopped.
       </p>
     </div>
-    <div class="modal-action">
+    <div class="modal-action flex-wrap">
       <button type="button" class="btn btn-ghost btn-sm" onclick={onDismiss}>Cancel</button>
       <button type="button" class="btn btn-sm" onclick={onKeep}>No, keep them open</button>
       <button type="button" class="btn btn-warning btn-sm" onclick={onCloseAll}>
@@ -52,6 +70,14 @@
       </button>
     </div>
   </div>
-  <!-- svelte-ignore a11y_click_events_have_key_events, a11y_no_static_element_interactions -->
-  <div class="modal-backdrop" onclick={onDismiss}></div>
-</div>
+  <form
+    method="dialog"
+    class="modal-backdrop"
+    onsubmit={(event) => {
+      event.preventDefault();
+      onDismiss();
+    }}
+  >
+    <button type="submit" aria-label="Dismiss close confirmation">close</button>
+  </form>
+</dialog>

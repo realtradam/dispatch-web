@@ -98,7 +98,19 @@
   // in the meantime is a no-op for `onClose`. A plain tab closes directly.
   let closeConfirm = $state<{ tab: Tab; cascadeIds: readonly string[] } | null>(null);
 
+  // A remote close or workspace switch must not leave an actionable dialog
+  // for a tab that is no longer in this list.
+  $effect(() => {
+    if (
+      closeConfirm !== null &&
+      !tabs.some((tab) => tab.conversationId === closeConfirm?.tab.conversationId)
+    ) {
+      closeConfirm = null;
+    }
+  });
+
   function requestClose(conversationId: string): void {
+    menu = null;
     const cascadeIds = cascadeCloseIds(tabs, conversationId);
     if (cascadeIds.length <= 1) {
       onClose(conversationId);

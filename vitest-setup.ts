@@ -42,3 +42,15 @@ if (typeof globalThis.PointerEvent === "undefined") {
   }
   globalThis.PointerEvent = PointerEventPolyfill as unknown as typeof PointerEvent;
 }
+
+// jsdom has no native modal dialog lifecycle. Fake only this browser edge;
+// real-browser checks cover top-layer rendering and native focus containment.
+if (typeof HTMLDialogElement !== "undefined" && !HTMLDialogElement.prototype.showModal) {
+  HTMLDialogElement.prototype.showModal = function () {
+    this.open = true;
+    this.querySelector<HTMLElement>("button")?.focus();
+  };
+  HTMLDialogElement.prototype.close = function () {
+    this.open = false;
+  };
+}

@@ -2,6 +2,18 @@
 
 > Recorded while working autonomously (user away). Raise these when the user returns.
 
+## 2026-10-24 — Close-tab cascade completion
+
+- Retained the original visible-group + snapshot semantics below, including one close
+  request per id; no backend lineage cascade and no close-all retry workaround.
+- User explicitly authorized replacing the companion backend symlink with an isolated
+  feature worktree to fix the reproducible active-turn Close → idle finalization race.
+  Backend commit `fd07259` fixes this and adds regression coverage. Verification writes
+  for the fixed backend use fresh private runtime paths, never the user's instance.
+- Native modal lifecycle (top layer/focus containment/safe initial focus) replaces the
+  original CSS-only overlay; stale target dialogs dismiss on workspace/remote removal.
+- Final verification and cross-repo handoff: `backend-handoff.md` close-tab milestone.
+
 ## 2026-10-16 — Close-tab cascade confirm dialog (subagent groups)
 
 1. **"Subagents" of a tab = its VISIBLE subagent group (open tabs only).** The confirm dialog
