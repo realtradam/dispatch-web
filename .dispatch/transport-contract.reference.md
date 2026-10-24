@@ -1,9 +1,10 @@
 # `@dispatch/transport-contract` — in-repo reference
 
-Mirrored from the sibling backend on 2026-10-21 for `feature/subscription-delivery-fix`.
+Mirrored from the authorized public transport contract on 2026-10-24 for `feature/text-file-embeds`.
 Package version remains 0.26.0; local `file:` dependency unchanged.
 
-New additive messages: `chat.accepted` after opening-message storage or queue insertion,
+Additive text-file seam: `TextFileQuery`, `TextFileResponse`, and `TextFileContextResponse`
+for guarded, no-store local text display. Existing additive messages: `chat.accepted` after opening-message storage or queue insertion,
 `chat.subscription-rejected` for a nonfatal watcher limit, and `requestId` on queue requests
 and chat errors. Correlation tokens are not idempotency keys; clients must not automatically
 retry uncertain sends. The server retains the 256 combined subscription bound.
@@ -371,6 +372,76 @@ export interface ThroughputResponse {
   /** Exclusive end of the window, epoch-ms. */
   readonly end: number;
   readonly models: readonly ThroughputModelStat[];
+}
+
+// ─── Live conversation text files ────────────────────────────────────────────
+
+/**
+ * Response body for `GET /conversations/:id/text-file-context` — the effective,
+ * authoritative conversation/workspace context used by the text-file endpoint,
+ * not merely the conversation's persisted cwd/computer overrides.
+ *
+ * This minimal preflight shares context resolution with the file read, without
+ * starting/querying LSP or reading any files. An unknown conversation → HTTP 404.
+ * It is live context, not a snapshot; responses use `Cache-Control: no-store`.
+ * Clients should load it before requesting a text file and supply BOTH returned
+ * values as guards in `TextFileQuery` (encode null as the empty string).
+ */
+export interface TextFileContextResponse {
+  readonly conversationId: string;
+  /** Effective authoritative cwd, or null when unset (no process-cwd fallback). */
+  readonly cwd: string | null;
+  /** Effective authoritative computer target, or null for local execution. */
+  readonly computerId: string | null;
+}
+
+/**
+ * Query parameters for `GET /conversations/:id/text-file`.
+ *
+ * Pass the RAW literal path to `URLSearchParams`; only the URL query decoder
+ * decodes it. The server MUST NOT percent-decode the resulting path a second
+ * time (a literal `%20` in a filename stays `%20`, not a space).
+ *
+ * Resolution uses the authoritative conversation/workspace context, never a
+ * client-supplied context override. A relative path requires an authoritative
+ * cwd; there is no process-cwd fallback. Only local regular files are supported,
+ * not ordinary network/protocol fetching. A remote computer target → HTTP 422.
+ *
+ * Guards compare against the effective context used for this read. An omitted
+ * guard skips that comparison; an empty string asserts null (cwd unset or
+ * computer local). A mismatch → HTTP 409. Browsers should supply BOTH guards
+ * after loading `TextFileContextResponse` to detect context changes.
+ */
+export interface TextFileQuery {
+  /** Literal absolute or cwd-relative POSIX file path, not a URL to fetch. */
+  readonly path: string;
+  /** Expected effective cwd; empty string asserts unset, omitted skips guard. */
+  readonly expectedCwd?: string;
+  /** Expected effective computer; empty string asserts local, omitted skips guard. */
+  readonly expectedComputerId?: string;
+}
+
+/**
+ * Response body for `GET /conversations/:id/text-file` — a live file read, NOT a
+ * persisted snapshot or attachment. Responses use `Cache-Control: no-store`.
+ *
+ * Only regular files containing strict UTF-8 without NUL or binary control
+ * characters are accepted. Reads are bounded to 256 KiB (262144 bytes) under
+ * the current policy, with no truncation. Invalid paths, nonregular files, or
+ * nontext content → HTTP 400; unknown conversations or missing files → HTTP
+ * 404; context-guard mismatch → HTTP 409; oversized files → HTTP 413; remote
+ * computer targets (unsupported) → HTTP 422.
+ */
+export interface TextFileResponse {
+  /** Resolved absolute POSIX file path. */
+  readonly path: string;
+  /** Complete decoded UTF-8 file content, never truncated. */
+  readonly text: string;
+  readonly format: "markdown" | "text";
+  /** Original UTF-8 file size in bytes (not JavaScript string length). */
+  readonly bytes: number;
+  /** Maximum accepted file size in bytes; currently 262144 (256 KiB). */
+  readonly maxBytes: number;
 }
 
 // ─── Per-conversation working directory (cwd) ─────────────────────────────────
@@ -1878,5 +1949,4 @@ export interface AccountUsageResponse {
   /** Server clock (epoch-ms) when this response was built — use it to compute window progress. */
   readonly servedAt: number;
 }
-
 ```

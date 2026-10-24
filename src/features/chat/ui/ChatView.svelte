@@ -11,7 +11,7 @@
     viewTurnMetrics,
     type TurnMetricsEntry,
   } from "../../../core/metrics";
-  import { Markdown } from "../../markdown";
+  import { Markdown, type TextFileClient } from "../../markdown";
   import CacheTimerBadge from "./CacheTimerBadge.svelte";
   import LazyCollapse from "./LazyCollapse.svelte";
   import ToolCard from "./ToolCard.svelte";
@@ -32,6 +32,7 @@
     providerRetry = null,
     apiBaseUrl = "",
     cwd = null,
+    textFiles = undefined,
     cacheTimer = null,
   }: {
     chunks: readonly RenderedChunk[];
@@ -68,6 +69,8 @@
      * and `file://` paths do not need it. Passed to `Markdown` with `apiBaseUrl`.
      */
     cwd?: string | null;
+    /** Context-bound, injected live-file display port (never model history). */
+    textFiles?: TextFileClient | undefined;
     /**
      * The cache timer (gaps between model requests): a running step gap shows
      * live at the bottom (under the executing tools), a running turn gap live
@@ -216,6 +219,7 @@
             text={rendered.chunk.text}
             streaming={rendered.streaming ?? false}
             image={{ apiBase: apiBaseUrl, cwd }}
+            {textFiles}
           />
         {:else if rendered.chunk.type === "error"}
           <div class="text-error" role="alert">

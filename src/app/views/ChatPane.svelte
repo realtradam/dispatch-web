@@ -13,6 +13,16 @@
 
   let { ports }: { ports: AppViewPorts } = $props();
   const store = $derived(ports.store);
+  const textFiles = $derived.by(() => {
+    void store.activeWorkspaceId;
+    void store.textFileContextRevision;
+    const id = store.activeConversationId;
+    return id ? store.createTextFileClient(id) : undefined;
+  });
+  $effect(() => {
+    const client = textFiles;
+    return () => client?.dispose();
+  });
 
   // Cache timer: Claude Code subscription models only (5-minute prompt-cache expiry).
   const cacheTimer = $derived(
@@ -88,6 +98,7 @@
           providerRetry={store.activeChat.providerRetry}
           apiBaseUrl={store.httpBase}
           cwd={store.cwd}
+          {textFiles}
           {cacheTimer}
         />
       {/key}

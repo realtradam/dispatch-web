@@ -43,9 +43,11 @@ export function createConversationSettings(deps: {
   // The active conversation's persisted working directory (per-tab). Seeded from
   // the backend on focus change; null for a draft / when unset.
   let cwd = $state<string | null>(null);
+  let textFileContextRevision = $state(0);
 
   /** Refetch the workspace conversation's cwd into reactive state (works for a draft too). */
   async function refreshCwd(): Promise<void> {
+    textFileContextRevision++;
     const id = deps.workspaceConversationId();
     try {
       const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/cwd`);
@@ -68,6 +70,7 @@ export function createConversationSettings(deps: {
    * so it is a silent no-op (mirrors `refreshCwd` for a draft).
    */
   async function refreshComputer(): Promise<void> {
+    textFileContextRevision++;
     const id = deps.workspaceConversationId();
     // Clear immediately so a switch never shows the PREVIOUS conversation's
     // computer while the fetch is in flight (null renders as "Local").
@@ -177,6 +180,9 @@ export function createConversationSettings(deps: {
     refreshThinking,
     refreshCompactPercent,
     refreshVisionSettings,
+    get textFileContextRevision() {
+      return textFileContextRevision;
+    },
     get cwd() {
       return cwd;
     },
@@ -213,7 +219,10 @@ export function createConversationSettings(deps: {
         }
         const data = (await res.json()) as CwdResponse;
         const next = data.cwd ?? null;
-        if (deps.workspaceConversationId() === id) cwd = next;
+        if (deps.workspaceConversationId() === id) {
+          cwd = next;
+          textFileContextRevision++;
+        }
         return { ok: true, cwd: next };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : "Set cwd request failed" };
@@ -241,7 +250,10 @@ export function createConversationSettings(deps: {
         }
         const data = (await res.json()) as ConversationComputerResponse;
         const next = data.computerId ?? null;
-        if (deps.workspaceConversationId() === id) computerId = next;
+        if (deps.workspaceConversationId() === id) {
+          computerId = next;
+          textFileContextRevision++;
+        }
         return { ok: true, computerId: next };
       } catch (err) {
         return {

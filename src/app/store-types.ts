@@ -35,6 +35,7 @@ import type {
   HeartbeatStopResult,
 } from "../features/heartbeat";
 import type { LayoutStore } from "../features/layout";
+import type { TextFileClient } from "../features/markdown";
 import type {
   NamedAgent,
   NamedAgentDeleteResult,
@@ -215,6 +216,9 @@ export interface AppStore {
   warmNow(): Promise<WarmResult | null>;
   /** The workspace conversation's persisted working directory, or null when unset. */
   readonly cwd: string | null;
+  /** Invalidates live-file routing after known settings changes. */
+  readonly textFileContextRevision: number;
+  createTextFileClient(conversationId: string): TextFileClient;
   /** The conversation workspace settings target: the active tab, or the pending draft's id. */
   readonly currentConversationId: string;
   /**

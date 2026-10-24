@@ -311,6 +311,21 @@ describe("tool summaries", () => {
     });
     expect(() => view("mcp", { integer: 1n })).not.toThrow();
   });
+  it("rejects ancestor cycles but preserves shared non-cyclic tool values", () => {
+    const nested: Record<string, unknown> = { name: "nested" };
+    const root = { nested };
+    nested.parent = root;
+    expect(view("mcp", { payload: root }).callDetail).toEqual({
+      kind: "fields",
+      fields: [{ key: "payload", value: "[unserializable input]", multiline: false }],
+    });
+    const shared = { name: "shared" };
+    const payload = { first: shared, second: shared, values: [shared, shared] };
+    const detail = view("mcp", { payload }).callDetail;
+    expect(detail.kind).toBe("fields");
+    if (detail.kind !== "fields") throw new Error("Expected fields");
+    expect(detail.fields[0]?.value).toBe(JSON.stringify(payload, null, 2));
+  });
   it("caps and whitespace-collapses header strings but retains full detail", () => {
     const command = `  echo\n${"x".repeat(300)}`;
     const card = view("run_shell", { command });
