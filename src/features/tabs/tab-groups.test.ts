@@ -7,6 +7,7 @@ import {
   groupDescendants,
   groupGutterPx,
   groupParentCandidates,
+  groupTone,
   lastRowIsGroup,
   visibleGroupParents,
 } from "./tab-groups";
@@ -129,6 +130,36 @@ describe("cascadeCloseIds (the ids a cascading tab close removes)", () => {
   it("ignores tabs whose group parent is no longer open", () => {
     const stale = [tab("p"), tab("orphan", "gone")];
     expect(cascadeCloseIds(stale, "p")).toEqual(["p"]);
+  });
+});
+
+describe("groupTone", () => {
+  it("rotates three colours by level, starting at the outermost box", () => {
+    expect([1, 2, 3, 4, 5, 6, 7].map(groupTone)).toEqual([
+      "secondary",
+      "success",
+      "accent",
+      "secondary",
+      "success",
+      "accent",
+      "secondary",
+    ]);
+  });
+
+  it("never gives a box the colour of its parent or grandparent", () => {
+    for (let level = 3; level <= 20; level++) {
+      expect(groupTone(level)).not.toBe(groupTone(level - 1));
+      expect(groupTone(level)).not.toBe(groupTone(level - 2));
+    }
+  });
+
+  it("never uses primary (reserved for the active tab)", () => {
+    for (let level = 1; level <= 6; level++) expect(groupTone(level)).not.toBe("primary");
+  });
+
+  it("stays in range for out-of-range levels", () => {
+    expect(groupTone(0)).toBe("accent");
+    expect(groupTone(-1)).toBe("success");
   });
 });
 

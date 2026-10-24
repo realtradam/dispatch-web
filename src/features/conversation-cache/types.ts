@@ -17,6 +17,10 @@ export interface ConversationCacheIndexEntry {
  * All methods MUST be idempotent on `seq`: re-appending an existing seq is a no-op.
  */
 export interface ConversationChunkStore {
+  historyEpoch(conversationId: string): Promise<number | undefined>;
+  /** Atomically replace cached rows with empty history at this epoch. */
+  reset(conversationId: string, historyEpoch: number): Promise<void>;
+
   /** Load all cached chunks for a conversation, seq-ordered. Returns [] if absent. */
   load(conversationId: string): Promise<readonly StoredChunk[]>;
 

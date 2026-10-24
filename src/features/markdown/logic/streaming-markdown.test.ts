@@ -240,6 +240,8 @@ describe("streaming-markdown corpus equivalence", () => {
 });
 
 describe("streaming-markdown performance fixture (counts, not wall-clock)", () => {
+  // Thousands of real parser/sanitizer calls contend with the unrestricted suite.
+  // This asserts operation counts, not speed; keep all counts and allow CPU load.
   it("hljs calls and prefix mutations stay proportional to BLOCKS, not length × deltas", () => {
     const spy = vi.spyOn(hljs, "highlight");
     const state = createStreamingMarkdown();
@@ -282,7 +284,7 @@ describe("streaming-markdown performance fixture (counts, not wall-clock)", () =
     expect(normalizeHtml(final.prefixHtml + final.tailHtml)).toBe(
       normalizeHtml(renderMarkdown(doc, { streaming: true })),
     );
-  });
+  }, 20_000);
 });
 
 describe("markdown tail-pipeline exports", () => {

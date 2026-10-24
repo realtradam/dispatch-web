@@ -1,9 +1,13 @@
 import type {
+  ChatAcceptedMessage,
   ChatDeltaMessage,
   ChatErrorMessage,
   ChatQueueCancelMessage,
+  ChatQueuedMessage,
   ChatQueueMessage,
+  ChatResyncRequiredMessage,
   ChatSendMessage,
+  ChatSubscriptionRejectedMessage,
 } from "@dispatch/transport-contract";
 import type { ChatMessage, ImageInput, StoredChunk, TurnProviderRetryEvent } from "@dispatch/wire";
 import type { RenderedChunk, TranscriptState } from "../../core/chunks";
@@ -14,7 +18,9 @@ import {
   foldEvent,
   initialState,
   initialWindowSize,
+  markHistoryRecovering,
   normalizeChatLimit,
+  removeLocalEcho,
   restoreEarlier,
   selectChunks,
   selectGenerating,
@@ -25,20 +31,28 @@ import {
   unloadCount,
   windowTranscript,
 } from "../../core/chunks";
-import type { MetricsState, TurnMetricsEntry } from "../../core/metrics";
+import type { CacheTimerState, MetricsState, TurnMetricsEntry } from "../../core/metrics";
 import {
   applyDurableMetrics,
+  foldCacheTimerEvent,
   foldMetricsEvent,
+  initialCacheTimerState,
   initialMetricsState,
+  seedTurnGap,
   selectCurrentContextSize,
   selectOrderedTurnMetrics,
+  stopTurnGap,
 } from "../../core/metrics";
 import type { ConversationCache } from "../conversation-cache";
 import type { NamedAgentSelectionSnapshot } from "../named-agents";
+import type { PendingInput, PendingInputStorage } from "./pending-inputs";
 import type { ChatTransport, HistorySync, MetricsSync } from "./ports";
 
 export interface ChatStoreDependencies {
+  readonly pendingInputStorage?: PendingInputStorage;
   readonly conversationId: string;
+  /** Injected unique client-local correlation token for each new send. */
+  readonly createRequestId: () => string;
   readonly model?: string;
   readonly transport: ChatTransport;
   readonly historySync: HistorySync;
@@ -78,9 +92,18 @@ export interface ChatStoreDependencies {
    * folded synchronously (the original behavior; used by tests).
    */
   readonly scheduleFlush?: (flush: () => void) => void;
+  /** Wall clock (epoch ms) — times the cache-timer gaps. Absent → `Date.now`. */
+  readonly now?: () => number;
+  /** Recovery polling clock; browser effects are replaceable by deterministic tests. */
+  readonly recoveryTimer?: {
+    schedule(callback: () => void, delayMs: number): unknown;
+    cancel(handle: unknown): void;
+  };
 }
 
 export interface ChatStore {
+  readonly pendingInputs: readonly PendingInput[];
+  discardPendingInput(requestId: string): void;
   readonly messages: readonly ChatMessage[];
   readonly chunks: readonly RenderedChunk[];
   readonly turnMetrics: readonly TurnMetricsEntry[];
@@ -107,6 +130,8 @@ export interface ChatStore {
    * to the newest attempt + delay; cleared when content resumes or the turn ends.
    */
   readonly providerRetry: TurnProviderRetryEvent | null;
+  /** Omitted live payloads may not exist in HTTP history until step persistence. */
+  readonly recovering: boolean;
   readonly pendingSync: boolean;
   readonly error: string | null;
   readonly model: string | undefined;
@@ -122,7 +147,29 @@ export interface ChatStore {
    * a trim (see `TranscriptState.hiddenThinkingCount`).
    */
   readonly thinkingKeyBase: number;
-  handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void;
+  /**
+   * The cache timer (see `core/metrics/cache-timer.ts`): the running gap
+   * between model requests (a step's tools executing, or the wait after a turn
+   * ended) plus the stamped durations of finished gaps, keyed by `stepId` /
+   * `turnId`. Timed with the local clock from live events; in-memory only (a
+   * reload keeps just a turn gap seeded via `noteLastActivity`).
+   */
+  readonly cacheTimer: CacheTimerState;
+  /**
+   * Seed the turn gap from an authoritative activity timestamp (the
+   * conversation list's `lastActivityAt`) — call only for an IDLE conversation.
+   * Ignored while a turn is generating; a running turn gap keeps the later start.
+   */
+  noteLastActivity(at: number): void;
+  handleDelta(
+    msg:
+      | ChatAcceptedMessage
+      | ChatSubscriptionRejectedMessage
+      | ChatDeltaMessage
+      | ChatErrorMessage
+      | ChatQueuedMessage
+      | ChatResyncRequiredMessage,
+  ): void;
   /**
    * Send a user message (start a turn via `chat.send`). Optimistically echoes
    * the text + any `images` as provisional user chunks (`[text, image, …]` in
@@ -139,9 +186,10 @@ export interface ChatStore {
    * auto-starts a turn with the message as its opening prompt (equivalent to
    * `chat.send`). No optimistic transcript echo — the queue SURFACE carries the
    * pending message until drain; the `steering` event places it in the
-   * transcript. `text` must be non-empty (the server 400/errors otherwise).
+   * transcript. Empty `text` is allowed when images are supplied. WS delivery
+   * is fire-and-forget; transport send is not a persistence acknowledgement.
    */
-  queueMessage(text: string): void;
+  queueMessage(text: string, images?: readonly ImageInput[]): void;
   /**
    * Cancel (remove) a single queued steering message by id so it never runs
    * (`chat.queue.cancel` WS op). Fire-and-forget + idempotent: success is
@@ -189,18 +237,79 @@ export interface ChatStore {
    * running, the server's post-subscribe replay re-asserts `generating`. The
    * app store pairs this with a `chat.subscribe` for the conversation.
    */
-  resync(): void;
+  resync(historyEpoch?: number): void;
+  /** Discard pre-replacement transcript state without loading an unseen conversation. */
+  invalidateHistory(historyEpoch: number): void;
   dispose(): void;
 }
 
 export function createChatStore(deps: ChatStoreDependencies): ChatStore {
+  let pendingInputs = $state<readonly PendingInput[]>(deps.pendingInputStorage?.load() ?? []);
+  function savePendingInputs(next: readonly PendingInput[]): void {
+    deps.pendingInputStorage?.save(next);
+    pendingInputs = next;
+  }
+  function confirmInput(requestId: string): void {
+    savePendingInputs(pendingInputs.filter((input) => input.request.requestId !== requestId));
+  }
   let transcript = $state<TranscriptState>(initialState());
   let metrics = $state<MetricsState>(initialMetricsState());
   let _pendingSync = $state(false);
   let _error = $state<string | null>(null);
   let _model = $state<string | undefined>(deps.model);
   let _namedAgent = $state<NamedAgentSelectionSnapshot | null>(null);
+  let cacheTimer = $state<CacheTimerState>(initialCacheTimerState());
+  const now = deps.now ?? Date.now;
   let disposed = false;
+  let rerunRequested = false;
+  let historyEpoch: number | undefined;
+  let revision = 0;
+  let reloadWindow = false;
+  let earliestSeq = $state<number | null>(null);
+  let recoveringTurnId: string | undefined;
+  let recovering = $state(false);
+  const finishedRecoveryTurns = new Set<string>();
+  let finalSyncRequested = false;
+  let recoveryPaused = false;
+  const timer = deps.recoveryTimer ?? {
+    schedule: (callback: () => void, delay: number) => setTimeout(callback, delay),
+    cancel: (handle: unknown) => clearTimeout(handle as ReturnType<typeof setTimeout>),
+  };
+  let recoveryTimer: unknown;
+
+  function cancelRecoveryTimer(): void {
+    if (recoveryTimer !== undefined) timer.cancel(recoveryTimer);
+    recoveryTimer = undefined;
+  }
+
+  function scheduleRecovery(): void {
+    if (disposed || !recovering || recoveryPaused || recoveryTimer !== undefined) return;
+    recoveryTimer = timer.schedule(() => {
+      recoveryTimer = undefined;
+      flushEvents();
+      void syncTail(initialWindowSize(chatLimit));
+    }, 1000);
+  }
+
+  function resetTranscript(epoch: number): void {
+    historyEpoch = epoch;
+    revision++;
+    reloadWindow = true;
+    transcript = initialState();
+    if (recoveringTurnId !== undefined)
+      transcript = markHistoryRecovering(transcript, recoveringTurnId);
+    earliestSeq = null;
+    pendingEvents = [];
+  }
+  function hasEarlier(): boolean {
+    return selectHasEarlier(transcript, earliestSeq);
+  }
+
+  /** The most recent turn's id (resolves a seeded turn gap when it is stamped). */
+  function lastTurnIdOf(m: MetricsState): string | undefined {
+    const entries = selectOrderedTurnMetrics(m);
+    return entries[entries.length - 1]?.turnId;
+  }
 
   let chatLimit = normalizeChatLimit(deps.chatLimit);
 
@@ -242,16 +351,42 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     let m = metrics;
     let sealed = false;
     let failed = false;
+    let recoveryEnded = false;
+    let c = cacheTimer;
+    const at = now();
     for (const event of events) {
       t = foldEvent(t, event);
       m = foldMetricsEvent(m, event);
-      if (t.sealedTurnId !== null) sealed = true;
+      const mNow = m;
+      c = foldCacheTimerEvent(c, event, at, () => lastTurnIdOf(mNow));
+      if (
+        event.type === "turn-ended" &&
+        recovering &&
+        (recoveringTurnId === undefined || event.turnId === recoveringTurnId)
+      ) {
+        finishedRecoveryTurns.add(event.turnId);
+        finalSyncRequested = true;
+        recoveringTurnId = undefined;
+        recovering = false;
+        recoveryEnded = true;
+        cancelRecoveryTimer();
+      }
+      if (event.type === "turn-sealed") sealed = true;
       else if (event.type === "error") failed = true;
     }
     transcript = t;
     metrics = m;
+    cacheTimer = c;
     maybeTrim();
-    if (sealed) {
+    if (recovering && recoveringTurnId !== undefined) {
+      // done/error/seal can precede persistence and the real terminal. Keep
+      // lifecycle evidence until turn-ended, not merely until a content event.
+      transcript = markHistoryRecovering(transcript, recoveringTurnId);
+    }
+    if (recoveryEnded) {
+      void syncTail(initialWindowSize(chatLimit));
+      void syncMetrics();
+    } else if (sealed) {
       void syncTail();
       void syncMetrics();
     } else if (failed) {
@@ -280,27 +415,142 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
    * between the cache and the fetched window.
    */
   async function syncTail(coldLimit?: number): Promise<void> {
-    if (disposed || _pendingSync) return;
+    if (disposed) return;
+    if (_pendingSync) {
+      rerunRequested = true;
+      return;
+    }
     _pendingSync = true;
-    try {
-      const since = await deps.cache.sinceSeq(deps.conversationId);
-      const window = since === 0 && coldLimit !== undefined ? { limit: coldLimit } : undefined;
-      const res = await deps.historySync(deps.conversationId, since, window);
-      const merged = await deps.cache.commit(deps.conversationId, res.chunks);
-      transcript = applyHistory(transcript, merged);
-      maybeTrim();
-      _error = null;
-    } catch (err) {
-      _error = err instanceof Error ? err.message : String(err);
-    } finally {
-      _pendingSync = false;
+    // One request plus at most two sequential reruns. Continued churn waits for
+    // the next reconnect/seal/explicit resync, never a microtask refetch loop.
+    let attempts = 0;
+    do {
+      attempts++;
+      rerunRequested = false;
+      try {
+        const currentRevision = revision;
+        let cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+        if (historyEpoch !== undefined && cachedEpoch !== historyEpoch) {
+          await deps.cache.reset(deps.conversationId, historyEpoch);
+          cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+        }
+        const since =
+          reloadWindow || cachedEpoch === undefined
+            ? 0
+            : await deps.cache.sinceSeq(deps.conversationId);
+        if (disposed) break;
+        if (revision !== currentRevision) {
+          rerunRequested = true;
+          continue;
+        }
+        const limit =
+          since === 0
+            ? reloadWindow || recovering || finishedRecoveryTurns.size > 0
+              ? initialWindowSize(chatLimit)
+              : coldLimit
+            : undefined;
+        const finishedAtRequest = [...finishedRecoveryTurns];
+        finalSyncRequested = false;
+        const res = await deps.historySync(
+          deps.conversationId,
+          since,
+          limit === undefined ? undefined : { limit },
+        );
+        if (disposed) break;
+        if (revision !== currentRevision) {
+          rerunRequested = true;
+          continue;
+        }
+        const mismatch =
+          (cachedEpoch !== undefined && cachedEpoch !== res.historyEpoch) ||
+          (historyEpoch !== undefined && historyEpoch !== res.historyEpoch);
+        if (mismatch && since !== 0) {
+          // A cursor response cannot replace a different history. Confirm with
+          // a new full-window request; don't mistake a lower epoch for staleness.
+          reloadWindow = true;
+          rerunRequested = true;
+          continue;
+        }
+        let merged: readonly StoredChunk[];
+        if (mismatch || cachedEpoch === undefined) {
+          const replaced = await deps.cache.replace(
+            deps.conversationId,
+            res.chunks,
+            res.historyEpoch,
+            cachedEpoch,
+          );
+          const replacedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+          if (disposed) break;
+          if (revision !== currentRevision || !replaced || replacedEpoch !== res.historyEpoch) {
+            rerunRequested = true;
+            continue;
+          }
+          if (mismatch) resetTranscript(res.historyEpoch);
+          merged = res.chunks;
+        } else {
+          merged = await deps.cache.commit(deps.conversationId, res.chunks, res.historyEpoch);
+          const committedEpoch = await deps.cache.historyEpoch(deps.conversationId);
+          if (disposed) break;
+          if (revision !== currentRevision || committedEpoch !== res.historyEpoch) {
+            rerunRequested = true;
+            continue;
+          }
+        }
+        reloadWindow = false;
+        historyEpoch = res.historyEpoch;
+        if (since === 0 && (limit === undefined || res.chunks.length < limit))
+          earliestSeq = merged[0]?.seq ?? 0;
+        flushEvents();
+        transcript = applyHistory(transcript, merged, finishedAtRequest);
+        for (const turnId of finishedAtRequest) finishedRecoveryTurns.delete(turnId);
+        maybeTrim();
+        _error = null;
+      } catch (err) {
+        _error = err instanceof Error ? err.message : String(err);
+      }
+    } while (rerunRequested && !disposed && attempts < 3);
+    if (rerunRequested && !disposed) {
+      recoveryPaused = true;
+      cancelRecoveryTimer();
+      _error = "Conversation history changed repeatedly; sync paused until the next refresh.";
+    }
+    _pendingSync = false;
+    // Schedule AFTER the bounded sync burst. No interval can queue unbounded
+    // reruns behind a slow request; repeated notices coalesce on the same clock.
+    scheduleRecovery();
+    // A terminal landing during the third (bounded epoch) attempt still owns
+    // one post-terminal request. It is a new external trigger, not an epoch
+    // retry loop; consume the flag before starting its bounded burst.
+    if (finalSyncRequested && !disposed) {
+      finalSyncRequested = false;
+      void syncTail(initialWindowSize(chatLimit));
     }
   }
 
-  async function syncMetrics(): Promise<void> {
+  let pendingMetrics: Promise<void> | undefined;
+  let rerunMetrics = false;
+  function syncMetrics(): Promise<void> {
+    if (pendingMetrics !== undefined) {
+      rerunMetrics = true;
+      return pendingMetrics;
+    }
+    pendingMetrics = (async () => {
+      for (let attempt = 0; attempt < 2; attempt++) {
+        rerunMetrics = false;
+        await fetchMetrics();
+        if (!rerunMetrics || disposed) break;
+      }
+    })().finally(() => {
+      pendingMetrics = undefined;
+    });
+    return pendingMetrics;
+  }
+
+  async function fetchMetrics(): Promise<void> {
     if (disposed) return;
     try {
       const res = await deps.metricsSync(deps.conversationId);
+      if (disposed) return;
       metrics = applyDurableMetrics(metrics, res.turns);
     } catch (err) {
       // Metrics fetch failure must not block history sync or throw;
@@ -318,14 +568,27 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
    * newest `count` of them). Shared by `showEarlier` and the raise-refill.
    */
   async function backfillOlder(oldest: number, want: number): Promise<readonly StoredChunk[]> {
+    const currentRevision = revision;
     let earlier = (await deps.cache.load(deps.conversationId)).filter((c) => c.seq < oldest);
+    if (disposed || revision !== currentRevision) return [];
     const oldestKnown = earlier[0]?.seq ?? oldest;
-    if (earlier.length < want && oldestKnown > 1) {
+    if (earlier.length < want && (earliestSeq === null || oldestKnown > earliestSeq)) {
       const res = await deps.historySync(deps.conversationId, 0, {
         beforeSeq: oldestKnown,
         limit: want - earlier.length,
       });
-      const merged = await deps.cache.commit(deps.conversationId, res.chunks);
+      if (disposed || revision !== currentRevision) return [];
+      if (res.historyEpoch !== historyEpoch) {
+        // Confirm a backfill mismatch with a fresh full window as well. Bump
+        // the local revision so an overlapping old tail cannot be applied.
+        revision++;
+        reloadWindow = true;
+        await syncTail(initialWindowSize(chatLimit));
+        return [];
+      }
+      const merged = await deps.cache.commit(deps.conversationId, res.chunks, res.historyEpoch);
+      if (disposed || revision !== currentRevision) return [];
+      if (res.chunks.length < want - earlier.length) earliestSeq = merged[0]?.seq ?? 0;
       earlier = merged.filter((c) => c.seq < oldest);
     }
     return earlier;
@@ -335,15 +598,15 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
    * Refill toward the fresh-load window after a limit RAISE: pull older
    * history (cache first, then server) so the loaded set grows to match what a
    * fresh `load()` would show at the new limit. No-op when already at the
-   * origin (seq 1) or already within the window. `restoreEarlier` re-derives
+   * known history boundary or already within the window. `restoreEarlier` re-derives
    * the window start at apply time, so a delta landing during the await can't
    * corrupt the merge. NOT gated (refilling prepends above the viewport; the
    * caller preserves scroll position).
    */
   async function refill(): Promise<void> {
     if (disposed) return;
+    if (!hasEarlier()) return;
     const oldest = transcript.committed[0]?.seq ?? transcript.hiddenBeforeSeq;
-    if (oldest <= 1) return;
     const want = initialWindowSize(chatLimit) - transcript.committed.length;
     if (want <= 0) return;
     try {
@@ -357,6 +620,10 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
   }
 
   return {
+    get pendingInputs() {
+      return pendingInputs;
+    },
+    discardPendingInput: confirmInput,
     get messages(): readonly ChatMessage[] {
       return selectMessages(transcript);
     },
@@ -375,6 +642,9 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     get providerRetry(): TurnProviderRetryEvent | null {
       return selectProviderRetry(transcript);
     },
+    get recovering(): boolean {
+      return recovering;
+    },
     get pendingSync(): boolean {
       return _pendingSync;
     },
@@ -385,18 +655,90 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       return _model;
     },
     get hasEarlier(): boolean {
-      return selectHasEarlier(transcript);
+      return hasEarlier();
     },
     get thinkingKeyBase(): number {
       return transcript.hiddenThinkingCount;
     },
+    get cacheTimer(): CacheTimerState {
+      return cacheTimer;
+    },
 
-    handleDelta(msg: ChatDeltaMessage | ChatErrorMessage): void {
+    noteLastActivity(at: number): void {
+      if (selectGenerating(transcript)) return;
+      cacheTimer = seedTurnGap(cacheTimer, at);
+    },
+
+    handleDelta(
+      msg:
+        | ChatAcceptedMessage
+        | ChatSubscriptionRejectedMessage
+        | ChatDeltaMessage
+        | ChatErrorMessage
+        | ChatQueuedMessage
+        | ChatResyncRequiredMessage,
+    ): void {
+      if (disposed) return;
+      if (msg.type === "chat.accepted") {
+        if (msg.conversationId === deps.conversationId) confirmInput(msg.requestId);
+        return;
+      }
+      if (msg.type === "chat.subscription-rejected") {
+        if (msg.conversationId === deps.conversationId) {
+          _error =
+            "Live updates could not be subscribed. Message delivery is independent; saved inputs remain available below.";
+          void syncTail();
+        }
+        return;
+      }
+      if (msg.type === "chat.resync-required") {
+        if (msg.conversationId !== deps.conversationId) return;
+        flushEvents();
+        const target =
+          msg.turnId ?? (transcript.generating ? transcript.currentTurnId : null) ?? undefined;
+        // Oversized status packets need not identify an active turn. Refresh
+        // once, but do not invent generation or poll an idle conversation.
+        if (target === undefined) {
+          void syncTail(initialWindowSize(chatLimit));
+          return;
+        }
+        const first = !recovering || recoveryPaused;
+        recoveryPaused = false;
+        recovering = true;
+        recoveringTurnId = target;
+        if (recoveringTurnId !== undefined)
+          transcript = markHistoryRecovering(transcript, recoveringTurnId);
+        // Immediate first handoff, including a coalesced rerun behind a cold
+        // load. Repeats wait for the existing fetch/one-second timer.
+        if (first) void syncTail(initialWindowSize(chatLimit));
+        return;
+      }
       if (msg.type === "chat.error") {
         if (msg.conversationId !== undefined && msg.conversationId !== deps.conversationId) {
           return;
         }
         _error = msg.message;
+        if (msg.requestId !== undefined) {
+          savePendingInputs(
+            pendingInputs.map((input) =>
+              input.request.requestId === msg.requestId
+                ? { ...input, rejection: msg.message }
+                : input,
+            ),
+          );
+          transcript = removeLocalEcho(transcript, msg.requestId);
+        }
+        return;
+      }
+      if (msg.type === "chat.queued") {
+        if (disposed || msg.conversationId !== deps.conversationId) return;
+        // A queued live opening may already have confirmed the echoed text.
+        // Fold it first; turn-start alone must not protect still-local artifacts.
+        flushEvents();
+        if (msg.requestId !== undefined) {
+          confirmInput(msg.requestId);
+          transcript = removeLocalEcho(transcript, msg.requestId);
+        }
         return;
       }
       if (msg.event.conversationId !== deps.conversationId) {
@@ -415,10 +757,12 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
 
     send(text: string, images?: readonly ImageInput[]): void {
       flushEvents();
-      transcript = appendUserMessage(transcript, text, images);
-      maybeTrim();
-      const msg: ChatSendMessage = {
+      // Sending ends the wait since the last turn: stamp it on that turn.
+      cacheTimer = stopTurnGap(cacheTimer, now(), () => lastTurnIdOf(metrics));
+      const requestId = deps.createRequestId();
+      const msg: ChatSendMessage & { requestId: string } = {
         type: "chat.send",
+        requestId,
         conversationId: deps.conversationId,
         message: text,
         ...(_model !== undefined ? { model: _model } : {}),
@@ -426,18 +770,34 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
         ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
       };
+      try {
+        savePendingInputs([...pendingInputs, { request: msg }]);
+      } catch (error) {
+        deps.onError?.("Unable to save input; the message has not been sent", error);
+        throw error;
+      }
+      transcript = appendUserMessage(transcript, text, images, requestId);
+      maybeTrim();
       deps.transport.send(msg);
     },
 
-    queueMessage(text: string): void {
+    queueMessage(text: string, images?: readonly ImageInput[]): void {
       const trimmed = text.trim();
-      if (trimmed.length === 0) return;
-      const msg: ChatQueueMessage = {
+      if (trimmed.length === 0 && !images?.length) return;
+      const msg: ChatQueueMessage & { requestId: string } = {
         type: "chat.queue",
+        requestId: deps.createRequestId(),
         conversationId: deps.conversationId,
         text: trimmed,
+        ...(images !== undefined && images.length > 0 ? { images: [...images] } : {}),
         ...(deps.workspaceId !== undefined ? { workspaceId: deps.workspaceId } : {}),
       };
+      try {
+        savePendingInputs([...pendingInputs, { request: msg }]);
+      } catch (error) {
+        deps.onError?.("Unable to save input; the message has not been queued", error);
+        throw error;
+      }
       deps.transport.send(msg);
     },
 
@@ -481,8 +841,11 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       // server instead (CR-5 `?limit=`), so a huge conversation never ships
       // whole. The post-sync window re-asserts the cap either way.
       const windowSize = initialWindowSize(chatLimit);
+      const currentRevision = revision;
+      const cachedEpoch = await deps.cache.historyEpoch(deps.conversationId);
       const cached = await deps.cache.load(deps.conversationId);
-      if (cached.length > 0) {
+      if (!disposed && revision === currentRevision && cachedEpoch !== undefined) {
+        historyEpoch = cachedEpoch;
         transcript = windowTranscript(applyHistory(transcript, cached), windowSize);
       }
       await syncTail(windowSize);
@@ -493,7 +856,7 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
     async showEarlier(): Promise<void> {
       if (disposed) return;
       const oldest = transcript.committed[0]?.seq ?? transcript.hiddenBeforeSeq;
-      if (oldest <= 1) return;
+      if (!hasEarlier()) return;
       const want = unloadCount(chatLimit);
       try {
         const earlier = await backfillOlder(oldest, want);
@@ -504,19 +867,33 @@ export function createChatStore(deps: ChatStoreDependencies): ChatStore {
       }
     },
 
-    resync(): void {
+    invalidateHistory(epoch): void {
+      if (!disposed && (historyEpoch === undefined || epoch > historyEpoch)) resetTranscript(epoch);
+    },
+
+    resync(epoch?: number): void {
       if (disposed) return;
+      if (epoch !== undefined && (historyEpoch === undefined || epoch > historyEpoch))
+        resetTranscript(epoch);
       // A turn may have sealed while we were disconnected (missed `turn-sealed`):
       // clear the now-stale spinner BEFORE re-subscribing, so a finished turn
       // doesn't spin forever. A still-running turn's replay re-asserts it.
       flushEvents();
-      transcript = clearGenerating(transcript);
+      recoveryPaused = false;
+      if (epoch === undefined) {
+        recovering = false;
+        recoveringTurnId = undefined;
+        cancelRecoveryTimer();
+        transcript = clearGenerating(transcript);
+      }
       void syncTail();
       void syncMetrics();
     },
 
     dispose(): void {
       disposed = true;
+      cancelRecoveryTimer();
+      finishedRecoveryTurns.clear();
       pendingEvents = [];
     },
   };

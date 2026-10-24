@@ -72,9 +72,11 @@ async function flushOnly(): Promise<void> {
 describe("createTileLayoutStore", () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    localStorage.clear();
   });
   afterEach(() => {
     vi.useRealTimers();
+    localStorage.clear();
   });
 
   it("the boot probe applies the server document for the initial mode", async () => {
@@ -84,6 +86,118 @@ describe("createTileLayoutStore", () => {
     expect(store.entries).toEqual([tile("a", 0, 2, 2)]);
     expect(store.providerState).toBe("present");
     expect(store.mode).toBe("wide");
+  });
+
+  it("honors the initial tall mode with exactly one probe and no same-mode reset", async () => {
+    const http = fakeHttp({ tall: doc(tile("mobile", 0)) });
+    const get = vi.spyOn(http, "getLayout");
+    const store = createTileLayoutStore({ http, initialMode: "tall" });
+    store.setMode("tall");
+    await flushOnly();
+    expect(get.mock.calls).toEqual([["tall"]]);
+    expect(store.mode).toBe("tall");
+    expect(store.entries).toEqual([tile("mobile", 0)]);
+  });
+
+  it("seeds from cache immediately without PUT or caching edits before revalidation", async () => {
+    const cached = doc(tile("cached", 0, 2, 2));
+    localStorage.setItem("dispatch.tile-layout.tall", JSON.stringify(cached));
+    const http = fakeHttp();
+    const gate: { release?: (result: TileLayoutHttpResult) => void } = {};
+    http.getLayout = () =>
+      new Promise((resolve) => {
+        gate.release = resolve;
+      });
+    const store = createTileLayoutStore({ http, initialMode: "tall", storage: localStorage });
+    expect(store.entries).toEqual(cached.tiles);
+    expect(store.providerState).toBe("unknown");
+
+    store.sync(["cached", "new"]);
+    store.resize("cached", 1, 1);
+    await settle();
+    expect(http.puts).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("dispatch.tile-layout.tall") ?? "null")).toEqual(cached);
+
+    const fresh = doc(tile("server", 0));
+    gate.release?.({ ok: true, layout: fresh });
+    await settle();
+    expect(store.entries).toEqual(fresh.tiles);
+    expect(store.providerState).toBe("present");
+    expect(http.puts).toEqual([]);
+    expect(JSON.parse(localStorage.getItem("dispatch.tile-layout.tall") ?? "null")).toEqual(fresh);
+  });
+
+  it("resets to the new mode's cache and re-probes on orientation change", async () => {
+    const cached = doc(tile("cached-mobile", 0));
+    localStorage.setItem("dispatch.tile-layout.tall", JSON.stringify(cached));
+    const http = fakeHttp({ wide: doc(tile("desktop", 0)) });
+    const get = vi.spyOn(http, "getLayout");
+    const store = createTileLayoutStore({ http, storage: localStorage });
+    await flushOnly();
+
+    store.setMode("tall");
+    expect(store.providerState).toBe("unknown");
+    expect(store.entries).toEqual(cached.tiles);
+    await flushOnly();
+    expect(store.entries).toEqual([]);
+    expect(get.mock.calls).toEqual([["wide"], ["tall"]]);
+  });
+
+  it("caches server GET, WS push, and successful PUT echoes, never unconfirmed edits", async () => {
+    const http = fakeHttp({ wide: doc(tile("a", 0)) });
+    const store = createTileLayoutStore({ http, storage: localStorage });
+    const cached = () => JSON.parse(localStorage.getItem("dispatch.tile-layout.wide") ?? "null");
+    await flushOnly();
+    expect(cached()).toEqual(doc(tile("a", 0)));
+
+    store.onServerTileLayout("tall", doc(tile("ignored", 0)));
+    expect(localStorage.getItem("dispatch.tile-layout.tall")).toBeNull();
+    store.onServerTileLayout("wide", doc(tile("push", 0)));
+    expect(cached()).toEqual(doc(tile("push", 0)));
+
+    store.resize("push", 2, 2);
+    expect(cached()).toEqual(doc(tile("push", 0)));
+    await settle();
+    expect(cached()).toEqual(doc(tile("push", 0, 2, 2)));
+
+    http.failNext.put = "network down";
+    store.resize("push", 1, 1);
+    await settle();
+    expect(cached()).toEqual(doc(tile("push", 0, 2, 2)));
+  });
+
+  it("caches an in-flight PUT echo under its written mode after an orientation change", async () => {
+    const http = fakeHttp({ wide: doc(tile("desktop", 0)), tall: doc(tile("mobile", 0)) });
+    const gate: { release?: (result: TileLayoutHttpResult) => void } = {};
+    http.putLayout = () =>
+      new Promise((resolve) => {
+        gate.release = resolve;
+      });
+    const store = createTileLayoutStore({ http, storage: localStorage });
+    await flushOnly();
+    store.resize("desktop", 2, 2);
+    await settle();
+    store.setMode("tall");
+    await flushOnly();
+    gate.release?.({ ok: true, layout: doc(tile("desktop", 0, 2, 2)) });
+    await flushOnly();
+    expect(store.entries).toEqual([tile("mobile", 0)]);
+    expect(JSON.parse(localStorage.getItem("dispatch.tile-layout.tall") ?? "null")).toEqual(
+      doc(tile("mobile", 0)),
+    );
+    expect(JSON.parse(localStorage.getItem("dispatch.tile-layout.wide") ?? "null")).toEqual(
+      doc(tile("desktop", 0, 2, 2)),
+    );
+  });
+
+  it.each([
+    "invalid JSON",
+    '{"version":2,"tiles":"bad"}',
+  ])("ignores malformed cache (%s) and supports storageless contexts", (raw) => {
+    localStorage.setItem("dispatch.tile-layout.wide", raw);
+    const store = createTileLayoutStore({ http: fakeHttp(), storage: localStorage });
+    expect(store.entries).toEqual([]);
+    expect(createTileLayoutStore({ http: fakeHttp() }).entries).toEqual([]);
   });
 
   it("sanitizes the server document defensively (a junk shape degrades to empty)", async () => {
@@ -120,6 +234,8 @@ describe("createTileLayoutStore", () => {
     expect(store.entries.map((t) => t.id)).toEqual(["desktop"]);
 
     store.setMode("tall");
+    expect(store.entries).toEqual([]);
+    expect(store.providerState).toBe("unknown");
     await flushOnly();
     expect(store.mode).toBe("tall");
     expect(store.entries.map((t) => t.id)).toEqual(["mobile"]);

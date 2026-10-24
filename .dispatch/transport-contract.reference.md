@@ -1,159 +1,26 @@
-# `@dispatch/transport-contract` — in-repo reference (read THIS, not node_modules)
+# `@dispatch/transport-contract` — in-repo reference
 
-> MIRRORS the backend's `@dispatch/transport-contract` package source so headless FE agents can read
-> the transport types WITHOUT following the `file:` dep symlink out of this repo (which hangs on a
-> permission prompt). Your CODE still imports `@dispatch/transport-contract` normally — this file is for
-> READING only.
->
-> **2026-10-14 delta (account-usage — ADDITIVE, `0.25.0` → `0.26.0`):** `GET /usage` + `GET /usage/:provider` +
-> `PUT /usage/:provider/settings` (Hyper daily credits) and the `AccountUsage*` types (verbatim at the end of this file).
->
-> **Orchestrator:** SNAPSHOT of `transport-contract@0.24.0` (MCP status + computers + provider concurrency + cancel queued message). Regenerate whenever
-> it changes.
->
-> **2026-09-04 delta (tiled layout plan 02 — ADDITIVE, no version bump; 2026-09-06: activation is PER WORKSPACE):** the
-> layout-provider contract ships. NEW WS message: `LayoutChangedMessage` (`{ type: "layout"; workspaceId: string; tree:
-> LayoutTree }` — server→client broadcast after every successful layout write; the FULL tree, decision 7; a global
-> fan-out and CLIENTS FILTER by their active workspace). `LayoutTree` is re-exported from `@dispatch/layout-contract`.
-> NEW HTTP routes (owned by the workspace's ACTIVE layout plugin — multiple layout plugins coexist loaded, and the
-> WORKSPACE's per-workspace enablement state (the plugins modal) picks the ONE that serves; while the workspace enables
-> NO layout plugin every route 404s, the frontend's no-provider signal): `GET /workspaces/:id/layout` (`{ tree }` —
-> read seeds a fresh workspace), `PUT /workspaces/:id/layout` (body `{ tree }` → 200 `{ tree }` / 400 `{ error }`
-> structural-invalidity), `DELETE /workspaces/:id/layout` (re-seed on next read; returns the fresh seed). The FE
-> consumes these via `features/layout` (`adapter/http.ts` + `store.svelte.ts`); the `layout` message is parsed in
-> `adapters/ws/logic.ts` and dispatched to `store.layout.onServerTree` (non-active workspaces ignored); the workspace
-> plugins modal's toggles re-probe via `store.layout.onWorkspacePluginsChanged` (the per-workspace activation
-> trigger).
->
-> **2026-09-03 delta (plugin system — plans 05/06, NO version bump verified against the worktree):** the
-> plugin-manager + per-workspace enablement contract ships. NEW WS messages: `WorkspaceSetMessage`
-> (`{ type: "workspace.set"; workspaceId }` — client→server; the server records the connection's workspace
-> and re-pushes the workspace-filtered surface catalog on receipt + on every broadcast) and
-> `ExtensionsChangedMessage` (`{ type: "extensions-changed"; action: "load"|"unload"|"reload"|"scan"|"forget";
-> pluginId? }` — server→client broadcast after every plugin-manager mutation; clients refetch `GET /plugins`
-> while the server re-pushes the catalog). NEW HTTP routes: `GET /plugins` (`PluginListResponse` —
-> `loaded`/`disabledWithReason`/`discovered`/`missing` rows), `POST /plugins/scan` (`PluginScanResponse`),
-> `POST /plugins/:id/load|unload|reload|forget` (`PluginOpResponse` = `PluginOpSuccess | PluginOpBlocked`,
-> 404/409 with `PluginBlockReason`: `core-locked | last-provider | cascade-needs-force | not-loaded |
-> not-found | already-loaded | engine-refused`), and plan 06 §6.6's `GET /workspaces/:id/plugins`
-> (`WorkspacePluginsResponse` — read-through materialization), `PUT /workspaces/:id/plugins/:pluginId`
-> (`{ state: "enabled"|"disabled"|"unset" }` → 409 `core-locked|unloaded`), and
-> `GET /workspaces/:id/plugins/providers-status` (`{ workspaceId, enabledProviderCount }` — the §6.5
-> zero-providers guardrail signal). `GET /models?workspaceId=` is now workspace-aware (no-param = global).
-> NOTE: the body below does NOT yet contain these sections — read the types from
-> `node_modules/@dispatch/transport-contract` (or the backend worktree) until this mirror is fully
-> regenerated. The FE (plan 07) consumes them via `features/plugins`.
->
-> **2026-08-20 delta (Named Agents — ADDITIVE, no version bump):** the `/named-agents` HTTP surface +
-> conversation snapshot wiring ships. New types: `NamedAgentsResponse` (`{ namedAgents: NamedAgent[] }`,
-> `GET /named-agents`), `NamedAgentResponse` (`{ namedAgent: NamedAgent }`, `POST`/`PUT`), and
-> `DeleteNamedAgentResponse` (`{ id }`), with `CreateNamedAgentRequest` / `UpdateNamedAgentRequest`
-> (`{ name, model }`). Snapshot semantics (plan §7): `ChatRequest.namedAgent?` (persist on the
-> conversation at creation), `ModelResponse.namedAgent?` (the persisted `NamedAgentSelectionSnapshot`),
-> and `SetModelRequest.namedAgent?` (persist/clear the snapshot with the model — omit for a raw
-> selection, pass `null` notion + omit `namedAgent` to clear). The FE consumes these via
-> `features/named-agents` + the app store's CRUD/`selectModel` methods (the local `logic/types.ts`
-> re-exports `NamedAgent`/`NamedAgentSelectionSnapshot` from `@dispatch/wire` and these request/response
-> types from this package).
->
-> **2026-06-29 update (cancel-queued-message — ADDITIVE, 0.23.0 → 0.24.0):** a per-message
-> **cancel** for the steering message queue ships. While a turn is GENERATING and a user
-> message is queued (awaiting steering delivery), the client can cancel a single queued
-> message by id so it never runs. New `WsClientMessage` member `ChatQueueCancelMessage`
-> (`{ type: "chat.queue.cancel"; conversationId; messageId }` — fire-and-forget, idempotent;
-> success confirmed by the `message-queue` surface updating, failure as `chat.error`). New
-> HTTP path `DELETE /conversations/:id/queue/:messageId` → `QueueCancelResponse`
-> (`{ conversationId; cancelled: boolean; queue }`). The cancel is scoped per conversation;
-> cancelling a drained/already-cancelled/unknown message is a silent no-op. `@dispatch/wire`
-> is unchanged (`QueuedMessage.id` is the cancel target).
->
-> **2026-06-27 update (concurrency-fixes — ADDITIVE, NO version bump):** the provider concurrency surface gains
-> (a) a configurable + persisted per-provider release COOLDOWN, and (b) adaptive headroom. `ConcurrencyStatusEntry`
-> gains FOUR new fields: `cooldownMs: number` (REQUIRED — per-slot release cooldown in ms, default 350; a recycled slot is
-> held this long before the next waiter is admitted), `autoReduced: boolean` (REQUIRED — true when the limit was auto-reduced
-> by 1 after a 429, one-way + persisted; the FE renders a visible banner), `autoReducedFrom?: number` (present only when
-> `autoReduced===true` — the original limit before reduction), and `notice?: string` (present only when `autoReduced===true` —
-> a human-readable banner message). The banner is DISMISSIBLE / persists while `autoReduced===true`; it clears when the user
-> restores the limit via `PUT /concurrency/limits/:providerId` (a manual PUT clears `autoReduced` server-side). NEW cooldown
-> endpoints: `GET /concurrency/cooldown/:providerId` → `ConcurrencyCooldownResponse` (`{ providerId, cooldownMs }`) — 404 when
-> the provider has no concurrency config at all (no limit, no cooldown), 503 when the extension isn't loaded;
-> `PUT /concurrency/cooldown/:providerId` ← `SetConcurrencyCooldownRequest` (`{ cooldownMs }` — must be a non-negative integer,
-> 0 = no cooldown / instant re-admission) → `ConcurrencyCooldownResponse` — 400 on an invalid body, 503 when not loaded.
-> Persists + applies immediately to subsequently recycled slots. Also (backend-only, no FE surface): a usage gate polls upstream
-> `concurrent_sessions` before admitting a queued agent. See `backend-handoff.md` §2j-update-3.
->
-> **2026-06-26 delta (provider concurrency — `transport-contract@0.23.0` bump):** adds the
-> per-provider concurrency-limits API types: `ConcurrencyLimitsResponse` (`GET /concurrency/limits`),
-> `SetConcurrencyLimitRequest` + `ConcurrencyLimitResponse` (`GET`/`PUT /concurrency/limits/:providerId`),
-> and `ConcurrencyStatusEntry` + `ConcurrencyStatusResponse` (`GET /concurrency/status`). The
-> `concurrency` extension tracks/limits in-flight token-generating requests per provider with
-> oldest-agent-first queueing; when it isn't loaded the list + status endpoints return empty arrays and
-> the single/PUT/DELETE return `503`. See `backend-handoff.md` §2j.
-> **2026-06-26 delta (vision handoff — ADDITIVE, NO version bump):** adds the vision/image surface.
-> `ChatRequest` (+ `ChatSendMessage`/`QueueRequest`) gains an optional `images?: readonly ImageInput[]`
-> (each entry: `{ url, mimeType? }` — a base64 data URL or `http(s)://` URL; validated non-array/no-url/
-> empty-url → 400, empty array treated as absent). `ModelMetadata` gains `vision?: boolean` (true when the
-> model natively accepts images; absent → the server's vision handoff transcribes images to text before the
-> model sees them). `ImageChunk`/`ImageInput` are `@dispatch/wire` types (re-exported here).
->
-> **2026-06-26 update (consult_vision + vision settings — ADDITIVE, NO version bump):** the `read_image`
-> tool is REPLACED by `consult_vision` (`{ question: string, imageIds?: number[], path?: string }`) — it
-> opens a NEW conversation tab with a vision-capable model, attaches the image + question, and returns the
-> vision model's answer (rendered like any tool call/result). Non-vision models now get NUMBERED
-> PLACEHOLDERS (`[Image N attached — call consult_vision with imageIds=[N] and a specific question to
-> analyze it]`) instead of auto-transcriptions — these are regular `text` chunks (render as-is). Image
-> compaction transcribes the oldest images past `imageLimit` to `[Compacted image]: <description>` text
-> chunks (also regular `text` — render as-is; the persisted `image` chunk stays for rendering). NEW global
-> vision settings API: `GET /settings/vision` → `VisionSettingsResponse` (`{ imageLimit, compactionModel }`),
-> `PUT /settings/vision` ← `SetVisionSettingsRequest` (partial: `imageLimit?` non-negative int, 0 = disable
-> compaction; `compactionModel?` `<key>/<model>` or null = auto). See `backend-handoff.md` §2j.
->
-> **2026-06-26 update (image storage — NO type change, behavior only):** persisted `ImageChunk.url`s are now
-> compact relative HTTP paths (`/images/<conversationId>/<uuid>.png`) served by the new
-> `GET /images/:conversationId/:imageId` endpoint (raw image bytes + correct Content-Type) — NOT base64 data
-> URLs (images are stored on disk under tmp, not in the SQLite store). `ChatRequest.images` (`ImageInput.url`)
-> is UNCHANGED — clients still send data URLs; the backend saves them to tmp and returns compact paths in
-> the persisted chunks. A client resolves a relative `url` against its API base (`resolveImageUrl`); the
-> optimistic echo's data URL and any absolute URL pass through. See `backend-handoff.md` §2j.
->
-> **2026-06-25 delta (SSH handoff #2 — ADDITIVE to `transport-contract@0.22.0`, NO version bump):** adds the
-> computer HTTP API types: `ComputerListResponse` (`GET /computers`), `ComputerResponse` (`GET /computers/:alias`),
-> `ComputerStatusResponse` (`GET /computers/:alias/status`), `TestComputerResponse` (`POST /computers/:alias/test`),
-> `SetConversationComputerRequest` + `ConversationComputerResponse`
-> (`GET`/`PUT`/`DELETE /conversations/:id/computer`), `SetWorkspaceDefaultComputerRequest`
-> (`PUT /workspaces/:id/default-computer`). Also `computerId?: string` on `ChatRequest`/`ChatSendMessage`/
-> `QueueRequest` (per-turn override; resolved server-side from the persisted per-conversation value in the MVP, so
-> `chat.send` need not send it). `Computer`/`ComputerEntry` themselves are `@dispatch/wire` types. See
-> `backend-handoff.md` §2e. (The `ssh` extension that provides the ComputerService is the last backend wave —
-> until it lands, `GET /computers` returns `[]` and statuses return `disconnected`.)
->
-> **2026-06-24 delta (MCP status handoff — package bumped `0.18.0` → `0.22.0`, ADDITIVE):** adds
-> `McpServerState`, `McpServerInfo`, and `McpStatusResponse`; endpoint
-> `GET /conversations/:id/mcp`. Mirrors the existing `GET /conversations/:id/lsp` shape (returns
-> `{cwd, servers}`, empty `servers` when no cwd is set). Each `McpServerInfo` reports an `id`,
-> `state` (`connecting` | `connected` | `error` | `disconnected`), optional `error`, `toolCount`,
-> and optional `configSource`. Also adds the previously-missing `configSource` field to
-> `LspServerInfo`. See `frontend-mcp-status-handoff.md`.
->
-> **2026-06-24 delta (system prompt handoff — package bumped `0.17.0` → `0.18.0`, ADDITIVE):** adds
-> `SystemPromptTemplateResponse`, `SetSystemPromptTemplateRequest`, `SystemPromptVariable`, and
-> `SystemPromptVariablesResponse`; endpoints `GET /system-prompt`, `PUT /system-prompt`, and
-> `GET /system-prompt/variables`. The system prompt template is global (resolved once per conversation
-> at construction time, persisted for cache safety). Variables include `system:*`, `prompt:*`, `git:*`,
-> and dynamic `file:<path>`; conditional blocks use `[if]`, `[else]`, `[endif]`. See
-> `frontend-system-prompt-handoff.md`.
+Mirrored from the sibling backend on 2026-10-21 for `feature/subscription-delivery-fix`.
+Package version remains 0.26.0; local `file:` dependency unchanged.
 
+New additive messages: `chat.accepted` after opening-message storage or queue insertion,
+`chat.subscription-rejected` for a nonfatal watcher limit, and `requestId` on queue requests
+and chat errors. Correlation tokens are not idempotency keys; clients must not automatically
+retry uncertain sends. The server retains the 256 combined subscription bound.
+
+```ts
 /**
  * Transport contract — the typed description of Dispatch's client–server API
  * (HTTP + WebSocket).
  *
- * This package is types-only (zero runtime). It is the single shared surface
+ * This package defines types plus pure conversation-ID boundary validation.
+ * That deliberate runtime exception is not a shared codec. It is the shared surface
  * every client imports to know how to talk to the backend — the CLI, the web
  * frontend (in its own repo), any third-party client — and the transport-http /
  * transport-ws servers import to know what they must accept and emit.
  *
  * Each side owns its OWN (de)serialization: there is deliberately no shared
- * parse/serialize helper here (isolation-over-DRY). The contract is the SHAPES,
+ * wire parse/serialize helper here (isolation-over-DRY). The contract is the SHAPES,
  * not the codec. The streaming response payload is the kernel's `AgentEvent`
  * union, re-exported here so a client has one import for the whole wire.
  *
@@ -164,39 +31,47 @@
  * is unchanged.
  */
 
+import type { LayoutTree } from "@dispatch/layout-contract";
+import type { TileGeometryMode, TileLayoutData } from "@dispatch/tile-layout-contract";
 import type { SurfaceClientMessage, SurfaceServerMessage } from "@dispatch/ui-contract";
 import type {
-	AgentEvent,
-	Computer,
-	ComputerEntry,
-	ConversationMeta,
-	ConversationStatus,
-	ImageInput,
-	QueuedMessage,
-	ReasoningEffort,
-	StoredChunk,
-	TurnMetrics,
-	Workspace,
-	WorkspaceEntry,
+  AgentEvent,
+  Computer,
+  ComputerEntry,
+  ConversationMeta,
+  ConversationStatus,
+  ImageInput,
+  NamedAgent,
+  NamedAgentSelectionSnapshot,
+  QueuedMessage,
+  ReasoningEffort,
+  StoredChunk,
+  TurnMetrics,
+  Workspace,
+  WorkspaceEntry,
 } from "@dispatch/wire";
 
+export type { LayoutTree } from "@dispatch/layout-contract";
 export type {
-	AgentEvent,
-	CompactionResult,
-	Computer,
-	ComputerEntry,
-	ConversationMeta,
-	ConversationStatus,
-	ImageChunk,
-	ImageInput,
-	QueuedMessage,
-	ReasoningEffort,
-	StepMetrics,
-	StoredChunk,
-	TurnMetrics,
-	Workspace,
-	WorkspaceEntry,
+  AgentEvent,
+  CompactionResult,
+  Computer,
+  ComputerEntry,
+  ConversationMeta,
+  ConversationStatus,
+  ImageChunk,
+  ImageInput,
+  NamedAgent,
+  NamedAgentSelectionSnapshot,
+  QueuedMessage,
+  ReasoningEffort,
+  StepMetrics,
+  StoredChunk,
+  TurnMetrics,
+  Workspace,
+  WorkspaceEntry,
 } from "@dispatch/wire";
+export { isValidConversationId, parseConversationId } from "./conversation-id.js";
 
 /**
  * Request body for `POST /chat` (sent as JSON).
@@ -206,68 +81,99 @@ export type {
  * response header (useful when `conversationId` was omitted).
  */
 export interface ChatRequest {
-	/**
-	 * The conversation to continue. Omit to start a fresh conversation — the
-	 * server mints an id and returns it via the `X-Conversation-Id` header.
-	 */
-	readonly conversationId?: string;
+  /**
+   * The conversation to continue. Omit to start a fresh conversation — the
+   * server mints an id and returns it via the `X-Conversation-Id` header.
+   * When supplied, must match `^[A-Za-z0-9_-]{1,128}$` (UUIDs and legacy IDs).
+   * Empty, null, and non-string values are rejected, not treated as absent.
+   */
+  readonly conversationId?: string;
 
-	/** The user's message text for this turn. */
-	readonly message: string;
+  /** The user's message text for this turn. */
+  readonly message: string;
 
-	/**
-	 * Images attached to this turn (e.g. a user-pasted screenshot). Each entry's
-	 * `url` is a base64 data URL (`data:image/…;base64,…`) or an `http(s)://`
-	 * URL. The server converts these to `image` chunks on the persisted user
-	 * message. For a VISION-capable model (e.g. kimi), the images are passed
-	 * through to the provider natively. For a NON-vision model (e.g. glm-5.2),
-	 * the server's vision handoff transcribes each image to a text description
-	 * (via a vision-capable model) and feeds that text instead — so a text-only
-	 * model can still reason about the image's contents. Optional — omit for a
-	 * text-only turn (backward compatible). Validation: non-array `images` →
-	 * 400; an image without `url` → 400; empty `url` → 400. An empty array is
-	 * accepted and treated as absent.
-	 */
-	readonly images?: readonly ImageInput[];
+  /**
+   * Images attached to this turn (e.g. a user-pasted screenshot). Each entry's
+   * `url` is a base64 data URL (`data:image/…;base64,…`) or an `http(s)://`
+   * URL. The server converts these to `image` chunks on the persisted user
+   * message. For a VISION-capable model (e.g. kimi), the images are passed
+   * through to the provider natively. For a NON-vision model (e.g. glm-5.2),
+   * the server's vision handoff transcribes each image to a text description
+   * (via a vision-capable model) and feeds that text instead — so a text-only
+   * model can still reason about the image's contents. Optional — omit for a
+   * text-only turn (backward compatible).
+   */
+  readonly images?: readonly ImageInput[];
 
-	/**
-	 * The model to use, as a model name in `<credentialName>/<model>` form — one
-	 * of the exact strings returned by `GET /models`. Omit to use the server's
-	 * default credential + model.
-	 */
-	readonly model?: string;
+  /**
+   * The model to use, as a model name in `<credentialName>/<model>` form — one
+   * of the exact strings returned by `GET /models`. Omit to use the server's
+   * default credential + model.
+   */
+  readonly model?: string;
 
-	/**
-	 * Working directory for this turn's tool execution. Defaults server-side when
-	 * omitted. Forwarded to tools for path resolution; never part of the model
-	 * prompt (so it does not affect prompt caching).
-	 */
-	readonly cwd?: string;
+  /**
+   * Working directory for this turn's tool execution. Defaults server-side when
+   * omitted. Forwarded to tools for path resolution; never part of the model
+   * prompt (so it does not affect prompt caching).
+   */
+  readonly cwd?: string;
 
-	/**
-	 * Reasoning-effort override for THIS turn only (does not persist). When
-	 * omitted, the server resolves the conversation's persisted value, falling
-	 * back to `"high"`. Must be one of the `ReasoningEffort` levels; an
-	 * unrecognized value → HTTP 400 `{ error }`.
-	 */
-	readonly reasoningEffort?: ReasoningEffort;
+  /**
+   * The computer to run this turn's tools on — an SSH config `Host` alias
+   * (one of the `alias` values returned by `GET /computers`). Omit to inherit
+   * the resolved chain: per-conversation `computerId` → the workspace's
+   * `defaultComputerId` → `null`/local (today's behavior). Like `cwd`, this is
+   * a per-turn tool-execution target forwarded to tools and never part of the
+   * model prompt (so it does not affect prompt caching). Mirrors `cwd`.
+   */
+  readonly computerId?: string;
 
-	/**
-	 * The workspace to assign this conversation to. Omit for `"default"`.
-	 * If the workspace doesn't exist yet, it is auto-created (title = id,
-	 * defaultCwd = null).
-	 */
-	readonly workspaceId?: string;
+  /**
+   * Reasoning-effort override for THIS turn only (does not persist). When
+   * omitted, the server resolves the conversation's persisted value, falling
+   * back to `"high"`. Must be one of the `ReasoningEffort` levels; an
+   * unrecognized value → HTTP 400 `{ error }`.
+   */
+  readonly reasoningEffort?: ReasoningEffort;
 
-	/**
-	 * The computer to run this turn's tools on — an SSH config `Host` alias
-	 * (one of the `alias` values returned by `GET /computers`). Omit to inherit
-	 * the resolved chain: per-conversation `computerId` → the workspace's
-	 * `defaultComputerId` → `null`/local (today's behavior). Like `cwd`, this is
-	 * a per-turn tool-execution target forwarded to tools and never part of the
-	 * model prompt (so it does not affect prompt caching). Mirrors `cwd`.
-	 */
-	readonly computerId?: string;
+  /**
+   * The workspace to assign this conversation to. Omit for `"default"`.
+   * If the workspace doesn't exist yet, it is auto-created (title = id,
+   * defaultCwd = null).
+   */
+  readonly workspaceId?: string;
+
+  /**
+   * A human-readable title for the conversation tab — persisted at creation
+   * time, after the new-conversation workspace setup resolves (so workspace
+   * assignment and first-turn system-prompt construction are not skipped) and
+   * before the first message append (so the append's auto-derived title does
+   * not overwrite it). The tab shows it instead of the default derived from
+   * the first message (`"Untitled"` until the first append). Omit to keep the
+   * auto-derived title. When present, the value is trimmed server-side; a
+   * whitespace-only value is treated as absent (auto-derive). A non-string
+   * value → HTTP 400 `{ error }`.
+   *
+   * Backward compatible — clients that omit it are unaffected. Mirrors the
+   * dedicated `PUT /conversations/:id/title` endpoint but is atomic with the
+   * turn (no second round-trip from the client).
+   */
+  readonly title?: string;
+
+  /**
+   * Named Agent selection snapshot to persist on the conversation at creation.
+   *
+   * When the client starts a conversation via the synthetic **Named Agents**
+   * provider, it resolves the selected Named Agent to its raw `model` and sends
+   * that **plus** this snapshot so the conversation freezes how it was selected
+   * (snapshot semantics — see `NamedAgentSelectionSnapshot` in `@dispatch/wire`).
+   * The server persists it alongside the model; later edits/deletes of the Named
+   * Agent do not change this conversation's selection. Omit for a raw-model-only
+   * conversation (backward compatible). Ignored/overwritten by a subsequent
+   * `PUT /conversations/:id/model` that carries its own snapshot.
+   */
+  readonly namedAgent?: NamedAgentSelectionSnapshot;
 }
 
 /**
@@ -280,21 +186,63 @@ export interface ChatRequest {
  * read `models` are unaffected.
  */
 export interface ModelsResponse {
-	readonly models: readonly string[];
-	readonly modelInfo?: Readonly<Record<string, ModelMetadata>>;
+  readonly models: readonly string[];
+  readonly modelInfo?: Readonly<Record<string, ModelMetadata>>;
 }
 
 /** Per-model metadata returned alongside the model catalog. */
 export interface ModelMetadata {
-	readonly contextWindow?: number;
-	/**
-	 * Whether this model can natively accept image input (vision/multimodal).
-	 * When `true`, image chunks in a user message are passed through to the
-	 * provider. When `false`/absent, the server's vision handoff transcribes
-	 * images to text before the model sees them. A client may use this to show
-	 * a vision badge in the model picker. Optional — absent when unknown.
-	 */
-	readonly vision?: boolean;
+  readonly contextWindow?: number;
+  /**
+   * Whether this model can natively accept image input (vision/multimodal).
+   * When `true`, image chunks in a user message are passed through to the
+   * provider. When `false`/absent, the server's vision handoff transcribes
+   * images to text before the model sees them. A client may use this to show a
+   * vision badge in the model picker. Optional — absent when unknown.
+   */
+  readonly vision?: boolean;
+}
+
+// ─── Named Agents ────────────────────────────────────────────────────────────
+
+/**
+ * Response body for `GET /named-agents` — the list of configured Named Agents.
+ *
+ * Each record is a user-curated model preset (`id`, friendly `name`, canonical
+ * `<credential>/<model>`). This is the local configuration that drives the
+ * "Named Agents" synthetic provider in the frontend model selector and the
+ * `list_agent_models`/`summon_agent` agent tools — NOT the raw model catalog
+ * (which `GET /models` continues to serve unchanged).
+ */
+export interface NamedAgentsResponse {
+  readonly namedAgents: readonly NamedAgent[];
+}
+
+/** Response body for `POST`/`PUT /named-agents(/:id)` — the canonical saved record. */
+export interface NamedAgentResponse {
+  readonly namedAgent: NamedAgent;
+}
+
+/** Request body for `POST /named-agents` — create a Named Agent. */
+export interface CreateNamedAgentRequest {
+  /** User-chosen friendly name (trimmed; unique case-insensitively). */
+  readonly name: string;
+  /** Canonical `<credential>/<model>` identifier. */
+  readonly model: string;
+}
+
+/** Request body for `PUT /named-agents/:id` — full update of a Named Agent. */
+export interface UpdateNamedAgentRequest {
+  readonly name: string;
+  readonly model: string;
+}
+
+/**
+ * Response body for `DELETE /named-agents/:id` — confirms removal of the record
+ * with the stable id.
+ */
+export interface DeleteNamedAgentResponse {
+  readonly id: string;
 }
 
 /**
@@ -318,17 +266,24 @@ export interface ModelMetadata {
  * tail sync = `?sinceSeq=<cursor>` (no limit); page older history in =
  * `?beforeSeq=<oldestLoadedSeq>&limit=<k>`.
  *
- * Seq numbering is **1-based and gap-free** (a CONTRACTUAL GUARANTEE — see
- * `StoredChunk` in `@dispatch/wire`): a client can derive "older chunks exist"
- * purely from `oldestLoaded.seq > 1`; there is deliberately no
- * `earliestSeq`/`hasOlder` response field.
+ * Seq is positive and never reused within a conversation, even when history is
+ * replaced. The retained log need not start at 1, so `oldestLoaded.seq > 1`
+ * does not prove older chunks exist. An empty/short backfill page can establish
+ * that no earlier chunks remain.
+ *
+ * `historyEpoch` is the persisted replacement count (missing storage value = 0).
+ * Every successful replacement, including an empty one, increments it once.
+ * On a different epoch, clients invalidate their conversation cache and refetch
+ * with `sinceSeq=0` (optionally windowed), even if this response has no chunks.
  *
  * `chunks` is the RAW, append-order, seq-ordered slice of the conversation log
  * selected + windowed as above. It is NOT reconciled: a dangling tool-call is
  * returned as-is (rendered as an interrupted call). Reconciliation is a
  * turn-path concern — the server repairs history only when it feeds a provider,
  * never on this read path — which is what preserves the per-chunk `seq` cursor
- * invariant (a synthesized repair chunk would have no seq).
+ * invariant (a synthesized repair chunk would have no seq). Provider-opaque
+ * thinking replay fields (`signature` and `redactedData`) are omitted from
+ * this client-facing response; chunk presence, text, order, and seq are intact.
  *
  * `latestSeq` is the `seq` of the LAST chunk in this response, or — when the
  * slice is empty (the client is already caught up) — the requested `sinceSeq`
@@ -343,8 +298,9 @@ export interface ModelMetadata {
  * the store contract.)
  */
 export interface ConversationHistoryResponse {
-	readonly chunks: readonly StoredChunk[];
-	readonly latestSeq: number;
+  readonly chunks: readonly StoredChunk[];
+  readonly latestSeq: number;
+  readonly historyEpoch: number;
 }
 
 /**
@@ -363,15 +319,15 @@ export interface ConversationHistoryResponse {
  * absent until then.
  */
 export interface ConversationMetricsResponse {
-	readonly turns: readonly TurnMetrics[];
+  readonly turns: readonly TurnMetrics[];
 }
 
 export interface ConversationStatusResponse {
-	readonly conversationId: string;
-	/** True if the orchestrator has an in-memory active turn for this conversation. */
-	readonly isActive: boolean;
-	/** The persisted lifecycle status from the conversation store. */
-	readonly status: ConversationStatus;
+  readonly conversationId: string;
+  /** True if the orchestrator has an in-memory active turn for this conversation. */
+  readonly isActive: boolean;
+  /** The persisted lifecycle status from the conversation store. */
+  readonly status: ConversationStatus;
 }
 
 /** The aggregation window for `GET /metrics/throughput`. */
@@ -385,16 +341,16 @@ export type ThroughputPeriod = "day" | "week" | "month";
  * waits).
  */
 export interface ThroughputModelStat {
-	/** The model name in `<credentialName>/<model>` form (as selected). */
-	readonly model: string;
-	/** Token-weighted average tokens/second over the period. */
-	readonly tokensPerSecond: number;
-	/** Total output tokens generated across the period's turns. */
-	readonly totalOutputTokens: number;
-	/** Total pure generation time across the period's turns, in milliseconds. */
-	readonly totalGenMs: number;
-	/** Number of turns that contributed. */
-	readonly turns: number;
+  /** The model name in `<credentialName>/<model>` form (as selected). */
+  readonly model: string;
+  /** Token-weighted average tokens/second over the period. */
+  readonly tokensPerSecond: number;
+  /** Total output tokens generated across the period's turns. */
+  readonly totalOutputTokens: number;
+  /** Total pure generation time across the period's turns, in milliseconds. */
+  readonly totalGenMs: number;
+  /** Number of turns that contributed. */
+  readonly turns: number;
 }
 
 /**
@@ -408,21 +364,21 @@ export interface ThroughputModelStat {
  * `tokensPerSecond` descending.
  */
 export interface ThroughputResponse {
-	readonly period: ThroughputPeriod;
-	readonly date: string;
-	/** Inclusive start of the window, epoch-ms. */
-	readonly start: number;
-	/** Exclusive end of the window, epoch-ms. */
-	readonly end: number;
-	readonly models: readonly ThroughputModelStat[];
+  readonly period: ThroughputPeriod;
+  readonly date: string;
+  /** Inclusive start of the window, epoch-ms. */
+  readonly start: number;
+  /** Exclusive end of the window, epoch-ms. */
+  readonly end: number;
+  readonly models: readonly ThroughputModelStat[];
 }
 
 // ─── Per-conversation working directory (cwd) ─────────────────────────────────
 
 /** Response of `GET /conversations/:id/cwd`. `cwd` is null when never set. */
 export interface CwdResponse {
-	readonly conversationId: string;
-	readonly cwd: string | null;
+  readonly conversationId: string;
+  readonly cwd: string | null;
 }
 
 /**
@@ -436,8 +392,8 @@ export interface CwdResponse {
  * `"default"` if none).
  */
 export interface SetCwdRequest {
-	readonly cwd: string;
-	readonly workspaceId?: string;
+  readonly cwd: string;
+  readonly workspaceId?: string;
 }
 
 // ─── Per-conversation reasoning effort ────────────────────────────────────────
@@ -448,8 +404,8 @@ export interface SetCwdRequest {
  * `"high"`).
  */
 export interface ReasoningEffortResponse {
-	readonly conversationId: string;
-	readonly reasoningEffort: ReasoningEffort | null;
+  readonly conversationId: string;
+  readonly reasoningEffort: ReasoningEffort | null;
 }
 
 /**
@@ -459,19 +415,27 @@ export interface ReasoningEffortResponse {
  * unrecognized level → HTTP 400 `{ error }`.
  */
 export interface SetReasoningEffortRequest {
-	readonly reasoningEffort: ReasoningEffort;
+  readonly reasoningEffort: ReasoningEffort;
 }
 
-// ─── Per-conversation model persistence ───────────────────────────────────────
+// ─── Per-conversation model ──────────────────────────────────────────────────
 
 /**
  * Response of `GET /conversations/:id/model`. `model` is the persisted model
  * name in `<credentialName>/<model>` form, or null when never set (the server
  * then resolves turns using the default provider + model).
+ *
+ * `namedAgent` is the Named Agent selection snapshot recorded when the
+ * conversation was started/selected via a Named Agent. Present only for
+ * conversations that were created through a Named Agent (snapshot semantics: it
+ * freezes the friendly id/name + resolved model at selection time, so later
+ * edits to the Named Agent do not change this conversation's selection). A
+ * conversation holding only a raw model carries no `namedAgent`.
  */
 export interface ModelResponse {
-	readonly conversationId: string;
-	readonly model: string | null;
+  readonly conversationId: string;
+  readonly model: string | null;
+  readonly namedAgent?: NamedAgentSelectionSnapshot;
 }
 
 /**
@@ -480,9 +444,16 @@ export interface ModelResponse {
  * `ChatRequest.model` override). Pass `null` to clear the persisted selection.
  * An unrecognized model name is not validated here (the provider resolves it
  * at turn time; an unknown model → turn error, not a 400).
+ *
+ * `namedAgent` (optional) is a Named Agent selection snapshot to persist with
+ * the model — sent when the client sets this conversation's model via the
+ * synthetic **Named Agents** provider so the conversation freezes the friendly
+ * selection. When `model` is `null` (clear), the persisted snapshot is also
+ * cleared. Omit entirely for a raw-model selection (backward compatible).
  */
 export interface SetModelRequest {
-	readonly model: string | null;
+  readonly model: string | null;
+  readonly namedAgent?: NamedAgentSelectionSnapshot;
 }
 
 // ─── Conversation close (explicit tab close) ──────────────────────────────────
@@ -502,9 +473,9 @@ export interface SetModelRequest {
  * `abortedTurn: false`.
  */
 export interface CloseConversationResponse {
-	readonly conversationId: string;
-	/** True when an in-flight turn existed and was aborted by this close. */
-	readonly abortedTurn: boolean;
+  readonly conversationId: string;
+  /** True when an in-flight turn existed and was aborted by this close. */
+  readonly abortedTurn: boolean;
 }
 
 // ─── System prompt template ───────────────────────────────────────────────────
@@ -519,8 +490,8 @@ export interface CloseConversationResponse {
  * and reused on all subsequent turns (cache-safe — no per-turn reconstruction).
  */
 export interface SystemPromptTemplateResponse {
-	/** The template text (may be empty — then no system prompt is sent). */
-	readonly template: string;
+  /** The template text (may be empty — then no system prompt is sent). */
+  readonly template: string;
 }
 
 /**
@@ -531,7 +502,7 @@ export interface SystemPromptTemplateResponse {
  * conversations use the new template on their first turn.
  */
 export interface SetSystemPromptTemplateRequest {
-	readonly template: string;
+  readonly template: string;
 }
 
 /**
@@ -540,43 +511,39 @@ export interface SetSystemPromptTemplateRequest {
  * selector buttons.
  */
 export interface SystemPromptVariable {
-	/** The variable type/source: `"system"`, `"file"`, `"prompt"`, `"git"`. */
-	readonly type: string;
-	/** The variable name (e.g. `"time"`, `"date"`, `"os"`). For dynamic types, a description. */
-	readonly name: string;
-	/** Human-readable description of what the variable resolves to. */
-	readonly description: string;
-	/**
-	 * When `true`, any name is valid for this type (e.g. `file:<path>` accepts
-	 * any file path). The frontend should allow free-text input for the name.
-	 */
-	readonly dynamic?: boolean;
+  /** The variable type/source: `"system"`, `"file"`, `"prompt"`, `"git"`. */
+  readonly type: string;
+  /** The variable name (e.g. `"time"`, `"date"`, `"os"`). For dynamic types, a description. */
+  readonly name: string;
+  /** Human-readable description of what the variable resolves to. */
+  readonly description: string;
+  /**
+   * When `true`, any name is valid for this type (e.g. `file:<path>` accepts
+   * any file path). The frontend should allow free-text input for the name.
+   */
+  readonly dynamic?: boolean;
 }
 
 /** Response of `GET /system-prompt/variables`. */
 export interface SystemPromptVariablesResponse {
-	readonly variables: readonly SystemPromptVariable[];
+  readonly variables: readonly SystemPromptVariable[];
 }
 
-// ─── Vision settings (global) ───────────────────────────────────────────────
+// ─── Vision settings (global) ──────────────────────────────────────────────────
 
 /**
  * Response of `GET /settings/vision` — the global vision configuration shared
  * across all conversations and vision models.
  */
 export interface VisionSettingsResponse {
-	/** Max native images per turn (default 10); 0 disables image compaction. */
-	readonly imageLimit: number;
-	/** Which model transcribes old images (null = auto-select a vision model). */
-	readonly compactionModel: string | null;
+  readonly imageLimit: number;
+  readonly compactionModel: string | null;
 }
 
 /** Body of `PUT /settings/vision` — a partial update. */
 export interface SetVisionSettingsRequest {
-	/** Non-negative integer (0 = disable compaction). */
-	readonly imageLimit?: number;
-	/** A model name (`<key>/<model>`) or null (auto). */
-	readonly compactionModel?: string | null;
+  readonly imageLimit?: number;
+  readonly compactionModel?: string | null;
 }
 
 // ─── Message queue (steering) ─────────────────────────────────────────────────
@@ -594,15 +561,18 @@ export interface SetVisionSettingsRequest {
  * works regardless of generation state. The resolved queue + whether a turn was
  * started are returned in `QueueResponse`.
  *
- * `text` must be non-empty (after trim) → HTTP 400 `{ error }` otherwise.
+ * `text` must be a string; empty/whitespace text requires at least one image.
+ * Invalid bodies return HTTP 400 `{ error }`.
  */
 export interface QueueRequest {
-	readonly text: string;
-	/**
-	 * The workspace to assign the conversation to (if a new conversation is
-	 * started). Omit for `"default"`. Auto-creates if missing.
-	 */
-	readonly workspaceId?: string;
+  readonly images?: readonly ImageInput[];
+  readonly computerId?: string;
+  readonly text: string;
+  /**
+   * The workspace to assign the conversation to (if a new conversation is
+   * started). Omit for `"default"`. Auto-creates if missing.
+   */
+  readonly workspaceId?: string;
 }
 
 /**
@@ -614,9 +584,9 @@ export interface QueueRequest {
  * the chat channel as usual.
  */
 export interface QueueResponse {
-	readonly conversationId: string;
-	readonly startedTurn: boolean;
-	readonly queue: readonly QueuedMessage[];
+  readonly conversationId: string;
+  readonly startedTurn: boolean;
+  readonly queue: readonly QueuedMessage[];
 }
 
 /**
@@ -635,9 +605,9 @@ export interface QueueResponse {
  * fire-and-forget a cancel and reconcile from the surface.
  */
 export interface QueueCancelResponse {
-	readonly conversationId: string;
-	readonly cancelled: boolean;
-	readonly queue: readonly QueuedMessage[];
+  readonly conversationId: string;
+  readonly cancelled: boolean;
+  readonly queue: readonly QueuedMessage[];
 }
 
 // ─── Per-conversation LSP status ──────────────────────────────────────────────
@@ -647,39 +617,39 @@ export type LspServerState = "connected" | "starting" | "error" | "not-started";
 
 /** One language server's status as reported to the frontend. */
 export interface LspServerInfo {
-	/** Stable server id, e.g. "typescript", "luau-lsp". */
-	readonly id: string;
-	/** Human-readable display name. */
-	readonly name: string;
-	/** The resolved workspace root the server is (or would be) rooted at (absolute). */
-	readonly root: string;
-	/** File extensions this server handles, e.g. [".ts", ".tsx"] or [".luau"]. */
-	readonly extensions: readonly string[];
-	/** Current connection state. */
-	readonly state: LspServerState;
-	/** Present only when `state === "error"`: a short human-readable reason. */
-	readonly error?: string;
-	/**
-	 * Which config source this server was resolved from: `".dispatch/lsp.json"`,
-	 * `"opencode.json"`, or `"built-in"` (the built-in TypeScript default). Omitted
-	 * when not yet resolved. Surfaces config-shadow debugging to the status caller
-	 * (a broken `.dispatch/lsp.json` silently shadowing `opencode.json`).
-	 */
-	readonly configSource?: string;
+  /** Stable server id, e.g. "typescript", "luau-lsp". */
+  readonly id: string;
+  /** Human-readable display name. */
+  readonly name: string;
+  /** The resolved workspace root the server is (or would be) rooted at (absolute). */
+  readonly root: string;
+  /** File extensions this server handles, e.g. [".ts", ".tsx"] or [".luau"]. */
+  readonly extensions: readonly string[];
+  /** Current connection state. */
+  readonly state: LspServerState;
+  /** Present only when `state === "error"`: a short human-readable reason. */
+  readonly error?: string;
+  /**
+   * Which config source this server was resolved from: `".dispatch/lsp.json"`,
+   * `"opencode.json"`, or `"built-in"` (the built-in TypeScript default). Omitted
+   * when not yet resolved. Surfaces config-shadow debugging to the status caller
+   * (a broken `.dispatch/lsp.json` silently shadowing `opencode.json`).
+   */
+  readonly configSource?: string;
 }
 
 /** Response of `GET /conversations/:id/lsp`. */
 export interface LspStatusResponse {
-	readonly conversationId: string;
-	/**
-	 * The resolved working directory the LSP connects on, or `null` when no
-	 * cwd has been set for the conversation (then `servers` is empty). When
-	 * non-null, this is the effective cwd — a relative persisted cwd resolved
-	 * against the conversation's workspace `defaultCwd`.
-	 */
-	readonly cwd: string | null;
-	/** The language servers configured for `cwd` and their live state. */
-	readonly servers: readonly LspServerInfo[];
+  readonly conversationId: string;
+  /**
+   * The resolved working directory the LSP connects on, or `null` when no
+   * cwd has been set for the conversation (then `servers` is empty). When
+   * non-null, this is the effective cwd — a relative persisted cwd resolved
+   * against the conversation's workspace `defaultCwd`.
+   */
+  readonly cwd: string | null;
+  /** The language servers configured for `cwd` and their live state. */
+  readonly servers: readonly LspServerInfo[];
 }
 
 // ─── MCP status ──────────────────────────────────────────────────────
@@ -688,29 +658,29 @@ export type McpServerState = "connecting" | "connected" | "error" | "disconnecte
 
 /** One MCP server's status as reported to the frontend. */
 export interface McpServerInfo {
-	/** Stable server id (the config key from `.dispatch/mcp.json`), e.g. "freecad". */
-	readonly id: string;
-	/** Current connection state. */
-	readonly state: McpServerState;
-	/** Present only when `state === "error"`: a short human-readable reason. */
-	readonly error?: string;
-	/** Number of tools discovered from this server. */
-	readonly toolCount: number;
-	/** Which config source this server was resolved from. */
-	readonly configSource?: string;
+  /** Stable server id (the config key from `.dispatch/mcp.json`), e.g. "freecad". */
+  readonly id: string;
+  /** Current connection state. */
+  readonly state: McpServerState;
+  /** Present only when `state === "error"`: a short human-readable reason. */
+  readonly error?: string;
+  /** Number of tools discovered from this server. */
+  readonly toolCount: number;
+  /** Which config source this server was resolved from. */
+  readonly configSource?: string;
 }
 
 /** Response of `GET /conversations/:id/mcp`. */
 export interface McpStatusResponse {
-	readonly conversationId: string;
-	/**
-	 * The resolved working directory the MCP servers are configured for, or
-	 * `null` when no cwd has been set for the conversation (then `servers` is
-	 * empty). Mirrors the LSP status endpoint behavior.
-	 */
-	readonly cwd: string | null;
-	/** The MCP servers configured for `cwd` and their live state. */
-	readonly servers: readonly McpServerInfo[];
+  readonly conversationId: string;
+  /**
+   * The resolved working directory the MCP servers are configured for, or
+   * `null` when no cwd has been set for the conversation (then `servers` is
+   * empty). Mirrors the LSP status endpoint behavior.
+   */
+  readonly cwd: string | null;
+  /** The MCP servers configured for `cwd` and their live state. */
+  readonly servers: readonly McpServerInfo[];
 }
 
 /**
@@ -724,17 +694,17 @@ export interface McpStatusResponse {
  * prefix is byte-identical to a real turn (which is what makes the cache hit).
  */
 export interface WarmRequest {
-	/** The conversation whose prompt cache to warm. */
-	readonly conversationId: string;
+  /** The conversation whose prompt cache to warm. */
+  readonly conversationId: string;
 
-	/**
-	 * The model name in `<credentialName>/<model>` form the conversation uses, so
-	 * the warm resolves the same provider + prefix. Omit to use the server default.
-	 */
-	readonly model?: string;
+  /**
+   * The model name in `<credentialName>/<model>` form the conversation uses, so
+   * the warm resolves the same provider + prefix. Omit to use the server default.
+   */
+  readonly model?: string;
 
-	/** Working directory matching the conversation's turns (for cwd-aware tool assembly). */
-	readonly cwd?: string;
+  /** Working directory matching the conversation's turns (for cwd-aware tool assembly). */
+  readonly cwd?: string;
 }
 
 /**
@@ -746,26 +716,26 @@ export interface WarmRequest {
  * server responds `409` with `{ error }` instead of this body.
  */
 export interface WarmResponse {
-	readonly inputTokens: number;
-	readonly outputTokens: number;
-	readonly cacheReadTokens: number;
-	readonly cacheWriteTokens: number;
-	/**
-	 * **Cache rate** — what fraction of THIS request's prompt was served from cache:
-	 * `round(cacheReadTokens / inputTokens * 100)` (0 when `inputTokens <= 0`).
-	 * (`inputTokens` is the TOTAL prompt incl. cached, so this is in [0,100].)
-	 */
-	readonly cachePct: number;
-	/**
-	 * **Expected cache (retention)** — of the cacheable prefix this warm touched, how
-	 * much was still warm and read back vs. had to be (re)written:
-	 * `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)` (0 when the
-	 * sum is 0). For a healthy warm this is ~**100%** (the whole prefix was still
-	 * cached); it drops toward 0 as the cache expires/busts and the warm has to rewrite
-	 * it. This is the warming HEALTH signal — distinct from `cachePct` (which a warm's
-	 * tiny fresh probe makes ~equal, but which on a real turn reflects new content).
-	 */
-	readonly expectedCacheRate: number;
+  readonly inputTokens: number;
+  readonly outputTokens: number;
+  readonly cacheReadTokens: number;
+  readonly cacheWriteTokens: number;
+  /**
+   * **Cache rate** — what fraction of THIS request's prompt was served from cache:
+   * `round(cacheReadTokens / inputTokens * 100)` (0 when `inputTokens <= 0`).
+   * (`inputTokens` is the TOTAL prompt incl. cached, so this is in [0,100].)
+   */
+  readonly cachePct: number;
+  /**
+   * **Expected cache (retention)** — of the cacheable prefix this warm touched, how
+   * much was still warm and read back vs. had to be (re)written:
+   * `round(cacheReadTokens / (cacheReadTokens + cacheWriteTokens) * 100)` (0 when the
+   * sum is 0). For a healthy warm this is ~**100%** (the whole prefix was still
+   * cached); it drops toward 0 as the cache expires/busts and the warm has to rewrite
+   * it. This is the warming HEALTH signal — distinct from `cachePct` (which a warm's
+   * tiny fresh probe makes ~equal, but which on a real turn reflects new content).
+   */
+  readonly expectedCacheRate: number;
 }
 
 // ─── WebSocket chat ops ───────────────────────────────────────────────────────
@@ -780,7 +750,9 @@ export interface WarmResponse {
  * `AgentEvent`s (each carries `conversationId`).
  */
 export interface ChatSendMessage extends ChatRequest {
-	readonly type: "chat.send";
+  readonly type: "chat.send";
+  /** Optional client correlation token, echoed by admission replies. Not an idempotency key. */
+  readonly requestId?: string;
 }
 
 /**
@@ -790,8 +762,25 @@ export interface ChatSendMessage extends ChatRequest {
  * carrier.
  */
 export interface ChatDeltaMessage {
-	readonly type: "chat.delta";
-	readonly event: AgentEvent;
+  readonly type: "chat.delta";
+  readonly event: AgentEvent;
+}
+
+/**
+ * Replay or a single live payload exceeded the WS delivery budget. No partial
+ * replay/placeholder payload is sent; live subscription remains active. The
+ * client must refetch committed history over HTTP and reconcile provisional
+ * content by turn/step identity (not append duplicates). While this turn is
+ * active, use a bounded single-flight history refresh (step-complete may precede
+ * persistence), and a final refresh on turn-ended including aborted/failed
+ * terminals, so omitted data committed after this notice is recovered.
+ * This is not a transport failure and must not trigger reconnect/resubscribe.
+ */
+export interface ChatResyncRequiredMessage {
+  readonly type: "chat.resync-required";
+  readonly conversationId: string;
+  readonly turnId?: string;
+  readonly reason: "replay-limit" | "payload-limit";
 }
 
 /**
@@ -800,9 +789,39 @@ export interface ChatDeltaMessage {
  * `TurnErrorEvent` inside a `chat.delta`.)
  */
 export interface ChatErrorMessage {
-	readonly type: "chat.error";
-	readonly conversationId?: string;
-	readonly message: string;
+  readonly type: "chat.error";
+  readonly conversationId?: string;
+  readonly requestId?: string;
+  readonly message: string;
+}
+
+/** Sent to the sender only AFTER its opening message is stored or queue insertion completes. */
+export interface ChatAcceptedMessage {
+  readonly type: "chat.accepted";
+  readonly conversationId: string;
+  readonly requestId: string;
+}
+
+/** A rejected watcher does not disconnect the socket or reject chat input. */
+export interface ChatSubscriptionRejectedMessage {
+  readonly type: "chat.subscription-rejected";
+  readonly conversationId: string;
+  readonly reason: "subscription-limit";
+}
+
+/**
+ * Accepted chat.send deferred behind compaction, sent only to its sender AFTER
+ * storage/insertion. Not a transcript event: remove the correlated optimistic
+ * opening message and display the authoritative message-queue surface instead.
+ * Live user-message/steering and history resync remain transcript-authoritative.
+ * Old clients safely ignore this additive message. Ordinary starts use chat.accepted.
+ */
+export interface ChatQueuedMessage {
+  readonly type: "chat.queued";
+  readonly conversationId: string;
+  readonly reason: "compaction";
+  readonly messageId: string;
+  readonly requestId?: string;
 }
 
 /**
@@ -816,14 +835,17 @@ export interface ChatErrorMessage {
  * `turn-start`), then streams subsequent live events. If no turn is in-flight,
  * nothing is replayed (the client relies on `GET /conversations/:id` history).
  * A client infers "generating" from a replayed `turn-start` with no matching
- * `done`/`turn-sealed` yet. Idempotent per `(connection, conversationId)`.
+ * `done`/`turn-sealed` yet. A bounded transport may replace the WHOLE replay
+ * with chat.resync-required; in that case its turnId identifies an active turn,
+ * and the client must recover committed content over HTTP (see that message).
+ * Idempotent per `(connection, conversationId)`.
  *
- * NOTE: `chat.send` auto-subscribes the sending connection, so a client only needs
- * `chat.subscribe` for conversations it is viewing but did not send to.
+ * NOTE: `chat.send` tries to auto-subscribe the sender within the shared watcher budget.
+ * Watcher rejection is nonfatal and never gates input admission.
  */
 export interface ChatSubscribeMessage {
-	readonly type: "chat.subscribe";
-	readonly conversationId: string;
+  readonly type: "chat.subscribe";
+  readonly conversationId: string;
 }
 
 /**
@@ -833,30 +855,34 @@ export interface ChatSubscribeMessage {
  * the socket closes — again WITHOUT aborting any in-flight turn.
  */
 export interface ChatUnsubscribeMessage {
-	readonly type: "chat.unsubscribe";
-	readonly conversationId: string;
+  readonly type: "chat.unsubscribe";
+  readonly conversationId: string;
 }
 
 /**
  * Client → server: enqueue a message onto a conversation's message queue while
  * a turn is generating (steering). The WebSocket counterpart of the HTTP
- * `POST /conversations/:id/queue` (`QueueRequest`). Fire-and-forget: success is
- * confirmed by the message-queue SURFACE updating (the FE renders the queue
- * from the surface, not from a reply here); a failure (malformed/empty text,
+ * `POST /conversations/:id/queue` (`QueueRequest`). With `requestId`, acceptance is
+ * confirmed by `chat.accepted` after queue insertion or opening-message storage.
+ * The queue surface remains authoritative for its current contents. Without a
+ * correlation token, legacy clients use surface/stream updates. A failure (malformed/empty text,
  * unknown conversation) arrives as a `chat.error`. When no turn is active, the
  * enqueue starts a new turn (the turn's events stream as `chat.delta`s), so a
  * client reuses this op for both "queue while generating" and "send" (the
  * latter being equivalent to `chat.send`).
  */
 export interface ChatQueueMessage {
-	readonly type: "chat.queue";
-	readonly conversationId: string;
-	readonly text: string;
-	/**
-	 * The workspace to assign the conversation to (if a new conversation is
-	 * started). Omit for `"default"`. Auto-creates if missing.
-	 */
-	readonly workspaceId?: string;
+  readonly requestId?: string;
+  readonly images?: readonly ImageInput[];
+  readonly computerId?: string;
+  readonly type: "chat.queue";
+  readonly conversationId: string;
+  readonly text: string;
+  /**
+   * The workspace to assign the conversation to (if a new conversation is
+   * started). Omit for `"default"`. Auto-creates if missing.
+   */
+  readonly workspaceId?: string;
 }
 
 /**
@@ -872,9 +898,56 @@ export interface ChatQueueMessage {
  * or the enqueue response).
  */
 export interface ChatQueueCancelMessage {
-	readonly type: "chat.queue.cancel";
-	readonly conversationId: string;
-	readonly messageId: string;
+  readonly type: "chat.queue.cancel";
+  readonly conversationId: string;
+  readonly messageId: string;
+}
+
+/**
+ * Client → server: declare THIS connection's active workspace (plan 06
+ * §6.4). Workspace switching is instant and client-side, so the server
+ * must be told explicitly — on receipt the server records the
+ * connection's workspace and RE-PUSHES the surface catalog filtered to
+ * that workspace (surfaces contributed by plugins that are not usable in
+ * the workspace are omitted). Clients that never send it keep the
+ * unfiltered (global) catalog — backward compatible. Owned by plan 06
+ * (backend contract + server handling); plan 07 sends it from the client.
+ */
+export interface WorkspaceSetMessage {
+  readonly type: "workspace.set";
+  readonly workspaceId: string;
+}
+
+/**
+ * Broadcast to all connected WS clients after every successful layout write
+ * (plan 02 §2.5 — the `layout-chat` provider's PUT / setTree / DELETE / ops).
+ * Carries the FULL tree for ONE workspace (decision 7 — no patch protocol);
+ * the broadcast is a global fan-out and CLIENTS FILTER by their active
+ * workspace (the workspaceId is the payload, not a subscription). Additive to
+ * `WsServerMessage` — next to `extensions-changed`, a contract addition, not
+ * core layout knowledge (D-L6: no core extension or transport learns the
+ * layout domain; the transport ferries the message verbatim).
+ */
+export interface LayoutChangedMessage {
+  readonly type: "layout";
+  readonly workspaceId: string;
+  readonly tree: LayoutTree;
+}
+
+/**
+ * Broadcast to all connected WS clients after every successful home
+ * tile-layout write (the `home-tile-layout` plugin's PUT / DELETE). Carries
+ * the FULL document for ONE device orientation (`mode`: "wide" = landscape/
+ * desktop, "tall" = portrait/mobile — two independent shared layouts); the
+ * broadcast is a global fan-out and CLIENTS FILTER by their active mode.
+ * Additive to `WsServerMessage`, the same verbatim-ferry pattern as
+ * `LayoutChangedMessage` — no core extension or transport learns the tile
+ * domain.
+ */
+export interface TileLayoutChangedMessage {
+  readonly type: "tile-layout";
+  readonly mode: TileGeometryMode;
+  readonly data: TileLayoutData;
 }
 
 /**
@@ -882,26 +955,45 @@ export interface ChatQueueCancelMessage {
  * ops. A server discriminates on `type`.
  */
 export type WsClientMessage =
-	| SurfaceClientMessage
-	| ChatSendMessage
-	| ChatSubscribeMessage
-	| ChatUnsubscribeMessage
-	| ChatQueueMessage
-	| ChatQueueCancelMessage;
+  | SurfaceClientMessage
+  | ChatSendMessage
+  | ChatSubscribeMessage
+  | ChatUnsubscribeMessage
+  | ChatQueueMessage
+  | ChatQueueCancelMessage
+  | WorkspaceSetMessage;
 
 /**
  * Every server → client WS message: surface ops (`@dispatch/ui-contract`) + chat
  * ops. A client discriminates on `type`.
  */
 export type WsServerMessage =
-	| SurfaceServerMessage
-	| ChatDeltaMessage
-	| ChatErrorMessage
-	| ConversationOpenMessage
-	| ConversationStatusChangedMessage
-	| ConversationCompactedMessage;
+  | SurfaceServerMessage
+  | ChatDeltaMessage
+  | ChatErrorMessage
+  | ChatAcceptedMessage
+  | ChatSubscriptionRejectedMessage
+  | ChatQueuedMessage
+  | ChatResyncRequiredMessage
+  | ConversationOpenMessage
+  | ConversationTabGroupChangedMessage
+  | ConversationStatusChangedMessage
+  | ConversationCompactedMessage
+  | ExtensionsChangedMessage
+  | LayoutChangedMessage
+  | TileLayoutChangedMessage;
 
 // ─── Conversation list + metadata ────────────────────────────────────────────
+
+/** A visual grouping change, globally broadcast to every connected client. */
+export interface ConversationTabGroupChangedMessage {
+  readonly type: "conversation.tabGroupChanged";
+  readonly conversationId: string;
+  /** The conversation's persisted workspace id. */
+  readonly workspaceId: string;
+  /** The new EFFECTIVE tab group parent; null = ungrouped. */
+  readonly tabGroupParentId: string | null;
+}
 
 /**
  * Broadcast to all connected WS clients when a conversation is "opened" (e.g.
@@ -909,21 +1001,23 @@ export type WsServerMessage =
  * — the backend just signals. Additive to `WsServerMessage`.
  */
 export interface ConversationOpenMessage {
-	readonly type: "conversation.open";
-	readonly conversationId: string;
-	/**
-	 * The conversation's actual workspace id, so a frontend can open/focus it
-	 * in the correct workspace instead of stamping it with the viewer's current
-	 * workspace.
-	 */
-	readonly workspaceId: string;
-	/**
-	 * The conversation's persisted per-conversation model when set (absent =
-	 * default provider model), so a frontend can stamp the new tab with the
-	 * conversation's ACTUAL model rather than the globally-selected one
-	 * (fix-toolcall-duplicate-keys plan Part 4).
-	 */
-	readonly model?: string;
+  readonly type: "conversation.open";
+  /** Effective visual group parent; absent = ungrouped. */
+  readonly tabGroupParentId?: string;
+  readonly conversationId: string;
+  /**
+   * The conversation's actual workspace id, so a frontend can open/focus it
+   * in the correct workspace instead of stamping it with the viewer's current
+   * workspace.
+   */
+  readonly workspaceId: string;
+  /**
+   * The conversation's persisted per-conversation model when set (absent =
+   * default provider model), so a frontend can stamp the new tab with the
+   * conversation's ACTUAL model rather than the globally-selected one
+   * (fix-toolcall-duplicate-keys plan Part 4).
+   */
+  readonly model?: string;
 }
 
 /**
@@ -932,28 +1026,306 @@ export interface ConversationOpenMessage {
  * devices in real time.
  */
 export interface ConversationStatusChangedMessage {
-	readonly type: "conversation.statusChanged";
-	readonly conversationId: string;
-	readonly status: ConversationStatus;
-	/**
-	 * The conversation's actual workspace id, so a frontend can open/focus it
-	 * in the correct workspace instead of stamping it with the viewer's current
-	 * workspace.
-	 */
-	readonly workspaceId: string;
+  readonly type: "conversation.statusChanged";
+  readonly conversationId: string;
+  readonly status: ConversationStatus;
+  /**
+   * The conversation's actual workspace id, so a frontend can open/focus it
+   * in the correct workspace instead of stamping it with the viewer's current
+   * workspace.
+   */
+  readonly workspaceId: string;
 }
 
 /**
  * Broadcast to all connected WS clients when a conversation's history has been
- * compacted (summarized). The frontend should reload the conversation history
- * via `GET /conversations/:id` to reflect the compacted state.
+ * compacted (summarized). `historyEpoch` is the persisted replacement count:
+ * missing storage value = 0; every successful replacement increments it once,
+ * including empty replacements. On a different epoch, clients invalidate their
+ * conversation cache and refetch `GET /conversations/:id?sinceSeq=0`.
  */
 export interface ConversationCompactedMessage {
-	readonly type: "conversation.compacted";
-	readonly conversationId: string;
-	readonly newConversationId: string;
-	readonly messagesSummarized: number;
-	readonly messagesKept: number;
+  readonly type: "conversation.compacted";
+  readonly conversationId: string;
+  readonly newConversationId: string;
+  readonly messagesSummarized: number;
+  readonly messagesKept: number;
+  readonly historyEpoch: number;
+}
+
+// ─── Plugin manager (plan 05) ────────────────────────────────────────────────
+//
+// The wire shapes for the plugin management API (HTTP routes + the
+// `extensions-changed` broadcast). Tier/trust mirror the kernel's
+// `PluginTier`/`TrustLevel` (stable three-value enums — the manager's
+// manifest→row mapping is the drift detector: any kernel-side change fails
+// the assignment there at compile time).
+
+/** Classification tier of a plugin (mirror of the kernel's `PluginTier`). */
+export type PluginTier = "core" | "providers" | "standard";
+
+/** Trust level of a plugin (mirror of the kernel's `TrustLevel`). */
+export type PluginTrustLevel = "bundled" | "local" | "external";
+
+/** How a persisted override came to be (absent in plan-04-era records). */
+export type PluginOverrideKind = "unloaded" | "disabled";
+
+/** The persisted user override for a discovered plugin (wire shape). */
+export interface PluginOverrideInfo {
+  readonly kind?: PluginOverrideKind;
+  readonly reason?: string;
+  readonly disabledAt?: string;
+}
+
+/** A plugin currently loaded and live — the manager's `loaded` table rows. */
+export interface LoadedPluginRow {
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly tier: PluginTier;
+  readonly trust: PluginTrustLevel;
+  /** True for tier "core" — the server refuses to unload it. */
+  readonly locked: boolean;
+  readonly dependsOn: readonly string[];
+  /**
+   * The plugin's frontend section (plan 03), present when the loaded plugin
+   * declares one AND its entry file is servable (resolved inside the plugin
+   * directory). `apiVersion`/`entry` mirror the manifest; `bust` is the entry
+   * file's mtimeMs — the SAME value the backend loader uses as its `?v=`
+   * cache-bust query — so clients can build content-versioned import URLs.
+   */
+  readonly frontend?: LoadedPluginFrontend;
+}
+
+/** The wire shape of a servable frontend section (plan 03). */
+export interface LoadedPluginFrontend {
+  readonly apiVersion: string;
+  readonly entry: string;
+  readonly bust: string;
+}
+
+/** A plugin the system refused or failed to load — disabled-with-reason. */
+export interface DisabledWithReasonRow {
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly tier: PluginTier;
+  readonly trust: PluginTrustLevel;
+  readonly reason: string;
+}
+
+/** A plugin present on disk but not loaded — the manager's second table. */
+export interface DiscoveredPluginRow {
+  readonly id: string;
+  readonly name: string;
+  readonly version: string;
+  readonly tier: PluginTier;
+  readonly trust: PluginTrustLevel;
+  /** Absolute plugin directory. */
+  readonly dir: string;
+  /**
+   * The persisted user override, if any. Absent = a fresh discovery the
+   * consent gate renders UNCHECKED; present rows distinguish a deliberate
+   * unload (`kind: "unloaded"`) from an explicit disable (`"disabled"`).
+   */
+  readonly override?: PluginOverrideInfo;
+}
+
+/** An override record whose plugin directory is gone — a greyed-out row. */
+export interface MissingPluginRow {
+  readonly id: string;
+  readonly reason?: string;
+  readonly disabledAt?: string;
+}
+
+/** Response for `GET /plugins` — the two manager tables + the missing strip. */
+export interface PluginListResponse {
+  readonly loaded: readonly LoadedPluginRow[];
+  readonly disabledWithReason: readonly DisabledWithReasonRow[];
+  readonly discovered: readonly DiscoveredPluginRow[];
+  readonly missing: readonly MissingPluginRow[];
+}
+
+/** One directory that failed scan validation (manifest missing/unparsable/invalid). */
+export interface InvalidPluginDir {
+  readonly dir: string;
+  readonly errors: readonly string[];
+}
+
+/** One directory whose (valid) manifest is incompatible with the kernel. */
+export interface IncompatiblePluginDir {
+  readonly dir: string;
+  readonly id: string;
+  readonly reason: string;
+}
+
+/**
+ * Response for `POST /plugins/scan` — the manual scan's product (§5): newly
+ * discovered plugins are UNCHECKED (the consent gate — the scan never
+ * auto-loads), broken directories report their validation errors.
+ */
+export interface PluginScanResponse {
+  /** The plugins root that was scanned. */
+  readonly root: string;
+  /** Fresh discoveries: loadable, not loaded, no override. */
+  readonly newPlugins: readonly DiscoveredPluginRow[];
+  /** Directories that failed manifest/entry validation. */
+  readonly invalid: readonly InvalidPluginDir[];
+  /** Valid manifests incompatible with the running kernel. */
+  readonly incompatible: readonly IncompatiblePluginDir[];
+}
+
+/** The mutation a plugin-management route performed. */
+export type PluginAction = "load" | "unload" | "reload" | "forget";
+
+/** Why a plugin operation was refused (HTTP 409/404 — see the route docs). */
+export type PluginBlockReason =
+  /** Core plugins cannot be unloaded (never force-able). */
+  | "core-locked"
+  /** Unloading would leave zero loaded providers (never force-able). */
+  | "last-provider"
+  /** Loaded dependents exist — retry with `force` (the dependents are listed). */
+  | "cascade-needs-force"
+  /** The target plugin is not currently loaded. */
+  | "not-loaded"
+  /** No such plugin was found (no loadable directory with that id). */
+  | "not-found"
+  /** The target is already loaded (load; use reload). */
+  | "already-loaded"
+  /** The engine refused or failed the operation (reason in `message`). */
+  | "engine-refused";
+
+/** Successful plugin-management operation (HTTP 200). */
+export interface PluginOpSuccess {
+  readonly ok: true;
+  readonly action: PluginAction;
+  readonly id: string;
+  /** Forced unload: the dependents that were unloaded before the target. */
+  readonly cascade?: readonly string[];
+  /** Forced reload: dependents unloaded around the target (engine report). */
+  readonly unloadedDependents?: readonly string[];
+  /** Forced reload: dependents reloaded after the target (engine report). */
+  readonly reloadedDependents?: readonly string[];
+  /** Whether a saved override record was removed (load / reload / forget). */
+  readonly clearedOverride?: boolean;
+  /** Forced ops stop ALL agents first — how many in-flight turns aborted. */
+  readonly stoppedAgents?: number;
+}
+
+/** Refused plugin-management operation (HTTP 404 / 409). */
+export interface PluginOpBlocked {
+  readonly ok: false;
+  readonly action: PluginAction;
+  readonly id: string;
+  readonly reason: PluginBlockReason;
+  /** Human-readable reason (server-log grammar) for the UI to surface. */
+  readonly message: string;
+  /** For `cascade-needs-force`: the loaded dependents a force would remove. */
+  readonly dependents?: readonly string[];
+}
+
+/** Response for the plugin-management mutation routes. */
+export type PluginOpResponse = PluginOpSuccess | PluginOpBlocked;
+
+/**
+ * Broadcast to ALL connected WS clients after every plugin-manager mutation
+ * (load / unload / reload / scan / forget) so every connected frontend
+ * refetches the extension list AND the surface catalog (§11 multi-client
+ * coherence). The payload is intentionally minimal — the client refreshes
+ * from `GET /plugins` + the surface catalog rather than diffing here.
+ */
+export interface ExtensionsChangedMessage {
+  readonly type: "extensions-changed";
+  readonly action: "load" | "unload" | "reload" | "scan" | "forget";
+  /** The plugin the action applied to (absent for a scan). */
+  readonly pluginId?: string;
+}
+
+// ─── Per-workspace plugin enablement (plan 06 §6.6) ─────────────────────────
+//
+// The workspace modal's read+write contract for "is this plugin used HERE".
+// The routes are thin shells over the workspace-plugin-config core service;
+// the state-transition + validation logic lives THERE (pure, unit-tested).
+
+/**
+ * The wire form of a per-workspace plugin state: `"enabled"` / `"disabled"`
+ * — an explicit record — or the string `"undefined"` for NO record (the
+ * blank slate, §7). The triple is spelled out on the wire (rather than
+ * omitting the field) so a client can render all three states uniformly.
+ */
+export type WorkspacePluginStateValue = "enabled" | "disabled" | "undefined";
+
+/**
+ * One row of `GET /workspaces/:id/plugins` — a plugin's effective state in
+ * the workspace plus the metadata the modal needs (unloaded → greyed;
+ * core → locked).
+ */
+export interface WorkspacePluginRow {
+  readonly pluginId: string;
+  readonly tier: PluginTier;
+  readonly state: WorkspacePluginStateValue;
+  /** Whether the plugin is currently loaded globally (plan 05). */
+  readonly loaded: boolean;
+  /** True for tier "core" — the per-workspace state cannot be changed. */
+  readonly locked: boolean;
+}
+
+/**
+ * Response for `GET /workspaces/:id/plugins` — this workspace's effective
+ * plugin states. READING triggers read-through materialization (§6.1):
+ * the first read snapshots inherited records from the default workspace
+ * (Core → `enabled` always). `enabledProviderCount` is folded in for
+ * convenience; the dedicated `providers-status` route reports the same
+ * signal without parsing the full list.
+ */
+export interface WorkspacePluginsResponse {
+  readonly workspaceId: string;
+  readonly plugins: readonly WorkspacePluginRow[];
+  /** Loaded provider-tier plugins effectively enabled here (§6.5 guardrail). */
+  readonly enabledProviderCount: number;
+}
+
+/**
+ * Request body for `PUT /workspaces/:id/plugins/:pluginId` — set/clear
+ * this workspace's state for one plugin. `"unset"` returns it to the
+ * blank slate (no record). The server refuses (`core-locked` /
+ * `unloaded`, HTTP 409) changes for CORE plugins and for plugins that are
+ * not currently loaded — strict layering: only the global plugin-manager
+ * loads code (§7).
+ */
+export interface SetWorkspacePluginStateRequest {
+  readonly state: "enabled" | "disabled" | "unset";
+}
+
+/** Response for `PUT /workspaces/:id/plugins/:pluginId` (HTTP 200). */
+export interface SetWorkspacePluginStateResponse {
+  readonly workspaceId: string;
+  readonly pluginId: string;
+  /** The resulting effective state (`"undefined"` after `"unset"`). */
+  readonly state: WorkspacePluginStateValue;
+}
+
+/** Why a `PUT /workspaces/:id/plugins/:pluginId` was refused (HTTP 409). */
+export type SetWorkspacePluginStateBlockReason = "core-locked" | "unloaded";
+
+/** Refused per-workspace state change (HTTP 409). */
+export interface SetWorkspacePluginStateBlocked {
+  readonly workspaceId: string;
+  readonly pluginId: string;
+  readonly reason: SetWorkspacePluginStateBlockReason;
+  /** Human-readable reason (server-log grammar) for the UI to surface. */
+  readonly message: string;
+}
+
+/** Response for `GET /workspaces/:id/plugins/providers-status` (§6.5). */
+export interface WorkspacePluginProvidersStatusResponse {
+  readonly workspaceId: string;
+  /**
+   * Loaded provider-tier plugins effectively `enabled` in this workspace.
+   * `0` is the first-boot guardrail signal (§7): show a visible "no
+   * providers enabled" prompt instead of a silently empty model picker.
+   */
+  readonly enabledProviderCount: number;
 }
 
 /**
@@ -963,7 +1335,7 @@ export interface ConversationCompactedMessage {
  * Optional `?q=` query param filters by id prefix (short-id resolution).
  */
 export interface ConversationListResponse {
-	readonly conversations: readonly ConversationMeta[];
+  readonly conversations: readonly ConversationMeta[];
 }
 
 /**
@@ -973,9 +1345,9 @@ export interface ConversationListResponse {
  * `turnId` is the turn that produced the message (absent if no turn ran).
  */
 export interface LastMessageResponse {
-	readonly conversationId: string;
-	readonly content: string;
-	readonly turnId?: string;
+  readonly conversationId: string;
+  readonly content: string;
+  readonly turnId?: string;
 }
 
 /**
@@ -983,22 +1355,33 @@ export interface LastMessageResponse {
  * signal was broadcast to connected WS clients.
  */
 export interface OpenConversationResponse {
-	readonly conversationId: string;
+  readonly conversationId: string;
+}
+
+/** Body for `PUT /conversations/:id/tab-group`. null = remove from its group (ungroup). */
+export interface SetTabGroupRequest {
+  readonly parentId: string | null;
+}
+
+/** Response for `PUT /conversations/:id/tab-group` — the new EFFECTIVE value. */
+export interface TabGroupResponse {
+  readonly conversationId: string;
+  readonly tabGroupParentId: string | null;
 }
 
 /**
  * Request body for `PUT /conversations/:id/title` — set a human-readable title.
  */
 export interface SetTitleRequest {
-	readonly title: string;
+  readonly title: string;
 }
 
 /**
  * Response for `GET/PUT /conversations/:id/title` — the current title.
  */
 export interface TitleResponse {
-	readonly conversationId: string;
-	readonly title: string;
+  readonly conversationId: string;
+  readonly title: string;
 }
 
 /**
@@ -1006,10 +1389,10 @@ export interface TitleResponse {
  * history was compacted (old messages summarized, recent messages retained).
  */
 export interface CompactResponse {
-	readonly conversationId: string;
-	readonly newConversationId: string;
-	readonly messagesSummarized: number;
-	readonly messagesKept: number;
+  readonly conversationId: string;
+  readonly newConversationId: string;
+  readonly messagesSummarized: number;
+  readonly messagesKept: number;
 }
 
 /**
@@ -1017,15 +1400,15 @@ export interface CompactResponse {
  * at which automatic compaction triggers (0 = manual only).
  */
 export interface CompactPercentResponse {
-	readonly conversationId: string;
-	readonly threshold: number;
+  readonly conversationId: string;
+  readonly threshold: number;
 }
 
 /**
  * Request body for `PUT /conversations/:id/compact-percent`.
  */
 export interface SetCompactPercentRequest {
-	readonly threshold: number;
+  readonly threshold: number;
 }
 
 // ─── Workspaces ───────────────────────────────────────────────────────────────
@@ -1036,28 +1419,33 @@ export interface SetCompactPercentRequest {
  * an existing workspace is returned as-is.
  */
 export interface EnsureWorkspaceRequest {
-	/** Display title. Default: the workspace id. Only used on create. */
-	readonly title?: string;
-	/** Default cwd. Default: null (inherit server default). Only used on create. */
-	readonly defaultCwd?: string | null;
+  /** Display title. Default: the workspace id. Only used on create. */
+  readonly title?: string;
+  /** Default cwd. Default: null (inherit server default). Only used on create. */
+  readonly defaultCwd?: string | null;
 }
 
 /** Response of `GET`/`PUT /workspaces/:id` — the workspace itself. */
 export interface WorkspaceResponse extends Workspace {}
 
-/** Response of `GET /workspaces` — all workspaces sorted by `lastActivityAt` desc. */
+/**
+ * Response of `GET /workspaces` — the workspaces sorted by `lastActivityAt`
+ * desc. The optional `?archived=` query selects which workspaces are included:
+ * `"true"` → archived only, `"all"` → every workspace; absent (or any other
+ * value) → non-archived only (the home grid's default view).
+ */
 export interface WorkspaceListResponse {
-	readonly workspaces: readonly WorkspaceEntry[];
+  readonly workspaces: readonly WorkspaceEntry[];
 }
 
 /** Body of `PUT /workspaces/:id/title` — rename (display only; id unchanged). */
 export interface SetWorkspaceTitleRequest {
-	readonly title: string;
+  readonly title: string;
 }
 
 /** Body of `PUT /workspaces/:id/default-cwd` — set or clear the default cwd. */
 export interface SetWorkspaceDefaultCwdRequest {
-	readonly defaultCwd: string | null;
+  readonly defaultCwd: string | null;
 }
 
 /**
@@ -1066,12 +1454,12 @@ export interface SetWorkspaceDefaultCwdRequest {
  * workspace entity is deleted. `"default"` is non-deletable (HTTP 409).
  */
 export interface DeleteWorkspaceResponse {
-	readonly workspaceId: string;
-	/** Conversations that were closed (status → "closed") by this delete. */
-	readonly closedCount: number;
+  readonly workspaceId: string;
+  /** Conversations that were closed (status → "closed") by this delete. */
+  readonly closedCount: number;
 }
 
-// ─── Computers (SSH handoff #2) ─────────────────────────────────────────────
+// ─── Computers ───────────────────────────────────────────────────────────────
 
 /**
  * Response of `GET /computers` — every remote computer discovered from the
@@ -1081,7 +1469,7 @@ export interface DeleteWorkspaceResponse {
  * block to `~/.ssh/config` and Dispatch discovers it on the next read.
  */
 export interface ComputerListResponse {
-	readonly computers: readonly ComputerEntry[];
+  readonly computers: readonly ComputerEntry[];
 }
 
 /**
@@ -1098,10 +1486,10 @@ export interface ComputerResponse extends Computer {}
  * `state === "error"`; `knownHost` mirrors the read-only `Computer` field.
  */
 export interface ComputerStatusResponse {
-	readonly alias: string;
-	readonly state: "disconnected" | "connecting" | "connected" | "error";
-	readonly error?: string;
-	readonly knownHost: boolean;
+  readonly alias: string;
+  readonly state: "disconnected" | "connecting" | "connected" | "error";
+  readonly error?: string;
+  readonly knownHost: boolean;
 }
 
 /**
@@ -1113,7 +1501,7 @@ export interface ComputerStatusResponse {
  * a 400). Mirrors the cwd/model PUT clear semantics.
  */
 export interface SetConversationComputerRequest {
-	readonly computerId: string | null;
+  readonly computerId: string | null;
 }
 
 /**
@@ -1122,8 +1510,8 @@ export interface SetConversationComputerRequest {
  * the workspace default → local). Parallel to `CwdResponse`.
  */
 export interface ConversationComputerResponse {
-	readonly conversationId: string;
-	readonly computerId: string | null;
+  readonly conversationId: string;
+  readonly computerId: string | null;
 }
 
 /**
@@ -1133,7 +1521,7 @@ export interface ConversationComputerResponse {
  * `computerId` of their own inherit this.
  */
 export interface SetWorkspaceDefaultComputerRequest {
-	readonly computerId: string | null;
+  readonly computerId: string | null;
 }
 
 /**
@@ -1143,25 +1531,129 @@ export interface SetWorkspaceDefaultComputerRequest {
  * failure reason (e.g. auth refused, host unreachable) when `ok` is false.
  */
 export interface TestComputerResponse {
-	readonly alias: string;
-	readonly ok: boolean;
-	readonly error?: string;
+  readonly alias: string;
+  readonly ok: boolean;
+  readonly error?: string;
 }
 
-// ── Provider concurrency limits (transport-contract@0.23.0) ───────────────────
+// ─── Heartbeat ───────────────────────────────────────────────────────────────
+
+/**
+ * The per-workspace Heartbeat config — a single record stored per workspace.
+ *
+ * A heartbeat is an AI that runs on a configurable loop per workspace: when
+ * `enabled`, the backend summons a NEW conversation every `intervalMinutes`
+ * minutes, gives the heartbeat AI `systemPrompt` + sends `taskPrompt` as the
+ * opening user message, and inherits the workspace's computer (SSH) + cwd +
+ * standard tool kit. The main purpose is monitoring (e.g. checking if chats
+ * are stuck).
+ *
+ * `model` is a model name in `<credentialName>/<model>` form (one of the strings
+ * from `GET /models`), or the empty string to use the server default.
+ * `reasoningEffort` is `null` to inherit the workspace default, or an explicit
+ * level. The scheduler resets its timer after each run completes (not a fixed
+ * wall-clock schedule); on backend restart it resumes scheduling for enabled
+ * heartbeats.
+ *
+ * `inactiveOnly` (default `true`) gates each fire on the configured workspace
+ * having NO active agents (no conversation with status `"active"` or `"queued"`):
+ * the heartbeat stays quiet while the user is actively working, and only fires
+ * when the workspace is idle. Set `false` to fire unconditionally.
+ */
+export interface HeartbeatConfig {
+  /** Whether the heartbeat loop is active for this workspace. */
+  readonly enabled: boolean;
+  /**
+   * When `true` (the default), the heartbeat SKIPS a fire when the configured
+   * workspace has any active agents — conversations whose persisted status is
+   * `"active"` (driving a turn) or `"queued"` (waiting on the message queue).
+   * The fire is silently skipped (no run is recorded); the scheduler re-arms
+   * and tries again at the next interval. When `false`, the heartbeat fires
+   * unconditionally regardless of workspace activity. The spawned heartbeat
+   * conversation lives in the DEDICATED heartbeat workspace, so it never
+   * counts as an "active agent" of the configured workspace (no self-block).
+   */
+  readonly inactiveOnly: boolean;
+  /** Custom system prompt for the heartbeat AI (empty = no system prompt). */
+  readonly systemPrompt: string;
+  /** Task prompt sent as the first user message when the heartbeat fires. */
+  readonly taskPrompt: string;
+  /** How often to fire, in minutes (default 30). */
+  readonly intervalMinutes: number;
+  /** Model name (`<credentialName>/<model>`), or empty string = server default. */
+  readonly model: string;
+  /** Reasoning-effort level, or `null` = inherit the workspace default. */
+  readonly reasoningEffort: ReasoningEffort | null;
+}
+
+/**
+ * Body of `PUT /workspaces/:id/heartbeat` — a partial update. All fields are
+ * optional; only the provided fields are applied. `reasoningEffort` accepts
+ * `null` to clear to the workspace default. `intervalMinutes` must be a positive
+ * integer (clamped server-side to a minimum of 1). An unrecognized
+ * `reasoningEffort` → HTTP 400.
+ */
+export interface UpdateHeartbeatRequest {
+  readonly enabled?: boolean;
+  readonly inactiveOnly?: boolean;
+  readonly systemPrompt?: string;
+  readonly taskPrompt?: string;
+  readonly intervalMinutes?: number;
+  readonly model?: string;
+  readonly reasoningEffort?: ReasoningEffort | null;
+}
+
+/** The status of a single heartbeat run. */
+export type HeartbeatRunStatus = "running" | "completed" | "stopped";
+
+/**
+ * One heartbeat run — created each time the heartbeat fires. A run tracks the
+ * conversation it spawned and its lifecycle. `triggeredAt` is an ISO-8601
+ * timestamp. `status` is `"running"` while the turn is in flight,
+ * `"completed"` when the turn sealed normally, or `"stopped"` when the user
+ * stopped it via the stop endpoint (the turn is aborted and seals `"stopped"`).
+ */
+export interface HeartbeatRun {
+  readonly id: string;
+  readonly conversationId: string;
+  readonly triggeredAt: string;
+  readonly status: HeartbeatRunStatus;
+}
+
+/** Response of `GET /workspaces/:id/heartbeat/runs` — runs, most-recent first. */
+export interface HeartbeatRunsResponse {
+  readonly runs: readonly HeartbeatRun[];
+}
+
+/** Response of `POST /workspaces/:id/heartbeat/runs/:runId/stop`. */
+export interface StopHeartbeatRunResponse {
+  readonly ok: true;
+}
+
+// ─── Search backend selection ─────────────────────────────────────────────────
+
+/**
+ * Re-exported wire types for the global search-backend selection
+ * (`GET/PUT /search/config`). The web frontend consumes these directly.
+ */
+export type {
+  SearchBackendAvailability,
+  SearchBackendConfigResponse,
+  UpdateSearchConfigRequest,
+} from "@dispatch/wire";
+
+// ─── Provider concurrency limits ──────────────────────────────────────────────
 
 /**
  * Response of `GET /concurrency/limits` — all providers with configured
  * concurrency limits. Each entry pairs a provider id (e.g. "umans",
- * "openai-compat") with its maximum concurrent in-flight requests. Providers
+ * "opencode-1") with its maximum concurrent in-flight requests. Providers
  * not listed here have no limit (unlimited).
  */
 export interface ConcurrencyLimitsResponse {
-	readonly limits: readonly {
-		readonly providerId: string;
-		readonly limit: number;
-	}[];
+  readonly limits: readonly { readonly providerId: string; readonly limit: number }[];
 }
+
 /**
  * Body of `PUT /concurrency/limits/:providerId` — set or update the concurrency
  * limit for a provider. `limit` must be a positive integer. When a limit is
@@ -1169,13 +1661,15 @@ export interface ConcurrencyLimitsResponse {
  * sent immediately.
  */
 export interface SetConcurrencyLimitRequest {
-	readonly limit: number;
+  readonly limit: number;
 }
+
 /** Response of `GET/PUT /concurrency/limits/:providerId` — the configured limit. */
 export interface ConcurrencyLimitResponse {
-	readonly providerId: string;
-	readonly limit: number;
+  readonly providerId: string;
+  readonly limit: number;
 }
+
 /**
  * One provider's live concurrency status.
  *
@@ -1196,23 +1690,24 @@ export interface ConcurrencyLimitResponse {
  *   banner when the limit was auto-reduced (present only when `autoReduced`).
  */
 export interface ConcurrencyStatusEntry {
-	readonly providerId: string;
-	readonly limit: number;
-	readonly inFlight: number;
-	readonly queued: number;
-	readonly paused: boolean;
-	readonly pausedUntil?: number;
-	readonly cooldownMs: number;
-	readonly autoReduced: boolean;
-	readonly autoReducedFrom?: number;
-	readonly notice?: string;
+  readonly providerId: string;
+  readonly limit: number;
+  readonly inFlight: number;
+  readonly queued: number;
+  readonly paused: boolean;
+  readonly pausedUntil?: number;
+  readonly cooldownMs: number;
+  readonly autoReduced: boolean;
+  readonly autoReducedFrom?: number;
+  readonly notice?: string;
 }
+
 /**
  * Response of `GET /concurrency/status` — live status for every provider with a
  * configured limit. Providers without a limit are absent (they are unlimited).
  */
 export interface ConcurrencyStatusResponse {
-	readonly providers: readonly ConcurrencyStatusEntry[];
+  readonly providers: readonly ConcurrencyStatusEntry[];
 }
 
 // ─── Provider concurrency cooldown ────────────────────────────────────────────
@@ -1224,8 +1719,8 @@ export interface ConcurrencyStatusResponse {
  * When no cooldown was explicitly set, the server default (350ms) is returned.
  */
 export interface ConcurrencyCooldownResponse {
-	readonly providerId: string;
-	readonly cooldownMs: number;
+  readonly providerId: string;
+  readonly cooldownMs: number;
 }
 
 /**
@@ -1235,31 +1730,9 @@ export interface ConcurrencyCooldownResponse {
  * subsequently recycled slots.
  */
 export interface SetConcurrencyCooldownRequest {
-	readonly cooldownMs: number;
+  readonly cooldownMs: number;
 }
-```
 
-
----
-
-## 2026-09-24 delta (search-backend-selection — ADDITIVE, no version bump)
-
-GLOBAL search-backend selection routes (the `web_search` tool's search-mode engine; scrape/crawl
-ALWAYS route to the self-hosted Firecrawl client; the tool's `map` mode is REMOVED entirely):
-
-- `GET /search/config` → `SearchBackendConfigResponse` (`{ backend, available: SearchBackendAvailability[] }`
-  — re-exported from `@dispatch/wire`, see the wire delta below). When the `tool-web-search` extension
-  is NOT loaded the route degrades like heartbeat: 200 with the defaults (`backend: "firecrawl"`,
-  firecrawl-only availability).
-- `PUT /search/config` body `UpdateSearchConfigRequest` (`{ backend: string }`) → 200
-  `SearchBackendConfigResponse` | 400 (`{ error }` — unknown or not-configured backend) | 503
-  (service not loaded). The umans entry appears in `available` only when the backend has
-  `UMANS_API_KEY`; an unconfigured backend is listed but `configured: false` — the UI disables it,
-  it is never an error.
-
-## Account usage (`transport-contract@0.26.0`, verbatim)
-
-```ts
 // ─── Account usage (Claude / Codex subscription quotas) ───────────────────────
 //
 // Subscription quota usage polled from each provider's first-party account
@@ -1405,4 +1878,5 @@ export interface AccountUsageResponse {
   /** Server clock (epoch-ms) when this response was built — use it to compute window progress. */
   readonly servedAt: number;
 }
+
 ```

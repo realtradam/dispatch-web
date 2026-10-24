@@ -79,15 +79,37 @@ describe("createWorkspaceHttp", () => {
     expect(result).toEqual({ ok: false, error: "invalid slug" });
   });
 
-  it("get returns null on 404", async () => {
+  it("get reports a missing lookup on 404", async () => {
     const http = createWorkspaceHttp(BASE, fakeFetch([{ status: 404 }]));
-    expect(await http.get("nope")).toBeNull();
+    expect(await http.get("nope")).toEqual({ kind: "missing" });
   });
 
   it("get returns the workspace on 200", async () => {
-    const ws = { id: "x", title: "X", defaultCwd: "/home", createdAt: 1, lastActivityAt: 2 };
+    const ws = {
+      id: "x",
+      title: "X",
+      defaultCwd: "/home",
+      defaultComputerId: null,
+      starred: false,
+      archived: false,
+      createdAt: 1,
+      lastActivityAt: 2,
+    };
     const http = createWorkspaceHttp(BASE, fakeFetch([{ body: ws }]));
-    expect(await http.get("x")).toEqual(ws);
+    expect(await http.get("x")).toEqual({ kind: "found", workspace: ws });
+  });
+
+  it("get distinguishes a failed response from 404 (not 'missing')", async () => {
+    const http = createWorkspaceHttp(
+      BASE,
+      fakeFetch([{ status: 500, body: { error: "db down" } }]),
+    );
+    expect(await http.get("x")).toEqual({ kind: "failed", error: "db down" });
+  });
+
+  it("get reports a network error as failed (not 'missing')", async () => {
+    const http = createWorkspaceHttp(BASE, fakeFetch([new Error("network")]));
+    expect(await http.get("x")).toEqual({ kind: "failed", error: "network" });
   });
 
   it("setTitle PUTs the title", async () => {

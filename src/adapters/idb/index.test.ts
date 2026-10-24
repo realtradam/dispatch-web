@@ -128,3 +128,18 @@ describe("createIdbChunkStore", () => {
     expect(loaded2[0]?.chunk).toEqual(textChunk("b1"));
   });
 });
+
+it("persists epoch across adapter recreation and append, including empty histories", async () => {
+  const indexedDB = new IDBFactory();
+  const store = createIdbChunkStore({ indexedDB });
+  await store.append("c", [makeChunk(1, "legacy")]);
+  expect(await store.historyEpoch("c")).toBeUndefined();
+  await store.reset("c", 2);
+  const reopened = createIdbChunkStore({ indexedDB });
+  expect(await reopened.load("c")).toEqual([]);
+  expect(await reopened.historyEpoch("c")).toBe(2);
+  await reopened.append("c", [makeChunk(101, "new")]);
+  expect(await reopened.historyEpoch("c")).toBe(2);
+  await reopened.delete("c");
+  expect(await reopened.historyEpoch("c")).toBeUndefined();
+});

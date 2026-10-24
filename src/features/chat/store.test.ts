@@ -1,5 +1,8 @@
 import type { AgentEvent, ImageInput, StepId, StoredChunk } from "@dispatch/wire";
+import { IDBFactory, IDBKeyRange } from "fake-indexeddb";
 import { describe, expect, it, vi } from "vitest";
+import { createIdbChunkStore } from "../../adapters/idb";
+import { createConversationCache } from "../conversation-cache";
 import { createChatStore } from "./store.svelte";
 import {
   createFakeCache,
@@ -29,6 +32,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -61,6 +65,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -104,6 +109,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -128,6 +134,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       model: "openai/gpt-4",
       transport: transport.impl,
@@ -150,6 +157,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -182,6 +190,7 @@ describe("createChatStore", () => {
   it("send omits images on the wire when none are staged (backward compatible)", () => {
     const transport = createFakeTransport();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: createFakeHistorySync().impl,
@@ -198,6 +207,7 @@ describe("createChatStore", () => {
   it("send omits images on the wire for an empty array", () => {
     const transport = createFakeTransport();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: createFakeHistorySync().impl,
@@ -214,6 +224,7 @@ describe("createChatStore", () => {
   it("send allows an images-only message (empty text)", () => {
     const transport = createFakeTransport();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: createFakeHistorySync().impl,
@@ -238,6 +249,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -252,7 +264,42 @@ describe("createChatStore", () => {
       expect(transport.sentQueue[0]?.type).toBe("chat.queue");
       expect(transport.sentQueue[0]?.conversationId).toBe(CONV_ID);
       expect(transport.sentQueue[0]?.text).toBe("steer left");
+      expect(transport.sentQueue[0]).not.toHaveProperty("images");
 
+      store.dispose();
+    });
+
+    it.each(["  describe this  ", "", "   "])("queues images with text %j", (text) => {
+      const transport = createFakeTransport();
+      const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
+        conversationId: CONV_ID,
+        workspaceId: "images-workspace",
+        transport: transport.impl,
+        historySync: createFakeHistorySync().impl,
+        metricsSync: createFakeMetricsSync().impl,
+        cache: createFakeCache().impl,
+      });
+      const images: readonly ImageInput[] = [
+        { url: "data:image/png;base64,AAAA", mimeType: "image/png" },
+        { url: "https://example.com/photo.jpg" },
+      ];
+
+      store.queueMessage(text, images);
+
+      expect(transport.sentQueue).toEqual([
+        {
+          type: "chat.queue",
+          requestId: expect.any(String),
+          conversationId: CONV_ID,
+          workspaceId: "images-workspace",
+          text: text.trim(),
+          images,
+        },
+      ]);
+      expect(transport.sentQueue[0]?.images).not.toBe(images);
+      expect(transport.sent).toHaveLength(0);
+      expect(store.chunks).toHaveLength(0);
       store.dispose();
     });
 
@@ -262,6 +309,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -282,6 +330,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -291,6 +340,7 @@ describe("createChatStore", () => {
 
       store.queueMessage("   ");
       store.queueMessage("");
+      store.queueMessage("", []);
 
       expect(transport.sentQueue).toHaveLength(0);
 
@@ -303,6 +353,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -325,6 +376,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -350,6 +402,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -371,6 +424,7 @@ describe("createChatStore", () => {
       const metricsSync = createFakeMetricsSync();
       const cache = createFakeCache();
       const store = createChatStore({
+        createRequestId: () => crypto.randomUUID(),
         conversationId: CONV_ID,
         transport: transport.impl,
         historySync: historySync.impl,
@@ -396,6 +450,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -425,6 +480,7 @@ describe("createChatStore", () => {
     historySync.returnChunks = [makeStoredChunk(3, "assistant")];
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -453,6 +509,7 @@ describe("createChatStore", () => {
     historySync.returnChunks = [makeStoredChunk(1, "assistant")];
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -474,6 +531,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -506,6 +564,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -528,7 +587,7 @@ describe("createChatStore", () => {
     store.dispose();
   });
 
-  it("overlapping syncs are guarded", async () => {
+  it("overlapping syncs coalesce into a sequential rerun", async () => {
     const transport = createFakeTransport();
     const _historySync = createFakeHistorySync();
     const metricsSync = createFakeMetricsSync();
@@ -546,10 +605,11 @@ describe("createChatStore", () => {
       if (callCount === 1) {
         await firstSyncPromise;
       }
-      return { chunks: [], latestSeq: sinceSeq };
+      return { chunks: [], latestSeq: sinceSeq, historyEpoch: 0 };
     };
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: slowHistorySync,
@@ -573,7 +633,7 @@ describe("createChatStore", () => {
 
     // Release the first sync
     resolveFirstSync?.();
-    await new Promise((r) => setTimeout(r, 10));
+    await vi.waitFor(() => expect(callCount).toBe(2));
 
     store.dispose();
   });
@@ -584,6 +644,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -629,6 +690,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       model: "openai/gpt-4",
       transport: transport.impl,
@@ -653,6 +715,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -676,6 +739,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -706,6 +770,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -726,6 +791,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -750,6 +816,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -788,6 +855,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -849,6 +917,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -893,6 +962,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -965,6 +1035,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1031,6 +1102,7 @@ describe("createChatStore", () => {
     ];
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1055,6 +1127,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1086,6 +1159,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1110,6 +1184,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1144,6 +1219,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1190,6 +1266,7 @@ describe("createChatStore", () => {
     const cache = createFakeCache();
     let atBottom = false; // reader scrolled up
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1244,6 +1321,7 @@ describe("createChatStore", () => {
     const cache = createFakeCache();
     let atBottom = false;
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1282,6 +1360,7 @@ describe("createChatStore", () => {
     );
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1311,6 +1390,7 @@ describe("createChatStore", () => {
     historySync.returnChunks = Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1));
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1346,6 +1426,7 @@ describe("createChatStore", () => {
     historySync.returnChunks = [makeStoredChunk(3)];
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1370,6 +1451,7 @@ describe("createChatStore", () => {
     historySync.returnChunks = Array.from({ length: 500 }, (_, i) => makeStoredChunk(i + 1));
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1407,6 +1489,7 @@ describe("createChatStore", () => {
     );
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1439,6 +1522,7 @@ describe("createChatStore", () => {
     );
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1470,6 +1554,7 @@ describe("createChatStore", () => {
     );
 
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1502,6 +1587,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1539,6 +1625,7 @@ describe("createChatStore", () => {
       Array.from({ length: 200 }, (_, i) => makeStoredChunk(i + 1)),
     );
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1570,6 +1657,7 @@ describe("createChatStore", () => {
     // Server holds 200; cold-cache load at limit 100 → window 75 → seqs 126..200.
     historySync.returnChunks = Array.from({ length: 200 }, (_, i) => makeStoredChunk(i + 1));
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1597,6 +1685,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1636,6 +1725,7 @@ describe("createChatStore", () => {
       Array.from({ length: 50 }, (_, i) => makeStoredChunk(i + 1)),
     );
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1645,6 +1735,7 @@ describe("createChatStore", () => {
     });
     await store.load(); // only 50 chunks → all loaded, window starts at seq 1
     expect(store.chunks).toHaveLength(50);
+    await store.showEarlier(); // Probe server exhaustion; seq 1 alone is not a boundary.
     expect(store.hasEarlier).toBe(false);
     const callsAfterLoad = historySync.calls.length;
 
@@ -1662,6 +1753,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1691,6 +1783,7 @@ describe("createChatStore", () => {
     const metricsSync = createFakeMetricsSync();
     const cache = createFakeCache();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: transport.impl,
       historySync: historySync.impl,
@@ -1712,6 +1805,7 @@ describe("createChatStore — batched delta application (scheduleFlush)", () => 
     const scheduled: (() => void)[] = [];
     const historySync = createFakeHistorySync();
     const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
       conversationId: CONV_ID,
       transport: createFakeTransport().impl,
       historySync: historySync.impl,
@@ -1788,4 +1882,384 @@ describe("createChatStore — batched delta application (scheduleFlush)", () => 
     for (const f of scheduled) f();
     expect(store.chunks).toHaveLength(0);
   });
+});
+
+describe("createChatStore — cacheTimer", () => {
+  function makeStore(now: () => number) {
+    return createChatStore({
+      createRequestId: () => crypto.randomUUID(),
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: createFakeHistorySync().impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+      now,
+    });
+  }
+  const call = (stepId: string, toolCallId: string) =>
+    deltaEvent({
+      type: "tool-call",
+      conversationId: CONV_ID,
+      turnId: "t1",
+      stepId: stepId as StepId,
+      toolCallId,
+      toolName: "read_file",
+      input: {},
+    });
+  const result = (stepId: string, toolCallId: string) =>
+    deltaEvent({
+      type: "tool-result",
+      conversationId: CONV_ID,
+      turnId: "t1",
+      stepId: stepId as StepId,
+      toolCallId,
+      toolName: "read_file",
+      content: "ok",
+      isError: false,
+    });
+  const stepComplete = (stepId: string) =>
+    deltaEvent({
+      type: "step-complete",
+      conversationId: CONV_ID,
+      turnId: "t1",
+      stepId: stepId as StepId,
+    });
+  const done = (turnId: string) =>
+    deltaEvent({ type: "done", conversationId: CONV_ID, turnId, reason: "end-turn" });
+
+  it("is idle until something happens", () => {
+    const store = makeStore(() => 1000);
+    expect(store.cacheTimer.running).toBeNull();
+    store.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t1" }));
+    expect(store.cacheTimer.running).toBeNull();
+    store.dispose();
+  });
+
+  it("times a step's tool execution with the injected clock and stamps it", () => {
+    let clock = 0;
+    const store = makeStore(() => clock);
+    store.handleDelta(call("t1#0", "a"));
+    clock = 1_000;
+    store.handleDelta(stepComplete("t1#0"));
+    expect(store.cacheTimer.running).toMatchObject({ kind: "step", startedAt: 1_000 });
+    clock = 31_000;
+    store.handleDelta(result("t1#0", "a"));
+    expect(store.cacheTimer.running).toBeNull();
+    expect(store.cacheTimer.stepStamps.get("t1#0")).toBe(30_000);
+    store.dispose();
+  });
+
+  it("starts a turn gap on done and stamps it on send", () => {
+    let clock = 5_000;
+    const store = makeStore(() => clock);
+    store.handleDelta(done("t1"));
+    expect(store.cacheTimer.running).toEqual({ kind: "turn", turnId: "t1", startedAt: 5_000 });
+    clock = 125_000;
+    store.send("next");
+    expect(store.cacheTimer.running).toBeNull();
+    expect(store.cacheTimer.turnStamps.get("t1")).toBe(120_000);
+    store.dispose();
+  });
+
+  it("ignores another conversation's events", () => {
+    const store = makeStore(() => 5_000);
+    store.handleDelta(
+      deltaEvent({ type: "done", conversationId: "other", turnId: "t1", reason: "end-turn" }),
+    );
+    expect(store.cacheTimer.running).toBeNull();
+    store.dispose();
+  });
+
+  it("noteLastActivity seeds a turn gap, keeps the later start, and is ignored while generating", () => {
+    const store = makeStore(() => 5_000);
+    store.noteLastActivity(3_000);
+    expect(store.cacheTimer.running).toEqual({ kind: "turn", turnId: null, startedAt: 3_000 });
+    store.handleDelta(done("t1"));
+    expect(store.cacheTimer.running).toEqual({ kind: "turn", turnId: "t1", startedAt: 5_000 });
+    store.noteLastActivity(4_000); // an older seed never rewinds it
+    expect(store.cacheTimer.running).toMatchObject({ startedAt: 5_000 });
+    store.dispose();
+
+    const busy = makeStore(() => 5_000);
+    busy.handleDelta(deltaEvent({ type: "turn-start", conversationId: CONV_ID, turnId: "t2" }));
+    busy.noteLastActivity(4_000);
+    expect(busy.cacheTimer.running).toBeNull();
+    busy.dispose();
+  });
+});
+
+describe("history epochs", () => {
+  it.each([
+    "tail",
+    "backfill",
+  ])("recovers missed compaction on %s and exhausts non-1 history", async (path) => {
+    const history = createFakeHistorySync();
+    const cache = createFakeCache();
+    history.returnChunks = Array.from({ length: 20 }, (_, i) => makeStoredChunk(i + 1));
+    const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: history.impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: cache.impl,
+      chatLimit: 10,
+    });
+    await store.load();
+    history.historyEpoch = 1;
+    history.returnChunks = [makeStoredChunk(101), makeStoredChunk(102)];
+    if (path === "tail") {
+      store.resync();
+      await vi.waitFor(() => expect(store.chunks[0]?.seq).toBe(101));
+    } else await store.showEarlier();
+    expect(store.chunks.map((c) => c.seq)).toEqual([101, 102]);
+    expect((await cache.impl.load(CONV_ID)).map((c) => c.seq)).toEqual([101, 102]);
+    expect(history.calls.at(-1)).toMatchObject({ sinceSeq: 0, window: { limit: 7 } });
+    expect(store.hasEarlier).toBe(false);
+    const calls = history.calls.length;
+    await store.showEarlier();
+    expect(history.calls).toHaveLength(calls);
+    store.dispose();
+  });
+});
+
+it("a compaction broadcast during an in-flight fetch discards the old response", async () => {
+  const history = createFakeHistorySync();
+  history.returnChunks = [makeStoredChunk(101)];
+  let resolve!: (res: import("@dispatch/transport-contract").ConversationHistoryResponse) => void;
+  const first = new Promise<import("@dispatch/transport-contract").ConversationHistoryResponse>(
+    (r) => {
+      resolve = r;
+    },
+  );
+  const sync = vi
+    .fn<import("./ports").HistorySync>()
+    .mockImplementationOnce(() => first)
+    .mockImplementation(history.impl);
+  const cache = createFakeCache();
+  const store = createChatStore({
+    createRequestId: () => crypto.randomUUID(),
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: sync,
+    metricsSync: createFakeMetricsSync().impl,
+    cache: cache.impl,
+  });
+  const loading = store.load();
+  await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
+  history.historyEpoch = 1;
+  store.resync(1);
+  resolve({ chunks: [makeStoredChunk(1)], latestSeq: 1, historyEpoch: 0 });
+  await loading;
+  expect(sync).toHaveBeenCalledTimes(2);
+  expect(store.chunks.map((c) => c.seq)).toEqual([101]);
+  expect((await cache.impl.load(CONV_ID)).map((c) => c.seq)).toEqual([101]);
+  store.dispose();
+});
+
+it("reloads unknown legacy cache epochs rather than merging pre-upgrade rows", async () => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const storage = createIdbChunkStore({ indexedDB: new IDBFactory() });
+  const cache = createConversationCache(storage);
+  await storage.append(CONV_ID, [makeStoredChunk(1)]);
+  const history = createFakeHistorySync();
+  history.returnChunks = [makeStoredChunk(101)];
+  const store = createChatStore({
+    createRequestId: () => crypto.randomUUID(),
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: history.impl,
+    metricsSync: createFakeMetricsSync().impl,
+    cache,
+  });
+  try {
+    await store.load();
+    expect(history.calls[0]).toMatchObject({ sinceSeq: 0 });
+    expect(store.chunks.map((c) => c.seq)).toEqual([101]);
+    expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+    expect((await cache.load(CONV_ID)).map((c) => c.seq)).toEqual([101]);
+  } finally {
+    store.dispose();
+    vi.unstubAllGlobals();
+  }
+});
+
+describe("server epoch rollback", () => {
+  it.each([
+    "tail",
+    "backfill",
+  ])("converges on %s with a real cache and a fresh bounded fetch", async (path) => {
+    vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+    const storage = createIdbChunkStore({ indexedDB: new IDBFactory() });
+    const cache = createConversationCache(storage);
+    const old = Array.from({ length: 20 }, (_, i) => makeStoredChunk(i + 1));
+    await cache.commit(CONV_ID, path === "backfill" ? old.slice(-7) : old, 5);
+    const history = createFakeHistorySync();
+    history.historyEpoch = 5;
+    const store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: history.impl,
+      metricsSync: createFakeMetricsSync().impl,
+      cache,
+      chatLimit: 10,
+    });
+    try {
+      await store.load();
+      history.historyEpoch = 0;
+      // Recreated ids can reuse seqs with completely different content.
+      const restored: StoredChunk = {
+        seq: 1,
+        role: "user",
+        chunk: { type: "text", text: "restored" },
+      };
+      history.returnChunks = [restored];
+      const before = history.calls.length;
+      if (path === "tail") {
+        store.resync();
+        await vi.waitFor(() => expect(store.pendingSync).toBe(false));
+      } else await store.showEarlier();
+      expect(history.calls.length - before).toBeLessThanOrEqual(2);
+      expect(history.calls.at(-1)).toMatchObject({ sinceSeq: 0, window: { limit: 7 } });
+      expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+      expect(await cache.load(CONV_ID)).toEqual([restored]);
+      expect(store.chunks.map((c) => c.chunk)).toEqual([restored.chunk]);
+      expect(store.hasEarlier).toBe(false);
+      expect(store.error).toBeNull();
+    } finally {
+      store.dispose();
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("bounds reruns even when every response is invalidated by another compaction", async () => {
+    let calls = 0;
+    let churn = true;
+    let store!: ReturnType<typeof createChatStore>;
+    const sync: import("./ports").HistorySync = async () => {
+      calls++;
+      // Stop the old broken loop safely rather than hanging the test worker.
+      if (churn && calls <= 6) store.resync(calls);
+      return { chunks: [], latestSeq: 0, historyEpoch: calls - 1 };
+    };
+    store = createChatStore({
+      createRequestId: () => crypto.randomUUID(),
+      conversationId: CONV_ID,
+      transport: createFakeTransport().impl,
+      historySync: sync,
+      metricsSync: createFakeMetricsSync().impl,
+      cache: createFakeCache().impl,
+    });
+    try {
+      await store.load();
+      expect(calls).toBe(3);
+      expect(store.pendingSync).toBe(false);
+      expect(store.error).toMatch(/history changed repeatedly/i);
+      churn = false;
+      store.resync();
+      await vi.waitFor(() => expect(store.pendingSync).toBe(false));
+      expect(calls).toBe(4);
+      expect(store.error).toBeNull();
+    } finally {
+      store.dispose();
+    }
+  });
+});
+
+it.each([
+  "tail",
+  "backfill",
+])("rejects a delayed old %s after a lower-epoch history is observed", async (delayed) => {
+  vi.stubGlobal("IDBKeyRange", IDBKeyRange);
+  const cache = createConversationCache(createIdbChunkStore({ indexedDB: new IDBFactory() }));
+  await cache.commit(
+    CONV_ID,
+    Array.from({ length: 7 }, (_, i) => makeStoredChunk(14 + i)),
+    5,
+  );
+  const restored: StoredChunk = {
+    seq: 1,
+    role: "user",
+    chunk: { type: "text", text: "new history" },
+  };
+  type Response = import("@dispatch/transport-contract").ConversationHistoryResponse;
+  let resolve!: (res: Response) => void;
+  const slow = new Promise<Response>((r) => {
+    resolve = r;
+  });
+  let delayNext = false;
+  let epoch = 5;
+  const sync = vi.fn<import("./ports").HistorySync>().mockImplementation(async () => {
+    if (delayNext) {
+      delayNext = false;
+      return slow;
+    }
+    return {
+      chunks: epoch === 5 ? [] : [restored],
+      latestSeq: epoch === 5 ? 20 : 1,
+      historyEpoch: epoch,
+    };
+  });
+  const store = createChatStore({
+    createRequestId: () => crypto.randomUUID(),
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: sync,
+    metricsSync: createFakeMetricsSync().impl,
+    cache,
+    chatLimit: 10,
+  });
+  try {
+    await store.load();
+    delayNext = true;
+    let earlier: Promise<void>;
+    if (delayed === "tail") {
+      store.resync();
+      await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+      epoch = 0;
+      earlier = store.showEarlier();
+      await earlier; // Invalidates the old tail and requests a sequential rerun.
+    } else {
+      earlier = store.showEarlier();
+      await vi.waitFor(() => expect(sync).toHaveBeenCalledTimes(2));
+      epoch = 0;
+      store.resync();
+      await vi.waitFor(() => expect(store.chunks.map((c) => c.chunk)).toEqual([restored.chunk]));
+    }
+    resolve({ chunks: [makeStoredChunk(21)], latestSeq: 21, historyEpoch: 5 });
+    await earlier;
+    await vi.waitFor(() => expect(store.pendingSync).toBe(false));
+    expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+    expect(await cache.load(CONV_ID)).toEqual([restored]);
+    expect(store.chunks.map((c) => c.chunk)).toEqual([restored.chunk]);
+    expect(sync).toHaveBeenCalledTimes(4);
+  } finally {
+    store.dispose();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("replaces an empty high-epoch cache with the server's empty lower epoch in one request", async () => {
+  const cache = createConversationCache(createIdbChunkStore({ indexedDB: new IDBFactory() }));
+  await cache.reset(CONV_ID, 8);
+  const history = createFakeHistorySync();
+  const store = createChatStore({
+    createRequestId: () => crypto.randomUUID(),
+    conversationId: CONV_ID,
+    transport: createFakeTransport().impl,
+    historySync: history.impl,
+    metricsSync: createFakeMetricsSync().impl,
+    cache,
+  });
+  try {
+    await store.load();
+    expect(history.calls).toHaveLength(1);
+    expect(await cache.historyEpoch(CONV_ID)).toBe(0);
+    expect(await cache.load(CONV_ID)).toEqual([]);
+    expect(store.chunks).toEqual([]);
+    expect(store.hasEarlier).toBe(false);
+  } finally {
+    store.dispose();
+  }
 });

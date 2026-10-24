@@ -18,6 +18,100 @@
 > ?archived=`) was made in the same branch and the FE consumes it via the `file:` deps (dists
 > rebuilt). Recorded below.
 
+## Milestone: reasoning block boundaries on the live stream (2026-10-22)
+
+FE slice consuming a new ADDITIVE backend wire event. The kernel now emits one payload-free
+`reasoning-end` `AgentEvent` per provider reasoning block (no version bump; opaque
+signature/redacted data never leave the server). The pure chunk reducer mirrors the kernel's
+builder — an open thinking chunk is flushed as its own provisional chunk; with none open it
+appends an empty thinking chunk — so live thinking splits identically to HTTP history and the
+replay/history de-dup lines up 1:1. The old merged-run alignment (`mergedRun`) stays as a
+fallback for older servers/replays. The cache timer treats `reasoning-end` as resumed output;
+`assertAgentEventExhaustive` covers it. Mirrored in `.dispatch/wire.reference.md`
+(`TurnReasoningEndEvent`). No backend asks.
+
+## Milestone: Delivery warning display delay + Flush label (2026-10-21)
+
+Frontend-only: each keyed pending-input warning waits 1000 ms on mount (including
+restored/rejected copies); removal/unmount cancels it. Storage, delivery, receipts,
+and recovery remain immediate and unchanged. The queued Stop action now reads
+**Flush** (text + aria-label), retaining its tooltip and existing stop action.
+No contract/version/mirror changes or backend asks. Verification and scope:
+`reports/delivery-warning-delay.md`; no deployment or live probe.
+
+## Milestone: Subscription and input delivery regression (2026-10-21)
+
+The user authorized one agent to implement both repositories in paired worktrees on
+`feature/subscription-delivery-fix`.
+
+- Discovery remains global for metadata and lifecycle status. Only the focused chat and
+  explicit modal viewers subscribe to transcripts. Reopening a background chat catches up
+  history and metrics. Chat watchers and surfaces each own at most 128 of the server's
+  256 shared slots; unsubscribes precede replacement subscriptions.
+- Backend overflow rejects a watcher with `chat.subscription-rejected` (or a scoped surface
+  error) while preserving the socket and independent message admission. Logs include the
+  connection ID, subscription counts, and close code/reason.
+- `chat.send` and `chat.queue` use correlated receipts. `chat.accepted` follows opening
+  message storage or queue insertion; `chat.queued` confirms compaction admission. Correlated
+  `chat.error` identifies rejected input. Ordinary stream echoes are not durable receipts.
+- Inputs and images are saved per conversation in localStorage before transmission. Saving
+  failures preserve the composer and prevent transmission. A reload retains local-only tabs
+  with saved input; unconfirmed/rejected copies are visible and can be discarded explicitly.
+  There is no automatic retry: `requestId` is a correlation token, not an idempotency key.
+- Reconnect recovery is limited to live viewers. Discovery and per-chat metrics requests
+  coalesce; metrics permit at most one catch-up request behind an in-flight request.
+- Contracts remain transport-contract 0.26.0 and wire 0.13.0. Built declarations were refreshed
+  into the unchanged local file dependencies and the transport mirror was regenerated.
+- Validation: frontend typecheck/check/build passed; **2,439 tests / 124 files**, twice.
+  Backend typecheck/check passed; **4,150 Vitest + 184 Bun integration tests** passed.
+  The real socket fixture validates 339 requests, admission at capacity, storage-before-receipt,
+  and disconnect before receipt using isolated test ports and in-memory storage. Details in
+  `reports/subscription-delivery-fix.md`. No merge or deployment is part of this task.
+
+## Milestone: Review 3.6 — history epochs (2026-10-20)
+
+- Consumed backend Step 3.5: required `historyEpoch` on HTTP history and WS compaction;
+  unchanged `file:../backend/packages/*` links refreshed with `bun install`.
+  Versions remain transport-contract **0.26.0**, wire **0.13.0**. Relevant declarations
+  and documentation re-mirrored in `.dispatch/{transport-contract,wire}.reference.md`.
+- IndexedDB meta persists epoch, including empty history; legacy missing epochs are
+  untrusted and reloaded from cursor 0. Epoch changes clear transcript/watermarks and
+  cache before a windowed reload. Broadcasts reuse the existing chat store and invalidate
+  in-flight responses, including modal watches; unseen conversations stay lazy.
+- Tail triggers coalesce into sequential reruns. Backfill validates epoch; earlier-history
+  availability uses a known lower boundary / short-page exhaustion, not `seq > 1`.
+  With no server `hasOlder` field, a full final page may require one empty-page probe.
+- Public FE seams: cache/storage `historyEpoch` + `reset`, optional epoch on cache `commit`,
+  optional epoch on chat `resync`, lazy transcript `invalidateHistory`, explicit earliest
+  boundary on `selectHasEarlier`.
+- Verification: typecheck/check/build green; full suite **2,186 tests / 115 files**
+  (run twice on final files; see `reports/review-3.6.md`). Backend health unavailable
+  on localhost:24203, so no live probe/server started. No new backend asks.
+
+## Milestone: Local-path images in Markdown (`feature/local-image-markdown`, 2026-10-19)
+
+**Slice status:** COMPLETE (frontend half; the backend route is implemented in parallel in
+`../backend` from the same pinned contract).
+
+- `features/markdown/logic/markdown.ts`: `renderMarkdown` / `renderMarkdownTail` accept per-conversation
+  `image: { apiBase, cwd? }`. A custom marked renderer rewrites Markdown image token hrefs:
+  `file://…` → decoded absolute path, `/abs/path` → itself, relative → joined to `cwd`, `~/…` passed
+  through for backend expansion; `http(s)://`, `data:`, and other schemes are untouched. Local paths
+  become `${apiBase}/local-image?path=<encodeURIComponent>` via `resolveImageUrl` (empty `apiBase` →
+  root-relative). Rewriting happens on the token stream, so fenced/inline code is never touched.
+- `logic/streaming-markdown.ts`: `advance(state, text, opts)` threads the same options through the
+  settled, tail, and open-fence pipelines. The cache is keyed on `apiBase`/`cwd` so an async cwd load
+  invalidates and re-renders settled blocks; string identity is preserved while the options are stable.
+- `ui/Markdown.svelte`: new optional `image` prop. `ChatView` gains `cwd` and passes
+  `image={{ apiBase: apiBaseUrl, cwd }}`; `ChatPane` supplies `store.httpBase` + `store.cwd`.
+- Tests: `file://`, absolute, relative-with/without-cwd, empty-`apiBase`, http(s), `data:`, fenced-code
+  exemption, streaming tail + settled prefix + options-change invalidation, and ChatView threading.
+- Backend contract: expects `GET /local-image?path=` exactly as pinned in `PLAN.md` (absolute path,
+  `~` expansion, raster whitelist, magic-byte sniff). No FE contract/type changes; **no backend asks**.
+- Verification: typecheck **0 errors / 0 warnings**; tests **2,070 passed** (114 files);
+  `bun run check` clean; build succeeds (existing bundle-size warning only). No wire/browser-effect
+  adapter changes → no live probe required for this slice; manual inline-image smoke remains user-run.
+
 ## Milestone: Agent tab grid + subagent groups (`feature/agent-tab-grid`, 2026-10-15)
 - FE: the tabs view is now a 2-column grid of identical fixed-height cards (`TabCard`); a tab with
   visible subagents is double-width and wrapped with them in a darker, nestable box

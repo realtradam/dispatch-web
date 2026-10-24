@@ -63,6 +63,25 @@ export function isNumberedOpenCode(id: string): boolean {
 }
 
 /**
+ * The credential key of the Claude Code subscription (the external Claude
+ * extension — `auth-claude` + `provider-anthropic`). The backend registers it
+ * under `DISPATCH_CLAUDE_CREDENTIAL`, default `"claude"`, so its models arrive
+ * as `claude/<model>`.
+ */
+export const CLAUDE_SUBSCRIPTION_KEY = "claude";
+
+/**
+ * True iff `full` is a model served through the Claude Code subscription
+ * (`claude/<model>`). Gates the cache timer (that subscription's prompt cache
+ * expires after 5 minutes). A bare key with no model is not a model.
+ */
+export function isClaudeSubscriptionModel(full: string | undefined): boolean {
+  if (full === undefined) return false;
+  const { key, model } = splitModelName(full);
+  return key === CLAUDE_SUBSCRIPTION_KEY && model !== "";
+}
+
+/**
  * A friendly human label for a model key/provider id: `opencode-<n>` →
  * "OpenCode #<n>"; any other id is returned unchanged. The RAW id is still what
  * gets selected/persisted — this only affects display.

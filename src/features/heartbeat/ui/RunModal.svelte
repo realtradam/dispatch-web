@@ -154,6 +154,7 @@
 				{:else}
 					<ChatView
 						chunks={chat.chunks}
+						recovering={chat.recovering}
 						turnMetrics={chat.turnMetrics}
 						hasEarlier={chat.hasEarlier}
 						onShowEarlier={chat.showEarlier}

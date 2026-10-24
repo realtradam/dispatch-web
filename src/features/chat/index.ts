@@ -6,8 +6,11 @@ export type {
 } from "../../core/chunks";
 export { groupRenderedChunks, resolveImageUrl, viewProviderRetry } from "../../core/chunks";
 export type { TurnMetricsEntry } from "../../core/metrics";
+export { createPendingInputStorage } from "./adapter/pending-inputs";
 export type { NamedAgentLike, NamedAgentSnapshotLike } from "./model-select";
 export {
+  CLAUDE_SUBSCRIPTION_KEY,
+  isClaudeSubscriptionModel,
   isNamedAgentSelection,
   isNumberedOpenCode,
   isVisionModel,
@@ -20,6 +23,7 @@ export {
   openCodeNumber,
   providerKeysWithNamedAgents,
 } from "./model-select";
+export type { PendingInput, PendingInputStorage } from "./pending-inputs";
 export type { ChatTransport, HistorySync, HistoryWindow, MetricsSync } from "./ports";
 export type {
   EffortOption,
@@ -51,6 +55,7 @@ export { default as CompactionView } from "./ui/CompactionView.svelte";
 export type { ComposerStatus } from "./ui/Composer.svelte";
 export { default as Composer } from "./ui/Composer.svelte";
 export { default as ModelSelector } from "./ui/ModelSelector.svelte";
+export { default as PendingInputs } from "./ui/PendingInputs.svelte";
 export { default as ReasoningEffortSelector } from "./ui/ReasoningEffortSelector.svelte";
 
 /** Public module manifest — aggregated by the shell's "Loaded Modules" view. */

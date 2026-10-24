@@ -1,4 +1,8 @@
-import type { ChatSendMessage, ConversationHistoryResponse } from "@dispatch/transport-contract";
+import type {
+  ChatSendMessage,
+  ConversationHistoryResponse,
+  WsServerMessage,
+} from "@dispatch/transport-contract";
 import type { AgentEvent, StepId, StoredChunk } from "@dispatch/wire";
 import { describe, expect, it } from "vitest";
 import {
@@ -75,6 +79,7 @@ describe("classifies every AgentEvent type", () => {
     { type: "error", conversationId: "c1", turnId: "t1", message: "oops" },
     { type: "done", conversationId: "c1", turnId: "t1", reason: "complete" },
     { type: "turn-sealed", conversationId: "c1", turnId: "t1" },
+    { type: "turn-ended", conversationId: "c1", turnId: "t1", reason: "sealed" },
     { type: "steering", conversationId: "c1", turnId: "t1", text: "steer mid-turn" },
     {
       type: "provider-retry",
@@ -103,13 +108,14 @@ describe("classifies every AgentEvent type", () => {
       "error",
       "done",
       "turn-sealed",
+      "turn-ended",
       "steering",
       "provider-retry",
     ]);
   });
 
-  it("covers all 15 AgentEvent variants", () => {
-    expect(samples).toHaveLength(15);
+  it("covers all 16 AgentEvent variants", () => {
+    expect(samples).toHaveLength(16);
   });
 });
 
@@ -172,6 +178,23 @@ describe("classifies every WsServerMessage type", () => {
         event: { type: "done" as const, conversationId: "c", turnId: "t", reason: "r" },
       },
       { type: "chat.error" as const, message: "e" },
+      { type: "chat.accepted" as const, conversationId: "c1", requestId: "r1" },
+      {
+        type: "chat.subscription-rejected" as const,
+        conversationId: "c1",
+        reason: "subscription-limit" as const,
+      },
+      {
+        type: "chat.queued" as const,
+        conversationId: "conv-1",
+        reason: "compaction" as const,
+        messageId: "queued-1",
+      },
+      {
+        type: "chat.resync-required" as const,
+        conversationId: "c1",
+        reason: "replay-limit" as const,
+      },
       { type: "conversation.open" as const, conversationId: "c1", workspaceId: "w1" },
       {
         type: "conversation.statusChanged" as const,
@@ -184,9 +207,32 @@ describe("classifies every WsServerMessage type", () => {
         conversationId: "c1",
         newConversationId: "c2",
         messagesSummarized: 10,
+        historyEpoch: 0,
         messagesKept: 5,
       },
+      {
+        type: "conversation.tabGroupChanged" as const,
+        conversationId: "c1",
+        workspaceId: "w1",
+        tabGroupParentId: null,
+      },
+      { type: "extensions-changed" as const, action: "scan" as const },
+      {
+        type: "layout" as const,
+        workspaceId: "w1",
+        tree: { version: 1 as const, root: { kind: "leaf" as const, id: "leaf1", view: "chat" } },
+      },
+      {
+        type: "tile-layout" as const,
+        mode: "wide" as const,
+        data: { version: 2 as const, tiles: [] },
+      },
     ];
+    // Runtime samples stay exhaustive too, not just the switch guard.
+    const covered: Exclude<WsServerMessage["type"], (typeof msgs)[number]["type"]> extends never
+      ? true
+      : false = true;
+    expect(covered).toBe(true);
     const labels = msgs.map(assertWsServerMessageExhaustive);
     expect(labels).toEqual([
       "catalog",
@@ -195,9 +241,17 @@ describe("classifies every WsServerMessage type", () => {
       "error",
       "chat.delta",
       "chat.error",
+      "chat.accepted",
+      "chat.subscription-rejected",
+      "chat.queued",
+      "chat.resync-required",
       "conversation.open",
       "conversation.statusChanged",
       "conversation.compacted",
+      "conversation.tabGroupChanged",
+      "extensions-changed",
+      "layout",
+      "tile-layout",
     ]);
   });
 });
@@ -268,6 +322,7 @@ describe("ConversationHistoryResponse shape is constructible", () => {
   it("constructs a response with chunks", () => {
     const resp: ConversationHistoryResponse = {
       chunks: [{ seq: 1, role: "user", chunk: { type: "text", text: "hi" } }],
+      historyEpoch: 0,
       latestSeq: 1,
     };
     expect(resp.chunks).toHaveLength(1);
@@ -275,7 +330,7 @@ describe("ConversationHistoryResponse shape is constructible", () => {
   });
 
   it("constructs an empty (caught-up) response", () => {
-    const resp: ConversationHistoryResponse = { chunks: [], latestSeq: 5 };
+    const resp: ConversationHistoryResponse = { chunks: [], historyEpoch: 0, latestSeq: 5 };
     expect(resp.chunks).toHaveLength(0);
     expect(resp.latestSeq).toBe(5);
   });

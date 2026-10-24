@@ -1,6 +1,7 @@
 import type { LayoutTree, SplitNode } from "@dispatch/layout-contract";
 import { render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
+import { gsap } from "gsap";
 import { describe, expect, it, vi } from "vitest";
 import { createCollapseStore, registerView, unregisterView } from "../index";
 import FixtureA from "./fixtures/FixtureA.svelte";
@@ -271,7 +272,7 @@ describe("TileRoot", () => {
     const { container } = render(TileRoot, {
       props: { tree: markedTestTree(), collapse: createCollapseStore({ viewportWidth: 1024 }) },
     });
-    const panels = container.querySelector("[data-testid='fixture-b']")?.closest(".gap-2");
+    const panels = container.querySelector("[data-testid='fixture-b']")?.closest("[data-panels]");
     expect(panels?.getAttribute("style") ?? "").not.toContain("outline");
   });
 
@@ -338,6 +339,56 @@ describe("TileRoot registry cleanup", () => {
       expect(screen.getByTestId("fallback-tile")).toBeInTheDocument();
     } finally {
       consoleError.mockRestore();
+    }
+  });
+});
+
+describe("TilePanels — panel identity + height animation", () => {
+  const wrappers = (): HTMLElement[] => [
+    ...document.querySelectorAll<HTMLElement>("[data-panels] > [data-panel-key]"),
+  ];
+
+  it("closing the MIDDLE panel removes that panel's DOM, keeping the others' nodes", async () => {
+    const { rerender } = render(TileRoot, {
+      props: { tree: panelsOnlyTree("fix-b", "fix-a", "fix-b"), collapse: createCollapseStore() },
+    });
+    const [first, , third] = wrappers();
+    await rerender({ tree: panelsOnlyTree("fix-b", "fix-b"), collapse: createCollapseStore() });
+    // Identity, not position: the third panel's node survived (index keying
+    // would have reused the middle node and dropped the last one).
+    expect(wrappers()).toEqual([first, third]);
+    expect(screen.queryByTestId("fixture-a")).toBeNull();
+  });
+
+  it("✕ on one of two IDENTICAL views removes exactly that panel", async () => {
+    const user = userEvent.setup();
+    const tree = panelsOnlyTree("fix-b", "fix-a", "fix-a");
+    const { rerender } = render(TileRoot, { props: { tree, collapse: createCollapseStore() } });
+    const [first, , third] = wrappers();
+    // Click the MIDDLE panel's ✕ (the first panel has none), then the owner
+    // applies the edit — the two fix-a panels are indistinguishable by data.
+    const [middleClose] = screen.getAllByRole("button", { name: "Remove view" });
+    await user.click(middleClose as HTMLElement);
+    await rerender({ tree: panelsOnlyTree("fix-b", "fix-a"), collapse: createCollapseStore() });
+    expect(wrappers()).toEqual([first, third]);
+  });
+
+  it("with motion allowed, a closed panel stays in flow while it shrinks out", async () => {
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn(() => ({ matches: false }) as unknown as MediaQueryList),
+    );
+    try {
+      const { rerender } = render(TileRoot, {
+        props: { tree: panelsOnlyTree("fix-b", "fix-a"), collapse: createCollapseStore() },
+      });
+      const closing = wrappers()[1];
+      await rerender({ tree: panelsOnlyTree("fix-b"), collapse: createCollapseStore() });
+      // jsdom's stubbed Element.animate never finishes, so the outro holds.
+      expect(closing?.isConnected).toBe(true);
+      expect(gsap.getTweensOf(closing as HTMLElement)).toHaveLength(1);
+    } finally {
+      vi.unstubAllGlobals();
     }
   });
 });

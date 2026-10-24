@@ -1,5 +1,5 @@
 import type { StepId } from "@dispatch/wire";
-import { render, screen } from "@testing-library/svelte";
+import { fireEvent, render, screen } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 import type { RenderedChunk } from "../../../core/chunks";
@@ -496,4 +496,63 @@ it("renders a per-tool Phosphor icon in the header", () => {
   expect(icons).toHaveLength(2);
   // Different tools → different glyphs.
   expect(icons[0]?.innerHTML).not.toBe(icons[1]?.innerHTML);
+});
+
+it("replaces failed persisted images with an expired placeholder, without marking inline images expired", async () => {
+  const chunks: RenderedChunk[] = ["/images/conv/gone.png", "data:image/png;base64,AAAA"].map(
+    (url, i) => ({ seq: i + 1, role: "user", chunk: { type: "image", url }, provisional: false }),
+  );
+  render(ChatView, { chunks, apiBaseUrl: "https://backend.test" });
+  const [stored, inline] = screen.getAllByRole("img");
+  if (!stored || !inline) throw new Error("expected both images");
+  expect(stored).toHaveAttribute("src", "https://backend.test/images/conv/gone.png");
+  await fireEvent.error(inline);
+  expect(screen.queryByText("image expired")).toBeNull();
+  await fireEvent.error(stored);
+  expect(screen.getByText("image expired")).toBeInTheDocument();
+  expect(screen.getAllByRole("img")).toEqual([inline]);
+});
+
+it("shows omitted in-progress tool input as recovering/unavailable, never No arguments", async () => {
+  const { container, rerender } = render(ChatView, {
+    recovering: true,
+    chunks: [
+      {
+        seq: null,
+        role: "tool",
+        provisional: true,
+        chunk: {
+          type: "tool-result",
+          toolCallId: "missing",
+          toolName: "run_shell",
+          content: "real output",
+          isError: false,
+        },
+      },
+    ],
+  });
+  expect(screen.getByRole("status").textContent).toContain("unavailable until persisted");
+  expect(screen.getByText("Recovering tool input…")).toBeTruthy();
+  await openAllCollapses(container);
+  expect(screen.getByText(/Tool input is unavailable until it is persisted/)).toBeTruthy();
+  expect(screen.queryByText("No arguments")).toBeNull();
+  expect(screen.getByText("real output")).toBeTruthy();
+  await rerender({
+    recovering: false,
+    chunks: [
+      {
+        seq: 1,
+        role: "assistant",
+        provisional: false,
+        chunk: {
+          type: "tool-call",
+          toolCallId: "missing",
+          toolName: "run_shell",
+          input: { command: "recovered command" },
+        },
+      },
+    ],
+  });
+  expect(screen.queryByRole("status")).toBeNull();
+  expect(screen.queryByText("Recovering tool input…")).toBeNull();
 });

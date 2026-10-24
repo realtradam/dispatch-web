@@ -562,3 +562,79 @@ describe("parseServerMessage — subagent tab groups", () => {
     ).toBeNull();
   });
 });
+
+it("preserves a compaction epoch and rejects absent or invalid epochs", () => {
+  const msg = {
+    type: "conversation.compacted",
+    conversationId: "c",
+    newConversationId: "archive",
+    messagesSummarized: 2,
+    messagesKept: 1,
+    historyEpoch: 7,
+  };
+  expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+  for (const historyEpoch of [undefined, -1, 1.5, "7"]) {
+    expect(parseServerMessage(JSON.stringify({ ...msg, historyEpoch }))).toBeNull();
+  }
+});
+
+describe("chat.queued admission acknowledgement", () => {
+  const ack = {
+    type: "chat.queued",
+    conversationId: "c1",
+    reason: "compaction",
+    messageId: "q1",
+  };
+
+  it.each([undefined, "request-1"])("preserves optional requestId %s", (requestId) => {
+    const msg = { ...ack, ...(requestId !== undefined ? { requestId } : {}) };
+    expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+  });
+
+  it.each([
+    { conversationId: undefined },
+    { conversationId: 12 },
+    { messageId: undefined },
+    { messageId: null },
+    { reason: undefined },
+    { reason: "other" },
+    { requestId: null },
+    { requestId: 12 },
+  ])("rejects malformed acknowledgement %j", (bad) => {
+    expect(parseServerMessage(JSON.stringify({ ...ack, ...bad }))).toBeNull();
+  });
+
+  it("serializes a correlated send", () => {
+    const msg = { type: "chat.send" as const, message: "hello", requestId: "r1" };
+    expect(JSON.parse(serialize(msg))).toEqual(msg);
+  });
+});
+
+describe("chat.resync-required", () => {
+  it.each(["replay-limit", "payload-limit"])("parses %s with optional turn identity", (reason) => {
+    const msg = { type: "chat.resync-required", conversationId: "c1", reason };
+    expect(parseServerMessage(JSON.stringify(msg))).toEqual(msg);
+    expect(parseServerMessage(JSON.stringify({ ...msg, turnId: "t1" }))).toEqual({
+      ...msg,
+      turnId: "t1",
+    });
+  });
+  it.each([
+    {},
+    { conversationId: null },
+    { conversationId: 1 },
+    { reason: "unknown" },
+    { reason: null },
+    { turnId: null },
+    { turnId: 42 },
+  ])("rejects malformed notice %j", (bad) => {
+    const msg = {
+      type: "chat.resync-required",
+      conversationId: "c1",
+      reason: "replay-limit",
+      ...bad,
+    };
+    if (Object.keys(bad).length === 0) delete (msg as { conversationId?: unknown }).conversationId;
+    expect(parseServerMessage(JSON.stringify(msg))).toBeNull();
+  });
+});

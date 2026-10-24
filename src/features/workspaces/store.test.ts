@@ -1,6 +1,7 @@
 import type { Workspace, WorkspaceEntry } from "@dispatch/wire";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceResult } from "./adapter/http";
+import { archivedCreateMessage, type WorkspaceLookup } from "./logic/create";
 import { createWorkspaceStore } from "./store.svelte";
 
 function entry(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
@@ -25,14 +26,23 @@ function fakeHttp(opts: {
   unstar?: (id: string) => Promise<WorkspaceResult<Workspace>>;
   archive?: (id: string) => Promise<WorkspaceResult<Workspace>>;
   unarchive?: (id: string) => Promise<WorkspaceResult<Workspace>>;
+  get?: (id: string) => Promise<WorkspaceLookup>;
+  ensure?: (id: string) => Promise<WorkspaceResult<Workspace>>;
 }) {
   return {
     list: vi.fn(
       async (_archived?: "true" | "false" | "all"): Promise<readonly WorkspaceEntry[]> =>
         opts.list ?? [],
     ),
-    ensure: vi.fn(),
-    get: vi.fn(),
+    ensure:
+      opts.ensure ??
+      vi.fn(
+        async (id: string): Promise<WorkspaceResult<Workspace>> => ({
+          ok: true,
+          value: entry({ id }),
+        }),
+      ),
+    get: vi.fn(opts.get ?? (async (): Promise<WorkspaceLookup> => ({ kind: "missing" }))),
     setTitle: vi.fn(),
     setDefaultCwd: vi.fn(),
     setDefaultComputer: vi.fn(),
@@ -221,6 +231,53 @@ describe("createWorkspaceStore — setArchived", () => {
 
     // setArchived triggers a refresh() to reconcile the active-only list.
     expect(http.list.mock.calls.length).toBeGreaterThan(listCallsBefore);
+  });
+});
+
+describe("createWorkspaceStore — create (archived-slug gate)", () => {
+  it("refuses an archived slug with the can't-create message and never calls ensure", async () => {
+    const http = fakeHttp({
+      get: async () => ({ kind: "found", workspace: entry({ id: "old", archived: true }) }),
+    });
+    const store = createWorkspaceStore(http);
+
+    const result = await store.create("old");
+
+    expect(result).toEqual({ ok: false, error: archivedCreateMessage("old") });
+    expect(http.ensure).not.toHaveBeenCalled();
+  });
+
+  it("proceeds for an existing non-archived slug (ensure is called as before)", async () => {
+    const http = fakeHttp({
+      get: async () => ({ kind: "found", workspace: entry({ id: "taken", archived: false }) }),
+    });
+    const store = createWorkspaceStore(http);
+
+    const result = await store.create("taken");
+
+    expect(result.ok).toBe(true);
+    expect(http.ensure).toHaveBeenCalledTimes(1);
+  });
+
+  it("proceeds for a brand-new slug (404 → missing)", async () => {
+    const http = fakeHttp({ get: async () => ({ kind: "missing" }) });
+    const store = createWorkspaceStore(http);
+
+    const result = await store.create("fresh");
+
+    expect(result.ok).toBe(true);
+    expect(http.ensure).toHaveBeenCalledTimes(1);
+  });
+
+  it("refuses when the existence check itself failed, without calling ensure (§3.4)", async () => {
+    const http = fakeHttp({ get: async () => ({ kind: "failed", error: "db down" }) });
+    const store = createWorkspaceStore(http);
+
+    const result = await store.create("maybe");
+
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.error).toContain("Couldn't check whether");
+    expect(http.ensure).not.toHaveBeenCalled();
   });
 });
 

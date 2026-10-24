@@ -1,4 +1,5 @@
-import { execSync } from "node:child_process";
+import { execFileSync, execSync } from "node:child_process";
+import { lookup } from "node:dns/promises";
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 
@@ -7,7 +8,62 @@ console.log("[spike] config module evaluated");
 import { svelte } from "@sveltejs/vite-plugin-svelte";
 import tailwindcss from "@tailwindcss/vite";
 import { svelteTesting } from "@testing-library/svelte/vite";
-import { defineConfig, type Plugin } from "vitest/config";
+import { defineConfig, type Plugin, type UserConfig } from "vitest/config";
+import {
+  buildAllowedHosts,
+  type DevNetworkPolicy,
+  normalizeHost,
+  tailscaleSelf,
+} from "./scripts/network-policy";
+import { applyViteNetworkPolicy } from "./scripts/vite-network-guard";
+
+async function secureDevConfig(config: UserConfig, serving: boolean): Promise<UserConfig> {
+  // Build/test have no listener and need no subprocess or DNS effects.
+  if (!serving) return config;
+  const network = await detectDevNetworkPolicy();
+  return applyViteNetworkPolicy(config, network);
+}
+
+async function detectDevNetworkPolicy(): Promise<DevNetworkPolicy> {
+  let tailscaleStatusJson: string | undefined;
+  try {
+    tailscaleStatusJson = execFileSync("tailscale", ["status", "--self", "--json"], {
+      encoding: "utf8",
+      timeout: 2000,
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+  } catch {
+    console.warn(
+      "[network] Tailscale detection unavailable; using loopback and explicit env hosts",
+    );
+  }
+  const allowedHosts = new Set(
+    buildAllowedHosts({
+      ...(tailscaleStatusJson !== undefined ? { tailscaleStatusJson } : {}),
+      env: {
+        ...(process.env.DISPATCH_ALLOWED_HOSTS !== undefined
+          ? { DISPATCH_ALLOWED_HOSTS: process.env.DISPATCH_ALLOWED_HOSTS }
+          : {}),
+        ...(process.env.DISPATCH_TAILSCALE_NAME !== undefined
+          ? { DISPATCH_TAILSCALE_NAME: process.env.DISPATCH_TAILSCALE_NAME }
+          : {}),
+      },
+    }),
+  );
+  const self = tailscaleSelf(tailscaleStatusJson);
+  if (self.hostName) {
+    try {
+      const answers = await lookup(self.hostName, { all: true });
+      if (answers.some(({ address }) => self.ips.includes(normalizeHost(address)))) {
+        const name = normalizeHost(self.hostName);
+        if (name) allowedHosts.add(name);
+      }
+    } catch {
+      // The OS hostname is not necessarily the MagicDNS name. Fail closed.
+    }
+  }
+  return { allowedHosts, allowedAddresses: new Set(["127.0.0.1", "::1", ...self.ips]) };
+}
 
 /**
  * SPIKE (plan 03) — the Svelte-runtime import map.
@@ -105,16 +161,15 @@ function readBrowserHash(): string | null {
 
 // Dev server on the reserved FRONTEND_PORT (24204). Vitest config lives here too
 // (jsdom + globals) so component tests run without extra config.
-export default defineConfig({
+const config: UserConfig = {
   // svelteTesting() forces Svelte's `browser` resolve condition under vitest so
   // component render()/mount() works in jsdom (a plain test.resolve.conditions
   // does not propagate to Vite's SSR resolution — sveltejs/svelte#11394).
   plugins: [tailwindcss(), svelte(), svelteTesting(), svelteRuntimeImportMap()],
-  // Bind all interfaces + accept any Host header so the dev server is reachable over a LAN /
-  // Tailscale. Safe for LOCAL-NETWORK-ONLY use (NOT internet-exposed): `allowedHosts: true`
-  // disables Vite's DNS-rebinding host check. (The WS URL still runs in the browser — set
-  // VITE_WS_URL to the backend's reachable host when browsing from another device.)
-  server: { port: 24204, host: true, allowedHosts: true },
+  // Vite has one bind: destination-interface guards restrict HTTP + HMR to
+  // loopback / detected Tailscale IPs despite the dual-stack wildcard listener.
+  // Env host extras are additive and DISPATCH_BIND cannot widen this guard.
+  server: { port: 24204, host: true, allowedHosts: ["localhost", "127.0.0.1", "::1"] },
   // SPIKE (plan 03): resolve the bare Svelte specifiers to svelte's SOURCE
   // files — stable dev URLs the import map points the plugin's bare imports
   // at (one shared runtime instance; no prebundle copy of svelte).
@@ -171,7 +226,7 @@ export default defineConfig({
       // rollup tree-shake entry exports no other chunk imports (leaving only
       // the bindings the app happens to use). Their exports must be the FULL
       // svelte API: a plugin may import bindings the app never uses.
-      preserveEntrySignatures: true,
+      preserveEntrySignatures: "strict",
       input: {
         main: fileURLToPath(new URL("./index.html", import.meta.url)),
         "svelte-api": svelteApiEntry,
@@ -189,7 +244,11 @@ export default defineConfig({
     globals: true,
     setupFiles: ["./vitest-setup.ts"],
   },
-});
+};
+
+export default defineConfig(async ({ command }) =>
+  secureDevConfig(config, command === "serve" && !process.env.VITEST),
+);
 
 function getGitShortHash(): string {
   try {

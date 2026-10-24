@@ -77,7 +77,7 @@ describe("createLayoutHttp — getTree", () => {
   it("a malformed 200 (SPA-fallback JSON without a tree) degrades to notFound", async () => {
     const http = createLayoutHttp(
       "http://backend.test",
-      fetchReturning(200, { chunks: [], latestSeq: 0 }),
+      fetchReturning(200, { chunks: [], historyEpoch: 0, latestSeq: 0 }),
     );
     const result = await http.getTree("ws-a");
     expect(result).toMatchObject({ ok: false, notFound: true });

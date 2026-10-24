@@ -1,6 +1,10 @@
 import type {
+  ChatAcceptedMessage,
   ChatDeltaMessage,
   ChatErrorMessage,
+  ChatQueuedMessage,
+  ChatResyncRequiredMessage,
+  ChatSubscriptionRejectedMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -24,7 +28,15 @@ export interface WebSocketLike {
 export interface SurfaceSocketOptions {
   url: string;
   onMessage: (msg: SurfaceServerMessage) => void;
-  onChat?: (msg: ChatDeltaMessage | ChatErrorMessage) => void;
+  onChat?: (
+    msg:
+      | ChatAcceptedMessage
+      | ChatSubscriptionRejectedMessage
+      | ChatDeltaMessage
+      | ChatErrorMessage
+      | ChatQueuedMessage
+      | ChatResyncRequiredMessage,
+  ) => void;
   /** Broadcast when a conversation is "opened" (e.g. CLI `--open` flag). */
   onConversationOpen?: (msg: ConversationOpenMessage) => void;
   /** Broadcast when a conversation's lifecycle status changes (active/idle/closed). */
@@ -67,7 +79,12 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
   let disposed = false;
   let reconnectAttempt = 0;
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+  let healthyTimer: ReturnType<typeof setTimeout> | null = null;
   let isOpen = false;
+  function clearHealthyTimer(): void {
+    if (healthyTimer !== null) clearTimeout(healthyTimer);
+    healthyTimer = null;
+  }
   const queue: string[] = [];
 
   function connect(isReconnect: boolean): void {
@@ -77,7 +94,12 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
     socket.onopen = () => {
       if (disposed) return;
       isOpen = true;
-      reconnectAttempt = 0;
+      // Opening is not proof of recovery: replay may immediately overflow the
+      // server's slow-consumer bound. Only a sustained open resets the streak.
+      healthyTimer = setTimeout(() => {
+        healthyTimer = null;
+        reconnectAttempt = 0;
+      }, 30_000);
       for (const raw of queue.splice(0)) {
         socket?.send(raw);
       }
@@ -90,8 +112,23 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
       if (disposed) return;
       const msg = parseServerMessage(ev.data);
       if (msg !== null) {
-        if (msg.type === "chat.delta" || msg.type === "chat.error") {
-          opts.onChat?.(msg as ChatDeltaMessage | ChatErrorMessage);
+        if (
+          msg.type === "chat.accepted" ||
+          msg.type === "chat.subscription-rejected" ||
+          msg.type === "chat.delta" ||
+          msg.type === "chat.error" ||
+          msg.type === "chat.queued" ||
+          msg.type === "chat.resync-required"
+        ) {
+          opts.onChat?.(
+            msg as
+              | ChatAcceptedMessage
+              | ChatSubscriptionRejectedMessage
+              | ChatDeltaMessage
+              | ChatErrorMessage
+              | ChatQueuedMessage
+              | ChatResyncRequiredMessage,
+          );
         } else if (msg.type === "conversation.open") {
           opts.onConversationOpen?.(msg as ConversationOpenMessage);
         } else if (msg.type === "conversation.statusChanged") {
@@ -112,8 +149,10 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
       }
     };
 
-    socket.onclose = () => {
+    socket.onclose = (ev) => {
+      clearHealthyTimer();
       if (disposed) return;
+      if (isOpen && (ev.code === 1000 || ev.code === 1001)) reconnectAttempt = 0;
       isOpen = false;
       scheduleReconnect();
     };
@@ -143,6 +182,7 @@ export function createSurfaceSocket(opts: SurfaceSocketOptions): SurfaceSocketHa
     },
     close(): void {
       disposed = true;
+      clearHealthyTimer();
       if (reconnectTimer !== null) {
         clearTimeout(reconnectTimer);
         reconnectTimer = null;

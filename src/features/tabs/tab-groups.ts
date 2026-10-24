@@ -169,6 +169,22 @@ export function lastRowIsGroup(children: readonly TabGroupNode[]): boolean {
 }
 
 /**
+ * The DaisyUI theme colour a group box at nesting `level` (1 = outermost) is
+ * tinted with. Three colours ROTATE by level, so a box always differs from
+ * the box around it AND from the one around that (with two colours a box
+ * would match its grandparent). `primary` is deliberately excluded — it marks
+ * the active tab, which must stay legible inside any box.
+ */
+export const GROUP_TONES = ["secondary", "success", "accent"] as const;
+export type GroupTone = (typeof GROUP_TONES)[number];
+
+export function groupTone(level: number): GroupTone {
+  const n = GROUP_TONES.length;
+  const i = (((Math.trunc(level) - 1) % n) + n) % n; // non-negative even for level < 1
+  return GROUP_TONES[i] ?? GROUP_TONES[0];
+}
+
+/**
  * Horizontal bleed (px) of a group box at nesting `level` (1 = outermost)
  * when the deepest box is `maxDepth`. A box bleeds OUTWARD by this much (a
  * negative margin + equal padding), so the cards inside every box sit on

@@ -7,12 +7,17 @@
    * preservation, the ScrollToBottom affordance, and the empty-state
    * watermark. Keyed on the active conversation exactly like today's ChatView.
    */
-  import { ChatView } from "../../features/chat";
+  import { ChatView, PendingInputs, isClaudeSubscriptionModel } from "../../features/chat";
   import { createSmartScrollController, ScrollToBottom } from "../../features/smart-scroll";
   import { preserveViewportAcross, type AppViewPorts } from "../view-ports";
 
   let { ports }: { ports: AppViewPorts } = $props();
   const store = $derived(ports.store);
+
+  // Cache timer: Claude Code subscription models only (5-minute prompt-cache expiry).
+  const cacheTimer = $derived(
+    isClaudeSubscriptionModel(store.activeModel) ? store.activeChat.cacheTimer : null,
+  );
 
   // One controller owns the chat scroll region; the effects below feed it the
   // edges (identical to the App.svelte wiring this moved out of).
@@ -75,17 +80,21 @@
       {#key store.activeConversationId}
         <ChatView
           chunks={store.activeChat.chunks}
+          recovering={store.activeChat.recovering}
           turnMetrics={store.activeChat.turnMetrics}
           hasEarlier={store.activeChat.hasEarlier}
           onShowEarlier={handleShowEarlier}
           thinkingKeyBase={store.activeChat.thinkingKeyBase}
           providerRetry={store.activeChat.providerRetry}
           apiBaseUrl={store.httpBase}
+          cwd={store.cwd}
+          {cacheTimer}
         />
       {/key}
+      <PendingInputs inputs={store.activeChat.pendingInputs} onDiscard={store.activeChat.discardPendingInput} />
     </div>
   </div>
-  {#if store.activeChat.chunks.length === 0}
+  {#if store.activeChat.chunks.length === 0 && store.activeChat.pendingInputs.length === 0}
     <div
       class="pointer-events-none absolute inset-0 flex items-center justify-center"
       aria-hidden="true"

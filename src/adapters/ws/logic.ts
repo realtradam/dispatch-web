@@ -1,6 +1,8 @@
 import type {
   ChatDeltaMessage,
   ChatErrorMessage,
+  ChatQueuedMessage,
+  ChatResyncRequiredMessage,
   ConversationCompactedMessage,
   ConversationOpenMessage,
   ConversationStatusChangedMessage,
@@ -23,8 +25,12 @@ const VALID_SERVER_TYPES = new Set([
   "surface",
   "update",
   "error",
+  "chat.accepted",
+  "chat.subscription-rejected",
   "chat.delta",
   "chat.error",
+  "chat.queued",
+  "chat.resync-required",
   "conversation.open",
   "conversation.statusChanged",
   "conversation.compacted",
@@ -105,11 +111,55 @@ export function parseServerMessage(data: string): WsServerMessage | null {
           : { type: "error", message: parsed.message };
       return msg;
     }
+    case "chat.accepted": {
+      if (typeof parsed.conversationId !== "string" || typeof parsed.requestId !== "string")
+        return null;
+      return {
+        type: "chat.accepted",
+        conversationId: parsed.conversationId,
+        requestId: parsed.requestId,
+      };
+    }
+    case "chat.subscription-rejected": {
+      if (typeof parsed.conversationId !== "string" || parsed.reason !== "subscription-limit")
+        return null;
+      return {
+        type: "chat.subscription-rejected",
+        conversationId: parsed.conversationId,
+        reason: parsed.reason,
+      };
+    }
     case "chat.delta": {
       const event = parsed.event;
       if (!isRecord(event)) return null;
       if (typeof event.type !== "string") return null;
       return { type: "chat.delta", event: event as unknown as ChatDeltaMessage["event"] };
+    }
+    case "chat.resync-required": {
+      if (typeof parsed.conversationId !== "string") return null;
+      if (parsed.turnId !== undefined && typeof parsed.turnId !== "string") return null;
+      if (parsed.reason !== "replay-limit" && parsed.reason !== "payload-limit") return null;
+      const msg: ChatResyncRequiredMessage = {
+        type: "chat.resync-required",
+        conversationId: parsed.conversationId,
+        reason: parsed.reason,
+        ...(parsed.turnId !== undefined ? { turnId: parsed.turnId } : {}),
+      };
+      return msg;
+    }
+    case "chat.queued": {
+      if (typeof parsed.conversationId !== "string") return null;
+      if (typeof parsed.messageId !== "string") return null;
+      if (parsed.reason !== "compaction") return null;
+      if (parsed.requestId !== undefined && typeof parsed.requestId !== "string") return null;
+      const msg: ChatQueuedMessage = {
+        type: "chat.queued",
+        conversationId: parsed.conversationId,
+        messageId: parsed.messageId,
+        reason: "compaction",
+        ...(parsed.requestId !== undefined ? { requestId: parsed.requestId } : {}),
+      };
+      return msg;
     }
     case "chat.error": {
       if (typeof parsed.message !== "string") return null;
@@ -119,7 +169,11 @@ export function parseServerMessage(data: string): WsServerMessage | null {
         conversationId !== undefined
           ? { type: "chat.error", conversationId, message: parsed.message }
           : { type: "chat.error", message: parsed.message };
-      return msg;
+      if (parsed.requestId !== undefined && typeof parsed.requestId !== "string") return null;
+      return {
+        ...msg,
+        ...(typeof parsed.requestId === "string" ? { requestId: parsed.requestId } : {}),
+      };
     }
     case "conversation.open": {
       if (typeof parsed.conversationId !== "string") return null;
@@ -180,7 +234,10 @@ export function parseServerMessage(data: string): WsServerMessage | null {
       if (typeof parsed.newConversationId !== "string") return null;
       if (typeof parsed.messagesSummarized !== "number") return null;
       if (typeof parsed.messagesKept !== "number") return null;
+      if (!Number.isSafeInteger(parsed.historyEpoch) || (parsed.historyEpoch as number) < 0)
+        return null;
       const msg: ConversationCompactedMessage = {
+        historyEpoch: parsed.historyEpoch as number,
         type: "conversation.compacted",
         conversationId: parsed.conversationId,
         newConversationId: parsed.newConversationId,

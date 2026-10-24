@@ -1,6 +1,7 @@
 import { fireEvent, render, screen, within } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
-import { describe, expect, it, vi } from "vitest";
+import { gsap } from "gsap";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { Tab } from "./tabs";
 import TabList from "./ui/TabList.svelte";
 
@@ -186,7 +187,7 @@ describe("TabList", () => {
     }
   });
 
-  it("fixes the tab grid region at 40vh so a long set scrolls internally", () => {
+  it("fixes the tab grid region at 70vh so a long set scrolls internally", () => {
     render(TabList, {
       props: {
         tabs: sampleTabs,
@@ -199,7 +200,7 @@ describe("TabList", () => {
 
     const tabs = screen.getAllByRole("tab");
     const region = tabs[0]?.parentElement?.parentElement;
-    expect(region).toHaveClass("h-[40vh]");
+    expect(region).toHaveClass("h-[70vh]");
     expect(region).toHaveClass("overflow-y-auto");
   });
 
@@ -383,9 +384,16 @@ describe("TabList", () => {
           s?.paddingLeft,
         ]);
       }
-      // Every box paints a 15% lavender tint, so nested boxes compound per level.
-      expect(outer).toHaveClass("bg-secondary/15");
-      expect(inner).toHaveClass("bg-secondary/15");
+      // Each level is tinted with its own rotating theme colour.
+      expect(outer?.dataset.tone).toBe("secondary");
+      expect(inner?.dataset.tone).toBe("success");
+      // The tint lives on each box's own backdrop layer (FLIP fades it in).
+      const tint = (box: HTMLElement | null) =>
+        box
+          ?.querySelector<HTMLElement>(":scope > [data-group-backdrop]")
+          ?.style.getPropertyValue("--group-tone");
+      expect(tint(outer)).toBe("var(--color-secondary)");
+      expect(tint(inner)).toBe("var(--color-success)");
       expect(outer?.style.getPropertyValue("margin-inline")).toBe(`-${outer?.style.paddingLeft}`);
     });
 
@@ -414,6 +422,134 @@ describe("TabList", () => {
       expect(card("p")).not.toHaveClass("col-span-2");
       expect(card("p")).not.toHaveTextContent("subagent");
       expect(document.querySelector("[data-tab-group]")).toBeNull();
+    });
+
+    describe("FLIP animation (motion allowed)", () => {
+      /** Jump every running GSAP animation to `progress` (0–1), delays included. */
+      function seekAnimations(progress: number): void {
+        for (const t of gsap.globalTimeline.getChildren(true, true, false)) t.progress(progress);
+      }
+
+      // jsdom has no matchMedia, which the grid reads as "no motion" — stub
+      // the outermost edge so the GSAP Flip path actually runs.
+      beforeEach(() => {
+        vi.stubGlobal(
+          "matchMedia",
+          vi.fn(() => ({ matches: false }) as unknown as MediaQueryList),
+        );
+      });
+      afterEach(() => {
+        vi.unstubAllGlobals();
+      });
+
+      const props = {
+        activeConversationId: "p",
+        onSelect: vi.fn(),
+        onClose: vi.fn(),
+        onNewDraft: vi.fn(),
+        onSetTabGroup: vi.fn(),
+      };
+
+      it("leaves an inert ghost of a closed tab (and its dissolved box) that is never a tab", async () => {
+        const two = grouped.filter((t) => ["p", "c1", "solo"].includes(t.conversationId));
+        const { rerender } = render(TabList, { props: { ...props, tabs: two } });
+        // jsdom lays nothing out (every box is 0×0) — give elements a real size.
+        const rect = vi
+          .spyOn(Element.prototype, "getBoundingClientRect")
+          .mockReturnValue(new DOMRect(0, 0, 120, 72));
+        // Close c1: its card AND p's group box leave.
+        await rerender({ ...props, tabs: two.filter((t) => t.conversationId !== "c1") });
+        rect.mockRestore();
+
+        const ghosts = [...document.querySelectorAll<HTMLElement>("[data-tab-ghost]")];
+        expect(ghosts).toHaveLength(2);
+        for (const g of ghosts) {
+          expect(g).toHaveAttribute("aria-hidden", "true");
+          expect(g.querySelector("[data-conversation-id],[data-flip-id],[role]")).toBeNull();
+        }
+        // Paint order: the dissolving box's tint goes FIRST in its enclosing
+        // grid (under every card); the closed card's ghost goes on top.
+        const grid = screen.getByRole("tablist");
+        const boxGhost = grid.firstElementChild as HTMLElement;
+        expect(boxGhost).toHaveAttribute("data-tab-ghost");
+        // A clipping frame around a copy of the tint only — no card copies.
+        expect(boxGhost.childElementCount).toBe(1);
+        expect(boxGhost.firstElementChild?.childElementCount).toBe(0);
+        // Ghosts SHRINK (a clipped height), they don't fade or scale: halfway
+        // through, each is shorter than it started; at the end they're gone.
+        const full = ghosts.map((g) => Number.parseFloat(g.style.height));
+        seekAnimations(0.5);
+        ghosts.forEach((g, i) => {
+          expect(g.style.overflow).toBe("hidden");
+          expect(g.style.opacity).toBe("");
+          expect(Number.parseFloat(g.style.height)).toBeLessThan(full[i] ?? 0);
+        });
+        const cardGhost = ghosts.find((g) => g !== boxGhost);
+        expect(cardGhost?.parentElement).toBe(grid.parentElement);
+        expect(cardGhost).toHaveTextContent("Child 1");
+        // Ghosts are invisible to queries: only the real remaining tabs count.
+        expect(screen.getAllByRole("tab").map((t) => t.dataset.conversationId)).toEqual([
+          "p",
+          "solo",
+        ]);
+        expect(screen.getAllByRole("button", { name: "Close tab" })).toHaveLength(2);
+        seekAnimations(1);
+        expect(document.querySelector("[data-tab-ghost]")).toBeNull();
+      });
+
+      it("measures each element at most twice per change (no layout thrash)", async () => {
+        // Regression: GSAP's Flip plugin cost ~430ms of main-thread work per
+        // close with ~40 nested tabs. The hand-rolled FLIP reads every element's
+        // box once before the change and once after — never per tween.
+        const { rerender } = render(TabList, { props: { ...props, tabs: grouped } });
+        const elements = document.querySelectorAll("[data-flip-id]").length;
+        const spy = vi.spyOn(Element.prototype, "getBoundingClientRect");
+        try {
+          await rerender({ ...props, tabs: grouped.filter((t) => t.conversationId !== "c2") });
+          // 2 per element + 1 host read per ghost (one ghost here: c2's card).
+          expect(spy.mock.calls.length).toBeLessThanOrEqual(2 * elements + 1);
+        } finally {
+          spy.mockRestore();
+        }
+      });
+
+      it("does not ghost anything when a subagent is summoned", async () => {
+        const base = grouped.filter((t) => ["p", "solo"].includes(t.conversationId));
+        const { rerender } = render(TabList, { props: { ...props, tabs: base } });
+        await rerender({ ...props, tabs: grouped });
+        expect(document.querySelector("[data-tab-ghost]")).toBeNull();
+        expect(screen.getAllByRole("tab")).toHaveLength(grouped.length);
+        // New cards start fully clipped (0 visible height) and grow in from
+        // the top edge; once done no motion style is left behind.
+        const ids = ["c1", "c2", "g"];
+        for (const id of ids) expect(card(id).style.clipPath).toBe("inset(0% 0% 100% 0%)");
+        seekAnimations(1);
+        for (const id of ids) {
+          expect(card(id).style.clipPath).toBe("");
+          expect(card(id).style.transform).toBe("");
+        }
+      });
+    });
+
+    it("never animates when the user prefers reduced motion", async () => {
+      vi.stubGlobal(
+        "matchMedia",
+        vi.fn(() => ({ matches: true }) as unknown as MediaQueryList),
+      );
+      try {
+        const props = {
+          tabs: grouped,
+          activeConversationId: "p",
+          onSelect: vi.fn(),
+          onClose: vi.fn(),
+          onNewDraft: vi.fn(),
+        };
+        const { rerender } = render(TabList, { props });
+        await rerender({ ...props, tabs: grouped.filter((t) => t.conversationId !== "c2") });
+        expect(document.querySelector("[data-tab-ghost]")).toBeNull();
+      } finally {
+        vi.unstubAllGlobals();
+      }
     });
 
     it("keeps the parent wide while a nested descendant's own parent remains open", async () => {

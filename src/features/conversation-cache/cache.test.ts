@@ -15,8 +15,16 @@ const chunk = (seq: number, role: "user" | "assistant" = "user"): StoredChunk =>
  */
 function createFakeStore(): ConversationChunkStore {
   const store = new Map<string, StoredChunk[]>();
+  const epochs = new Map<string, number>();
 
   return {
+    async historyEpoch(id) {
+      return epochs.get(id);
+    },
+    async reset(id, epoch) {
+      store.delete(id);
+      epochs.set(id, epoch);
+    },
     async load(conversationId) {
       return store.get(conversationId) ?? [];
     },
@@ -33,6 +41,7 @@ function createFakeStore(): ConversationChunkStore {
 
     async delete(conversationId) {
       store.delete(conversationId);
+      epochs.delete(conversationId);
     },
 
     async index() {
@@ -194,4 +203,49 @@ describe("cache.delete", () => {
     const result = await cache.load("conv-1");
     expect(result).toEqual([]);
   });
+});
+
+it("serializes invalidation and rejects stale epoch commits", async () => {
+  const store = createFakeStore();
+  const cache = createConversationCache(store);
+  await store.append("c", [chunk(1)]); // Legacy rows have no trusted epoch.
+  expect(await cache.commit("c", [chunk(101)], 1)).toEqual([chunk(101)]);
+  await Promise.all([cache.commit("c", [chunk(102)], 1), cache.reset("c", 2)]);
+  expect(await cache.commit("c", [chunk(103)], 1)).toEqual([]);
+  expect(await store.historyEpoch("c")).toBe(2);
+});
+
+it("replaces a confirmed full history at a lower epoch, without trusting stale commits", async () => {
+  const store = createFakeStore();
+  const cache = createConversationCache(store);
+  await cache.commit("c", [chunk(9)], 5);
+  expect(await cache.replace("c", [chunk(1)], 1, 5)).toBe(true);
+  expect(await cache.historyEpoch("c")).toBe(1);
+  expect(await cache.load("c")).toEqual([chunk(1)]);
+  expect(await cache.commit("c", [chunk(9)], 5)).toEqual([chunk(1)]);
+  // A delayed full response started against epoch 5 must not restore it.
+  expect(await cache.replace("c", [chunk(9)], 5, 5)).toBe(false);
+  expect(await cache.load("c")).toEqual([chunk(1)]);
+});
+
+it("serializes a guarded replacement behind newer invalidation", async () => {
+  const store = createFakeStore();
+  const cache = createConversationCache(store);
+  await cache.commit("c", [chunk(9)], 5);
+  const resetting = cache.reset("c", 6);
+  const replacing = cache.replace("c", [chunk(1)], 1, 5);
+  await resetting;
+  expect(await replacing).toBe(false);
+  expect(await cache.historyEpoch("c")).toBe(6);
+  expect(await cache.load("c")).toEqual([]);
+});
+
+it("allows an empty replacement and a legacy cache only if its observed epoch still matches", async () => {
+  const store = createFakeStore();
+  const cache = createConversationCache(store);
+  await store.append("c", [chunk(9)]);
+  expect(await cache.replace("c", [], 0, undefined)).toBe(true);
+  expect(await cache.sinceSeq("c")).toBe(0);
+  expect(await cache.historyEpoch("c")).toBe(0);
+  expect(await cache.replace("c", [chunk(9)], 2, undefined)).toBe(false);
 });

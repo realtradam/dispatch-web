@@ -1,9 +1,28 @@
 import type { ConversationHistoryResponse, WsServerMessage } from "@dispatch/transport-contract";
 import type { SurfaceServerMessage } from "@dispatch/ui-contract";
 import type { NamedAgent } from "@dispatch/wire";
-import { describe, expect, it, vi } from "vitest";
+import { IDBFactory } from "fake-indexeddb";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { WebSocketLike } from "../adapters/ws";
 import { createAppStore } from "./store.svelte";
+
+// Never let an omitted injection reach a real backend. Track rejected requests
+// too: the app deliberately catches network errors, which must not hide a bad fake.
+const unexpectedFetch = vi.fn<typeof fetch>(async (input, init) => {
+  const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+  const method = init?.method ?? (input instanceof Request ? input.method : "GET");
+  throw new Error(`Unexpected fetch: ${method} ${url}`);
+});
+
+beforeEach(() => {
+  unexpectedFetch.mockClear();
+  vi.stubGlobal("fetch", unexpectedFetch);
+});
+
+afterEach(() => {
+  vi.unstubAllGlobals();
+  expect(unexpectedFetch).not.toHaveBeenCalled();
+});
 
 interface FakeSocket extends WebSocketLike {
   sent: string[];
@@ -128,13 +147,66 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
             "body" in input
           ? await input.clone().text()
           : null;
-    if (/\/models(\?.*)?$/.test(url)) {
-      return new Response(JSON.stringify({ models }), { status: 200 });
+    const { pathname, searchParams } = new URL(url);
+    if (pathname === "/models" && method === "GET") {
+      return Response.json({ models });
     }
-    if (url.endsWith("/named-agents") && method === "GET") {
+    if (method === "GET") {
+      if (pathname === "/conversations" && searchParams.get("status") === "active,idle") {
+        // Most tests drive tabs via WS/local actions. Disable boot reconciliation
+        // so an in-flight empty list cannot remove a tab created by the test.
+        // Discovery tests override this route with their authoritative lists.
+        return Response.json({ error: "Discovery unavailable in this fixture" }, { status: 503 });
+      }
+      if (pathname === "/plugins") return Response.json({ plugins: [] });
+      if (pathname === "/computers") return Response.json({ computers: [] });
+      if (/^\/workspaces\/[^/]+\/plugins$/.test(pathname)) {
+        return Response.json({ workspaceId: pathname.split("/")[2], plugins: [] });
+      }
+      if (/^\/workspaces\/[^/]+\/plugins\/providers-status$/.test(pathname)) {
+        return Response.json({ enabledProviderCount: 1 });
+      }
+      // Explicitly simulate absent layout providers; retain local cached layouts.
+      if (
+        /^\/workspaces\/[^/]+\/layout$/.test(pathname) ||
+        /^\/home\/tile-layout\/(wide|tall)$/.test(pathname)
+      ) {
+        return Response.json({ error: "No layout provider" }, { status: 404 });
+      }
+      if (pathname === "/settings/vision") {
+        return Response.json({ imageLimit: 10, compactionModel: null });
+      }
+      const setting =
+        /^\/conversations\/[^/]+\/(cwd|computer|reasoning-effort|thinking|compact-percent)$/.exec(
+          pathname,
+        )?.[1];
+      if (setting !== undefined) {
+        const key = {
+          cwd: "cwd",
+          computer: "computerId",
+          "reasoning-effort": "reasoningEffort",
+          thinking: "thinking",
+          "compact-percent": "compactPercent",
+        }[setting];
+        if (key !== undefined) return Response.json({ [key]: null });
+      }
+      if (/^\/conversations\/[^/]+\/metrics$/.test(pathname)) {
+        return Response.json({ turns: [] });
+      }
+      if (/^\/conversations\/[^/]+$/.test(pathname) && searchParams.has("sinceSeq")) {
+        return Response.json(
+          history[url] ??
+            ({ chunks: [], historyEpoch: 0, latestSeq: 0 } satisfies ConversationHistoryResponse),
+        );
+      }
+    }
+    if (/^\/conversations\/[^/]+\/close$/.test(pathname) && method === "POST") {
+      return Response.json({ conversationId: pathname.split("/")[2], abortedTurn: false });
+    }
+    if (pathname === "/named-agents" && method === "GET") {
       return new Response(JSON.stringify({ namedAgents }), { status: 200 });
     }
-    if (url.endsWith("/named-agents") && method === "POST") {
+    if (pathname === "/named-agents" && method === "POST") {
       const payload =
         bodyText === null
           ? null
@@ -147,7 +219,7 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
       namedAgents = [...namedAgents, agent];
       return new Response(JSON.stringify({ namedAgent: agent }), { status: 201 });
     }
-    if (url.includes("/named-agents/") && method === "PUT") {
+    if (/^\/named-agents\/[^/]+$/.test(pathname) && method === "PUT") {
       const id = url.split("/named-agents/")[1] ?? "";
       const payload =
         bodyText === null
@@ -161,12 +233,15 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
       namedAgents = namedAgents.map((a) => (a.id === id ? updated : a));
       return new Response(JSON.stringify({ namedAgent: updated }), { status: 200 });
     }
-    if (url.includes("/named-agents/") && method === "DELETE") {
+    if (/^\/named-agents\/[^/]+$/.test(pathname) && method === "DELETE") {
       const id = url.split("/named-agents/")[1] ?? "";
       namedAgents = namedAgents.filter((a) => a.id !== id);
       return new Response(JSON.stringify({ id }), { status: 200 });
     }
-    if (url.endsWith("/model")) {
+    if (
+      /^\/conversations\/[^/]+\/model$/.test(pathname) &&
+      (method === "GET" || method === "PUT")
+    ) {
       return new Response(
         JSON.stringify({
           conversationId: "ignored",
@@ -175,9 +250,7 @@ function fakeFetchImpl(opts?: FakeFetchOptions): typeof fetch {
         { status: 200 },
       );
     }
-    const body =
-      history[url] ?? ({ chunks: [], latestSeq: 0 } satisfies ConversationHistoryResponse);
-    return new Response(JSON.stringify(body), { status: 200 });
+    return unexpectedFetch(input, init);
   };
 }
 
@@ -197,8 +270,8 @@ function createFakeStorage(): Storage {
     getItem(key: string): string | null {
       return map.get(key) ?? null;
     },
-    key(_index: number): string | null {
-      return null;
+    key(index: number): string | null {
+      return [...map.keys()][index] ?? null;
     },
     removeItem(key: string) {
       map.delete(key);
@@ -214,6 +287,22 @@ function activeConversationId(store: ReturnType<typeof createAppStore>): string 
   expect(id).not.toBeNull();
   return id as string;
 }
+
+describe("fakeFetchImpl", () => {
+  it.each([
+    "http://localhost:24203/unexpected",
+    new URL("http://localhost:24203/conversations/c/unknown-setting"),
+    new Request("http://localhost:24203/models", { method: "DELETE" }),
+  ])("rejects an unexpected URL or method: %s", async (input) => {
+    try {
+      await expect(fakeFetchImpl()(input)).rejects.toThrow("Unexpected fetch:");
+      expect(unexpectedFetch).toHaveBeenCalledOnce();
+    } finally {
+      // This test deliberately exercises the guard; all store tests require zero calls.
+      unexpectedFetch.mockClear();
+    }
+  });
+});
 
 describe("createAppStore", () => {
   it("starts with empty catalog and no surfaces", () => {
@@ -231,6 +320,29 @@ describe("createAppStore", () => {
     expect(store.lastError).toBeNull();
 
     store.dispose();
+  });
+
+  it("probes only the portrait tile layout at boot and injects its cached document", () => {
+    const width = vi.spyOn(window, "innerWidth", "get").mockReturnValue(390);
+    const height = vi.spyOn(window, "innerHeight", "get").mockReturnValue(844);
+    const storage = createFakeStorage();
+    const cached = { version: 2, tiles: [{ id: "a", order: 0, colSpan: 2, rowSpan: 2 }] };
+    storage.setItem("dispatch.tile-layout.tall", JSON.stringify(cached));
+    const fetchImpl = vi.fn(fakeFetchImpl());
+    const store = createAppStore({ socketFactory: fakeSocket, fetchImpl, localStorage: storage });
+    try {
+      expect(store.tileLayout.mode).toBe("tall");
+      expect(store.tileLayout.entries).toEqual(cached.tiles);
+      expect(
+        fetchImpl.mock.calls
+          .map(([url]) => String(url))
+          .filter((url) => url.includes("/home/tile-layout/")),
+      ).toEqual([expect.stringMatching(/\/home\/tile-layout\/tall$/)]);
+    } finally {
+      store.dispose();
+      width.mockRestore();
+      height.mockRestore();
+    }
   });
 
   it("updates catalog when catalog message arrives", () => {
@@ -571,9 +683,14 @@ describe("createAppStore", () => {
         { seq: 1, role: "user", chunk: { type: "text", text: "hi" } },
         { seq: 2, role: "assistant", chunk: { type: "text", text: "hello!" } },
       ],
+      historyEpoch: 0,
       latestSeq: 2,
     };
-    const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
       if (/\/models(\?.*)?$/.test(url)) {
@@ -581,7 +698,10 @@ describe("createAppStore", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify(historyResponse), { status: 200 });
+      if (/\/conversations\/[^/?]+\?sinceSeq=/.test(url)) {
+        return Response.json(historyResponse);
+      }
+      return base(input, init);
     };
 
     const ws = fakeSocket();
@@ -632,13 +752,13 @@ describe("createAppStore", () => {
     });
     ws.resolveOpen();
 
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(store.models).toEqual([
-      "opencode-1/deepseek-v4-flash",
-      "openai/gpt-4o",
-      "anthropic/claude-3",
-    ]);
+    await vi.waitFor(() => {
+      expect(store.models).toEqual([
+        "opencode-1/deepseek-v4-flash",
+        "openai/gpt-4o",
+        "anthropic/claude-3",
+      ]);
+    });
 
     store.dispose();
   });
@@ -668,9 +788,7 @@ describe("createAppStore", () => {
       localStorage: createFakeStorage(),
     });
     ws.resolveOpen();
-    await new Promise((r) => setTimeout(r, 50));
-
-    expect(store.models).toEqual(["umans/umans-glm-5.2"]);
+    await vi.waitFor(() => expect(store.models).toEqual(["umans/umans-glm-5.2"]));
     expect(store.activeModel).toBe("opencode-1/deepseek-v4-flash");
 
     store.dispose();
@@ -802,9 +920,10 @@ describe("createAppStore", () => {
 
   it("fetchOpenConversations stamps tabs with the conversation's persisted model (not the global active model)", async () => {
     const ws = fakeSocket();
+    const base = fakeFetchImpl();
     const fetchImpl: typeof fetch = async (
       input: string | URL | Request,
-      _init?: RequestInit,
+      init?: RequestInit,
     ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (/\/models(\?.*)?$/.test(url)) {
@@ -832,7 +951,7 @@ describe("createAppStore", () => {
           { status: 200 },
         );
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return base(input, init);
     };
 
     const store = createAppStore({
@@ -850,6 +969,58 @@ describe("createAppStore", () => {
     await vi.waitFor(() => {
       const tab = store.tabs.find((t) => t.conversationId === "conv-model");
       expect(tab?.model).toBe("openrouter/stealth/ox-alpha");
+    });
+
+    store.dispose();
+  });
+
+  it("fetchOpenConversations seeds the chat store's cache-timer turn gap from an idle conversation's lastActivityAt", async () => {
+    const ws = fakeSocket();
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
+      if (url.includes("/conversations?status=")) {
+        return new Response(
+          JSON.stringify({
+            conversations: [
+              {
+                id: "conv-seed",
+                createdAt: 1000,
+                lastActivityAt: 7777,
+                title: "Seed conv",
+                status: "idle",
+                workspaceId: "default",
+                model: "claude/claude-opus-4-6",
+              },
+            ],
+          }),
+          { status: 200 },
+        );
+      }
+      if (url.endsWith("/metrics")) {
+        return new Response(JSON.stringify({ turns: [] }), { status: 200 });
+      }
+      return base(input, init);
+    };
+
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+    });
+    ws.resolveOpen();
+
+    await vi.waitFor(() => {
+      expect(store.tabs.some((t) => t.conversationId === "conv-seed")).toBe(true);
+    });
+    store.selectTab("conv-seed");
+    expect(store.activeChat.cacheTimer.running).toEqual({
+      kind: "turn",
+      turnId: null,
+      startedAt: 7777,
     });
 
     store.dispose();
@@ -1436,9 +1607,13 @@ describe("createAppStore", () => {
     store.dispose();
   });
 
-  it("re-subscribes chat (and resyncs) for every open conversation on reconnect", async () => {
+  it("re-subscribes and resyncs a loaded conversation on reconnect", async () => {
     const fetchedUrls: string[] = [];
-    const fetchImpl: typeof fetch = async (input: string | URL | Request): Promise<Response> => {
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (
+      input: string | URL | Request,
+      init?: RequestInit,
+    ): Promise<Response> => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       fetchedUrls.push(url);
       if (/\/models(\?.*)?$/.test(url)) {
@@ -1446,7 +1621,7 @@ describe("createAppStore", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return base(input, init);
     };
 
     const ws = reconnectableSocket();
@@ -1528,9 +1703,6 @@ describe("createAppStore", () => {
         return new Response(JSON.stringify({ ...config, ...patch }), {
           status: 200,
         });
-      }
-      if (url.includes("/heartbeat")) {
-        return new Response(JSON.stringify(config), { status: 200 });
       }
       return base(input, init);
     };
@@ -2294,6 +2466,7 @@ describe("createAppStore — vision settings (global)", () => {
     fetchImpl: typeof fetch;
     puts: { imageLimit?: number; compactionModel?: string | null }[];
   } {
+    const base = fakeFetchImpl();
     let current = initial;
     const puts: { imageLimit?: number; compactionModel?: string | null }[] = [];
     return {
@@ -2322,8 +2495,7 @@ describe("createAppStore — vision settings (global)", () => {
           }
           return new Response(JSON.stringify(current), { status: 200 });
         }
-        // Default: empty history + no cwd for the other endpoints.
-        return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+        return base(input, init);
       },
     };
   }
@@ -2386,6 +2558,7 @@ describe("createAppStore — vision settings (global)", () => {
   });
 
   it("surfaces a PUT error", async () => {
+    const base = fakeFetchImpl();
     const fetchImpl: typeof fetch = async (input, init) => {
       const url = typeof input === "string" ? input : input instanceof URL ? input.href : input.url;
       if (url.endsWith("/settings/vision")) {
@@ -2396,7 +2569,7 @@ describe("createAppStore — vision settings (global)", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ models: [] }), { status: 200 });
+      return base(input, init);
     };
     const store = createAppStore({
       socketFactory: () => fakeSocket(),
@@ -2530,5 +2703,498 @@ describe("createAppStore — Named Agents", () => {
     expect(store.activeModel).toBe("openai/gpt-4o");
     expect(store.namedAgentSnapshot).toBeNull();
     store.dispose();
+  });
+});
+
+describe("conversation load-on-demand", () => {
+  async function setup(
+    ws: WebSocketLike,
+    count = 3,
+    activeConversationId: string | null = "lazy-0",
+    workspaceCount = 1,
+  ) {
+    const storage = createFakeStorage();
+    const conversations = Array.from({ length: count }, (_, i) => ({
+      id: `lazy-${i}`,
+      title: `Conversation ${i}`,
+      model: "openai/gpt-4o",
+      workspaceId: i % workspaceCount === 0 ? "default" : `workspace-${i % workspaceCount}`,
+      status: i === 1 ? "active" : "idle",
+      lastActivityAt: 1234,
+    }));
+    storage.setItem(
+      "dispatch.tabs",
+      JSON.stringify({
+        tabs: conversations.slice(0, Math.ceil(count / 2)).map((c) => ({
+          conversationId: c.id,
+          title: c.title,
+          model: c.model,
+          workspaceId: c.workspaceId,
+        })),
+        activeConversationId,
+      }),
+    );
+    const base = fakeFetchImpl();
+    const fetchImpl = vi.fn<typeof fetch>(async (input, init) => {
+      const url = String(input);
+      if (url.includes("/conversations?status=")) {
+        return Response.json({ conversations });
+      }
+      if (/\/conversations\/[^/?]+\?sinceSeq=/.test(url)) {
+        return Response.json({
+          chunks: [
+            { seq: 1, role: "user", turnId: "t1", chunk: { type: "text", text: "hi" } },
+            { seq: 2, role: "assistant", turnId: "t1", chunk: { type: "text", text: "hello" } },
+          ],
+          historyEpoch: 0,
+          latestSeq: 2,
+        });
+      }
+      if (url.endsWith("/metrics")) return Response.json({ turns: [] });
+      return base(input, init);
+    });
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: storage,
+      indexedDB: new IDBFactory(),
+      chatFlushScheduler: null,
+    });
+    const requests = () =>
+      fetchImpl.mock.calls
+        .map(([url]) => new URL(String(url)).pathname + new URL(String(url)).search)
+        .filter((url) => /\/conversations\/[^/?]+(?:\?sinceSeq=|\/metrics$)/.test(url));
+    await vi.waitFor(() => expect(store.tabs).toHaveLength(Math.ceil(count / workspaceCount)));
+    if (activeConversationId !== null) {
+      await vi.waitFor(() =>
+        expect(requests()).toContain(`/conversations/${activeConversationId}/metrics`),
+      );
+    }
+    return { store, requests };
+  }
+
+  // These exercise 300 real Svelte-backed tabs and count requests, not elapsed
+  // time. Allow contention without shrinking the regression's large-tab fixture.
+  it("boots 300 persisted/discovered tabs with only active history + metrics", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws, 300);
+    try {
+      ws.resolveOpen();
+      expect(requests()).toEqual([
+        "/conversations/lazy-0?sinceSeq=0&limit=192",
+        "/conversations/lazy-0/metrics",
+      ]);
+      expect(
+        parseSent(ws).filter((m) => (m as { type: string }).type === "chat.subscribe"),
+      ).toHaveLength(1);
+      expect(store.tabs[299]?.title).toBe("Conversation 299");
+      expect(store.conversationStatus("lazy-1")).toBe("active");
+      ws.feedServerMessage({
+        type: "conversation.statusChanged",
+        conversationId: "lazy-1",
+        workspaceId: "default",
+        status: "queued",
+      });
+      expect(store.conversationStatus("lazy-1")).toBe("queued");
+      expect(requests()).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  }, 20_000);
+
+  it("discovers 339 conversations across 24 workspaces without subscribing to all of them", async () => {
+    const ws = fakeSocket();
+    const { store } = await setup(ws, 339, "lazy-0", 24);
+    try {
+      ws.resolveOpen();
+      const subscriptions = parseSent(ws).filter(
+        (message) => (message as { type: string }).type === "chat.subscribe",
+      );
+      expect(subscriptions).toEqual([{ type: "chat.subscribe", conversationId: "lazy-0" }]);
+      store.setActiveWorkspace("workspace-1");
+      store.selectTab("lazy-1");
+      expect(parseSent(ws)).toContainEqual({ type: "chat.unsubscribe", conversationId: "lazy-0" });
+      expect(parseSent(ws)).toContainEqual({ type: "chat.subscribe", conversationId: "lazy-1" });
+    } finally {
+      store.dispose();
+    }
+  }, 20_000);
+
+  it("does not load any history while the active slot is a draft", async () => {
+    const { store, requests } = await setup(fakeSocket(), 300, null);
+    try {
+      expect(requests()).toEqual([]);
+      store.selectTab("lazy-0");
+      await vi.waitFor(() => expect(requests()).toContain("/conversations/lazy-0/metrics"));
+      expect(requests()).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  }, 20_000);
+
+  it("loads a tab once while pending and catches up a previously loaded tab on reactivation", async () => {
+    const { store, requests } = await setup(fakeSocket());
+    try {
+      store.selectTab("lazy-2");
+      store.selectTab("lazy-0");
+      store.selectTab("lazy-2");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+      expect(requests().filter((u) => u.includes("lazy-2"))).toHaveLength(2);
+      expect(store.activeChat.cacheTimer.running?.startedAt).toBe(1234);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("re-subscribes and resyncs only focused tabs and watches on reconnect", async () => {
+    const ws = reconnectableSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.open();
+      store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      ws.sent.length = 0;
+      const before = requests().length;
+      ws.closeRemote();
+      await new Promise((r) => setTimeout(r, 800));
+      ws.open();
+      await vi.waitFor(() => expect(requests()).toHaveLength(before + 4));
+      expect(
+        requests()
+          .slice(before)
+          .every((u) => /lazy-(0|watch)[/?]/.test(u)),
+      ).toBe(true);
+      expect(
+        parseSent(ws).filter((m) => (m as { type: string }).type === "chat.subscribe"),
+      ).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("loads watches, including unloaded tabs, and loads disposed watches again", async () => {
+    const { store, requests } = await setup(fakeSocket());
+    try {
+      const watch = store.watchConversation("lazy-1");
+      store.watchConversation("lazy-1");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(watch.chunks).toHaveLength(2);
+      store.selectTab("lazy-1");
+      expect(requests()).toHaveLength(4);
+      store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+      store.unwatchConversation("lazy-watch");
+      const reopened = store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(8));
+      expect(reopened.chunks).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("merges pre-load live deltas with history without duplicate bubbles", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.resolveOpen();
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId: "lazy-1", turnId: "t1" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "user-message", conversationId: "lazy-1", turnId: "t1", text: "hi" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "text-delta", conversationId: "lazy-1", turnId: "t1", delta: "hello" },
+      });
+      expect(requests()).toHaveLength(2);
+      store.selectTab("lazy-1");
+      expect(store.activeChat.chunks.map((c) => c.chunk)).toEqual([
+        { type: "text", text: "hi" },
+        { type: "text", text: "hello" },
+      ]);
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(store.activeChat.chunks).toHaveLength(2);
+      expect(store.activeChat.chunks.every((c) => !c.provisional)).toBe(true);
+      expect(store.activeChat.generating).toBe(true);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("compaction reloads loaded stores but does not load unseen conversations", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.resolveOpen();
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId: "lazy-1", turnId: "old" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "text-delta", conversationId: "lazy-1", turnId: "old", delta: "stale" },
+      });
+      for (const id of ["lazy-1", "unknown", "lazy-0"]) {
+        ws.feedServerMessage({
+          type: "conversation.compacted",
+          conversationId: id,
+          newConversationId: `${id}-archive`,
+          messagesSummarized: 10,
+          historyEpoch: 0,
+          messagesKept: 2,
+        });
+      }
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      expect(requests().every((u) => u.includes("lazy-0"))).toBe(true);
+      store.selectTab("lazy-1");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+      expect(store.activeChat.chunks).toHaveLength(2);
+    } finally {
+      store.dispose();
+    }
+  });
+
+  it("keeps a watched store loaded when it becomes a tab, and reloads a closed tab", async () => {
+    const ws = fakeSocket();
+    const { store, requests } = await setup(ws);
+    try {
+      ws.resolveOpen();
+      const watch = store.watchConversation("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(4));
+      ws.feedServerMessage({
+        type: "conversation.open",
+        conversationId: "lazy-watch",
+        workspaceId: "default",
+      });
+      store.selectTab("lazy-watch");
+      expect(store.activeChat.chunks).toEqual(watch.chunks);
+      store.unwatchConversation("lazy-watch");
+      expect(requests()).toHaveLength(4);
+      store.newDraft(); // Closing a background tab must not activate/load its neighbor.
+      store.closeTab("lazy-watch");
+      ws.feedServerMessage({
+        type: "conversation.open",
+        conversationId: "lazy-watch",
+        workspaceId: "default",
+      });
+      expect(requests()).toHaveLength(4);
+      store.selectTab("lazy-watch");
+      await vi.waitFor(() => expect(requests()).toHaveLength(6));
+    } finally {
+      store.dispose();
+    }
+  });
+});
+
+it.each([
+  null,
+  {},
+  { conversations: {} },
+])("reports malformed conversation lists: %j", async (body) => {
+  const ws = fakeSocket();
+  const base = fakeFetchImpl();
+  const store = createAppStore({
+    socketFactory: () => ws,
+    indexedDB: new IDBFactory(),
+    localStorage: createFakeStorage(),
+    fetchImpl: async (input, init) =>
+      String(input).includes("/conversations?status=") ? Response.json(body) : base(input, init),
+  });
+  try {
+    ws.resolveOpen();
+    await vi.waitFor(() => expect(store.fatalError).toContain("Invalid conversations response"));
+  } finally {
+    store.dispose();
+  }
+});
+
+describe("compaction queued acknowledgement routing", () => {
+  it.each([
+    "surface-first",
+    "ack-first",
+    "drained-before-ack",
+  ])("uses only authoritative queue snapshots: %s", (order) => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
+    });
+    ws.resolveOpen();
+    store.send("queued text", [{ url: "data:image/png;base64,AAAA" }]);
+    const cid = activeConversationId(store);
+    const send = parseSent(ws).find((m) => (m as { type: string }).type === "chat.send") as {
+      requestId: string;
+    };
+    expect(send.requestId).toEqual(expect.any(String));
+    const sourceChat = store.activeChat;
+    const watch = store.watchConversation("other-conversation");
+    watch.send("unrelated local echo");
+    ws.feedSurfaceMessage({
+      type: "catalog",
+      catalog: [{ id: "message-queue", region: "inline", title: "Queue", scope: "conversation" }],
+    });
+    const spec = (messages: { id: string; text: string; timestamp: number }[]) => ({
+      id: "message-queue",
+      region: "inline",
+      title: "Queue",
+      fields: [{ kind: "custom" as const, rendererId: "message-queue", payload: { messages } }],
+    });
+    const queued = spec([{ id: "q1", text: "queued text", timestamp: 1 }]);
+    const drained = spec([]);
+    const ack = () =>
+      ws.feedServerMessage({
+        type: "chat.queued",
+        conversationId: cid,
+        reason: "compaction",
+        messageId: "q1",
+        requestId: send.requestId,
+      });
+    if (order === "ack-first") {
+      ack();
+      expect(store.surface("message-queue", cid)).toBeNull();
+    }
+    ws.feedSurfaceMessage({ type: "surface", conversationId: cid, spec: queued });
+    expect(store.surface("message-queue", cid)).toEqual(queued);
+    if (order === "drained-before-ack") {
+      ws.feedSurfaceMessage({
+        type: "update",
+        update: { surfaceId: "message-queue", conversationId: cid, spec: drained },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId: cid, turnId: "t1" },
+      });
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "user-message", conversationId: cid, turnId: "t1", text: "queued text" },
+      });
+    }
+    ack();
+    ack();
+    expect(store.surface("message-queue", cid)).toEqual(
+      order === "drained-before-ack" ? drained : queued,
+    );
+    expect(sourceChat.chunks.map((c) => c.chunk)).toEqual(
+      order === "drained-before-ack" ? [{ type: "text", text: "queued text" }] : [],
+    );
+    expect(sourceChat.error).toBeNull();
+    expect(watch.chunks.map((c) => c.chunk)).toEqual([
+      { type: "text", text: "unrelated local echo" },
+    ]);
+    expect(parseSent(ws).filter((m) => (m as { type: string }).type === "chat.send")).toHaveLength(
+      2,
+    );
+    expect(parseSent(ws).filter((m) => (m as { type: string }).type === "chat.queue")).toHaveLength(
+      0,
+    );
+    store.dispose();
+  });
+});
+
+it("routes omitted replay only to the matching watch/tab without WS resend or an error banner", async () => {
+  const ws = fakeSocket();
+  const store = createAppStore({
+    socketFactory: () => ws,
+    fetchImpl: fakeFetchImpl(),
+    indexedDB: new IDBFactory(),
+    localStorage: createFakeStorage(),
+    chatFlushScheduler: null,
+  });
+  try {
+    ws.resolveOpen();
+    const tab = store.activeChat;
+    const watch = store.watchConversation("omitted-watch");
+    const sentBefore = ws.sent.length;
+    ws.feedServerMessage({
+      type: "chat.resync-required",
+      conversationId: "unknown",
+      turnId: "unknown-turn",
+      reason: "replay-limit",
+    });
+    expect(watch.recovering).toBe(false);
+    expect(tab.recovering).toBe(false);
+    ws.feedServerMessage({
+      type: "chat.resync-required",
+      conversationId: "omitted-watch",
+      turnId: "t1",
+      reason: "replay-limit",
+    });
+    expect(watch.recovering).toBe(true);
+    expect(watch.generating).toBe(true);
+    expect(tab.recovering).toBe(false);
+    expect(watch.error).toBeNull();
+    expect(tab.error).toBeNull();
+    expect(store.fatalError).toBeNull();
+    expect(ws.sent).toHaveLength(sentBefore);
+    ws.feedServerMessage({
+      type: "chat.delta",
+      event: {
+        type: "turn-ended",
+        conversationId: "omitted-watch",
+        turnId: "t1",
+        reason: "aborted",
+      },
+    });
+    await vi.waitFor(() => expect(watch.pendingSync).toBe(false));
+    expect(watch.recovering).toBe(false);
+    expect(watch.generating).toBe(false);
+    expect(ws.sent).toHaveLength(sentBefore);
+  } finally {
+    store.dispose();
+  }
+});
+
+describe("unconfirmed first-message recovery", () => {
+  it("retains a local-only tab and input after reload and authoritative discovery, without resending", async () => {
+    const storage = createFakeStorage();
+    const base = fakeFetchImpl();
+    const fetchImpl: typeof fetch = async (input, init) => {
+      if (String(input).endsWith("/conversations?status=active,idle"))
+        return Response.json({ conversations: [] });
+      return base(input, init);
+    };
+    const ws = fakeSocket();
+    const first = createAppStore({
+      localStorage: storage,
+      indexedDB: new IDBFactory(),
+      fetchImpl,
+      socketFactory: () => ws,
+    });
+    ws.resolveOpen();
+    first.send("must survive", [{ url: "data:image/png;base64,AAAA" }]);
+    const id = first.activeConversationId;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    expect(first.activeChat.pendingInputs).toHaveLength(1);
+    first.dispose();
+    const nextSocket = fakeSocket();
+    const next = createAppStore({
+      localStorage: storage,
+      indexedDB: new IDBFactory(),
+      fetchImpl,
+      socketFactory: () => nextSocket,
+    });
+    try {
+      nextSocket.resolveOpen();
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      expect(next.tabs.some((tab) => tab.conversationId === id)).toBe(true);
+      expect(next.activeChat.pendingInputs).toMatchObject([
+        { request: { message: "must survive" } },
+      ]);
+      const requestId = next.activeChat.pendingInputs[0]?.request.requestId ?? "";
+      nextSocket.feedServerMessage({ type: "chat.accepted", conversationId: id ?? "", requestId });
+      expect(next.activeChat.pendingInputs).toEqual([]);
+      expect(
+        parseSent(nextSocket).some((message) =>
+          ["chat.send", "chat.queue"].includes((message as { type: string }).type),
+        ),
+      ).toBe(false);
+    } finally {
+      next.dispose();
+    }
   });
 });

@@ -9,6 +9,7 @@ import type {
   WorkspaceListResponse,
   WorkspaceResponse,
 } from "@dispatch/transport-contract";
+import type { WorkspaceLookup } from "../logic/create";
 
 /**
  * Workspace HTTP effects — the injected edge that talks to the backend's
@@ -21,7 +22,7 @@ import type {
  * Endpoints (transport-contract@0.16.0):
  * - `GET /workspaces` (optional `?archived=true|false|all`, default `false` = active only) → list
  * - `PUT /workspaces/:id` (create-on-miss, idempotent) → ensure
- * - `GET /workspaces/:id` (404 → null) → get
+ * - `GET /workspaces/:id` (found | 404-missing | failed) → get
  * - `PUT /workspaces/:id/title` → rename
  * - `PUT /workspaces/:id/default-cwd` → set/clear default cwd
  * - `PUT /workspaces/:id/default-computer` → set/clear default computer (SSH handoff #2)
@@ -41,7 +42,12 @@ export type WorkspaceArchivedFilter = "true" | "false" | "all";
 export interface WorkspaceHttp {
   list(archived?: WorkspaceArchivedFilter): Promise<readonly WorkspaceEntry[]>;
   ensure(id: string, body?: EnsureWorkspaceRequest): Promise<WorkspaceResult<Workspace>>;
-  get(id: string): Promise<Workspace | null>;
+  /**
+   * Authoritative existence probe. 404 → `missing`, a network/server failure →
+   * `failed` (distinct on purpose: the create gate must not treat a broken
+   * check as "doesn't exist"), 200 → the workspace (`found`).
+   */
+  get(id: string): Promise<WorkspaceLookup>;
   setTitle(id: string, title: string): Promise<WorkspaceResult<Workspace>>;
   setDefaultCwd(id: string, defaultCwd: string | null): Promise<WorkspaceResult<Workspace>>;
   setDefaultComputer(id: string, computerId: string | null): Promise<WorkspaceResult<Workspace>>;
@@ -96,13 +102,17 @@ export function createWorkspaceHttp(httpBase: string, fetchImpl: typeof fetch): 
       }
     },
 
-    async get(id): Promise<Workspace | null> {
+    async get(id): Promise<WorkspaceLookup> {
       try {
         const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(id)}`);
-        if (res.status === 404 || !res.ok) return null;
-        return (await res.json()) as WorkspaceResponse;
-      } catch {
-        return null;
+        if (res.status === 404) return { kind: "missing" };
+        if (!res.ok) return { kind: "failed", error: await errText(res) };
+        return { kind: "found", workspace: (await res.json()) as WorkspaceResponse };
+      } catch (err) {
+        return {
+          kind: "failed",
+          error: err instanceof Error ? err.message : "Workspace lookup failed",
+        };
       }
     },
 

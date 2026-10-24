@@ -18,6 +18,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
       return "text-delta";
     case "reasoning-delta":
       return "reasoning-delta";
+    case "reasoning-end":
+      return "reasoning-end";
     case "tool-call":
       return "tool-call";
     case "tool-result":
@@ -32,6 +34,8 @@ export function assertAgentEventExhaustive(event: AgentEvent): string {
       return "done";
     case "turn-sealed":
       return "turn-sealed";
+    case "turn-ended":
+      return "turn-ended";
     case "step-complete":
       return "step-complete";
     case "steering":
@@ -83,6 +87,14 @@ export function assertWsServerMessageExhaustive(msg: WsServerMessage): string {
       return "error";
     case "chat.delta":
       return "chat.delta";
+    case "chat.resync-required":
+      return "chat.resync-required";
+    case "chat.accepted":
+      return "chat.accepted";
+    case "chat.subscription-rejected":
+      return "chat.subscription-rejected";
+    case "chat.queued":
+      return "chat.queued";
     case "chat.error":
       return "chat.error";
     case "conversation.open":

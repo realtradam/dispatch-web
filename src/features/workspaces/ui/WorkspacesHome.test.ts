@@ -4,7 +4,8 @@ import { render, screen, waitFor } from "@testing-library/svelte";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 import type { WorkspaceHttp, WorkspaceResult } from "../adapter/http";
-import type { TileLayoutHttp } from "../adapter/tile-layout-http";
+import type { TileLayoutHttp, TileLayoutHttpResult } from "../adapter/tile-layout-http";
+import type { WorkspaceLookup } from "../logic/create";
 import { createTileLayoutStore } from "../tile-layout-store.svelte";
 import WorkspacesHome from "./WorkspacesHome.svelte";
 
@@ -24,7 +25,10 @@ function ws(overrides: Partial<WorkspaceEntry> = {}): WorkspaceEntry {
 }
 
 /** A fake WorkspaceHttp edge with a controllable list (no mocks of our modules). */
-function fakeHttp(list: WorkspaceEntry[] = [ws()]): WorkspaceHttp {
+function fakeHttp(
+  list: WorkspaceEntry[] = [ws()],
+  lookup: (id: string) => Promise<WorkspaceLookup> = async () => ({ kind: "missing" }),
+): WorkspaceHttp {
   return {
     list: vi.fn(async (): Promise<WorkspaceEntry[]> => list),
     // Create-on-miss: the backend persists the new workspace, so the next
@@ -33,7 +37,7 @@ function fakeHttp(list: WorkspaceEntry[] = [ws()]): WorkspaceHttp {
       if (!list.some((w) => w.id === id)) list.push(ws({ id, title: id }));
       return { ok: true, value: ws({ id, title: id }) };
     }),
-    get: vi.fn(),
+    get: vi.fn(lookup),
     setTitle: vi.fn(),
     setDefaultCwd: vi.fn(),
     setDefaultComputer: vi.fn(),
@@ -97,6 +101,110 @@ describe("WorkspacesHome (tile canvas)", () => {
     expect([...wrappers].map((el) => el.getAttribute("data-tile-id"))).toEqual(["b", "a"]);
   });
 
+  it.each([
+    false,
+    true,
+  ])("renders before the layout probe resolves (cached: %s)", async (cached) => {
+    const layout = memoryLayout();
+    const gate: { release?: (result: TileLayoutHttpResult) => void } = {};
+    layout.getLayout = vi.fn(
+      () =>
+        new Promise<TileLayoutHttpResult>((resolve) => {
+          gate.release = resolve;
+        }),
+    );
+    const put = vi.spyOn(layout, "putLayout");
+    const stored = {
+      version: 2,
+      tiles: [
+        { id: "b", order: 0, colSpan: 2, rowSpan: 2 },
+        { id: "a", order: 1, colSpan: 1, rowSpan: 1 },
+      ],
+    };
+    const storage = cached ? localStorage : undefined;
+    storage?.setItem("dispatch.tile-layout.tall", JSON.stringify(stored));
+    const width = vi.spyOn(window, "innerWidth", "get").mockReturnValue(390);
+    const height = vi.spyOn(window, "innerHeight", "get").mockReturnValue(844);
+    const tiles = createTileLayoutStore({ http: layout, initialMode: "tall", storage });
+    try {
+      render(WorkspacesHome, {
+        props: {
+          store: (await import("../store.svelte")).createWorkspaceStore(
+            fakeHttp([ws(), ws({ id: "b", title: "B" })]),
+          ),
+          onNavigate: vi.fn(),
+          computers: [],
+          tiles,
+        },
+      });
+      await screen.findByRole("button", { name: "Open workspace A" });
+      await screen.findByRole("button", { name: "Open workspace B" });
+      expect(
+        [...document.querySelectorAll("[data-tile-id]")].map((el) =>
+          el.getAttribute("data-tile-id"),
+        ),
+      ).toEqual(cached ? ["b", "a"] : ["a", "b"]);
+      expect(tiles.providerState).toBe("unknown");
+      expect(tiles.entries).toEqual(cached ? stored.tiles : []);
+      expect(layout.getLayout).toHaveBeenCalledExactlyOnceWith("tall");
+      expect(put).not.toHaveBeenCalled();
+      gate.release?.({
+        ok: true,
+        layout: {
+          version: 2,
+          tiles: stored.tiles
+            .slice()
+            .reverse()
+            .map((tile, order) => ({ ...tile, order })),
+        },
+      });
+      await waitFor(() => {
+        expect(tiles.providerState).toBe("present");
+        expect(tiles.entries.map((tile) => tile.id)).toEqual(["a", "b"]);
+        // CSS-grid coordinates determine visual order; keyed DOM nodes may stay put.
+        expect(document.querySelector('[data-tile-id="a"]')).toHaveStyle("grid-row: 1 / span 1");
+        expect(document.querySelector('[data-tile-id="b"]')).toHaveStyle("grid-row: 2 / span 2");
+      });
+    } finally {
+      width.mockRestore();
+      height.mockRestore();
+      storage?.removeItem("dispatch.tile-layout.tall");
+    }
+  });
+
+  it("re-probes when the canvas changes orientation", async () => {
+    let measure: ResizeObserverCallback = () => {};
+    const observer = vi.spyOn(globalThis, "ResizeObserver").mockImplementation((callback) => {
+      measure = callback;
+      return { observe() {}, unobserve() {}, disconnect() {} };
+    });
+    const layout = memoryLayout();
+    const get = vi.spyOn(layout, "getLayout");
+    const tiles = createTileLayoutStore({ http: layout });
+    try {
+      render(WorkspacesHome, {
+        props: {
+          store: (await import("../store.svelte")).createWorkspaceStore(fakeHttp()),
+          onNavigate: vi.fn(),
+          computers: [],
+          tiles,
+        },
+      });
+      await screen.findByRole("button", { name: "Open workspace A" });
+      measure(
+        [{ contentRect: { width: 390, height: 700 } }] as ResizeObserverEntry[],
+        {} as ResizeObserver,
+      );
+      await waitFor(() => {
+        expect(tiles.mode).toBe("tall");
+        expect(get.mock.calls).toEqual([["wide"], ["tall"]]);
+      });
+      await screen.findByRole("button", { name: "Open workspace A" });
+    } finally {
+      observer.mockRestore();
+    }
+  });
+
   it("clicking a tile navigates to the workspace path", async () => {
     const user = userEvent.setup();
     const onNavigate = vi.fn();
@@ -138,6 +246,36 @@ describe("WorkspacesHome (tile canvas)", () => {
     expect(onNavigate).not.toHaveBeenCalled();
     // The backend was asked to create it (create-on-miss).
     expect(store.list.map((w) => w.id)).toContain("fresh-ws");
+  });
+
+  it("refuses to create an archived slug: message in the popover, form stays open, no tile", async () => {
+    const user = userEvent.setup();
+    const list = [ws({ id: "a", title: "A" })];
+    const http = fakeHttp(list, async (id) => ({
+      kind: "found",
+      workspace: ws({ id, title: id, archived: true }),
+    }));
+    const store = (await import("../store.svelte")).createWorkspaceStore(http);
+    render(WorkspacesHome, {
+      props: {
+        store,
+        onNavigate: vi.fn(),
+        computers: [],
+        tiles: createTileLayoutStore({ http: memoryLayout() }),
+      },
+    });
+
+    await screen.findByRole("button", { name: "Open workspace A" });
+    await user.click(screen.getByRole("button", { name: "New workspace" }));
+    await user.type(screen.getByRole("textbox", { name: "New workspace" }), "old-ws{Enter}");
+
+    expect(await screen.findByText(/already exists and is archived/)).toBeInTheDocument();
+    // The popover stays open (the form/input is still mounted).
+    expect(screen.getByRole("textbox", { name: "New workspace" })).toBeInTheDocument();
+    // Nothing was ensured, no tile appeared, and no rename mode was entered.
+    expect(http.ensure).not.toHaveBeenCalled();
+    expect(store.list.map((w) => w.id)).toEqual(["a"]);
+    expect(screen.queryByLabelText("Workspace title")).toBeNull();
   });
 
   it("right-clicking a tile opens the action bar; Delete keeps the confirm + store call", async () => {

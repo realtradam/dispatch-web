@@ -103,6 +103,19 @@ describe("trimTranscript", () => {
     expect(next.accumulating).not.toBeNull();
   });
 
+  it("does not count a late-join replay's duplicates of committed chunks", () => {
+    // An in-flight turn of 8 persisted chunks + its late-join replay (8 more
+    // provisional copies). Only 8 are rendered, so a limit of 10 keeps them all
+    // instead of unloading real history to make room for invisible duplicates.
+    const T = "turn";
+    const committed = chunks(1, 8).map((c) => ({ ...c, turnId: T }));
+    const state: TranscriptState = {
+      ...stateWith(committed),
+      provisional: committed.map((c) => ({ role: c.role, chunk: c.chunk, turnId: T })),
+    };
+    expect(trimTranscript(state, 10)).toBe(state);
+  });
+
   it("drops oldest provisional when committed is exhausted", () => {
     const base = stateWith(chunks(1, 2));
     const provisional = Array.from({ length: 20 }, (_, i) => ({
@@ -146,7 +159,7 @@ describe("windowTranscript", () => {
   it("is the identity within the window", () => {
     const state = stateWith(chunks(1, 50));
     expect(windowTranscript(state, 75)).toBe(state);
-    expect(selectHasEarlier(state)).toBe(false);
+    expect(selectHasEarlier(state, 1)).toBe(false);
   });
 });
 
@@ -178,21 +191,21 @@ describe("restoreEarlier", () => {
     expect(selectHasEarlier(restored)).toBe(true);
   });
 
-  it("restoring down to seq 1 reaches the contractual origin (hasEarlier clears)", () => {
+  it("restoring down to a known boundary clears hasEarlier", () => {
     const windowed = windowTranscript(stateWith(chunks(1, 100)), 75); // hidden: 1..25
     const restored = restoreEarlier(windowed, chunks(1, 100), 64);
     expect(restored.committed).toHaveLength(100);
     expect(restored.committed[0]?.seq).toBe(1);
     expect(restored.hiddenBeforeSeq).toBe(1); // floor at the origin — inert
     expect(restored.hiddenThinkingCount).toBe(0);
-    expect(selectHasEarlier(restored)).toBe(false);
+    expect(selectHasEarlier(restored, 1)).toBe(false);
   });
 
   it("is the identity when nothing older is known locally (server may still hold more)", () => {
     const windowed = windowTranscript(stateWith(chunks(50, 200)), 75);
     const restored = restoreEarlier(windowed, [], 64);
     expect(restored).toBe(windowed);
-    // seqs are 1-based gap-free: window starts at 126 ⇒ older chunks DO exist.
+    // The server boundary is unknown, so another page may exist.
     expect(selectHasEarlier(restored)).toBe(true);
   });
 
@@ -203,7 +216,7 @@ describe("restoreEarlier", () => {
 
   it("works on a server-windowed transcript (no local watermark)", () => {
     // A cold-cache fresh load with `?limit=` commits a suffix (seq 809..1000)
-    // with hiddenBeforeSeq still 0 — hasEarlier derives from seq > 1, and a
+    // with hiddenBeforeSeq still 0 — the server boundary is unknown, and a
     // backfilled run merges below it.
     const state = stateWith(chunks(809, 1000));
     expect(state.hiddenBeforeSeq).toBe(0);
@@ -230,6 +243,15 @@ describe("restoreEarlier", () => {
     const restored = restoreEarlier(trimmed, original, 1000);
     expect(restored.committed).toEqual(original);
     expect(restored.hiddenBeforeSeq).toBe(1);
-    expect(selectHasEarlier(restored)).toBe(false);
+    expect(selectHasEarlier(restored, 1)).toBe(false);
   });
+});
+
+it("uses a non-1 history boundary rather than the seq origin", () => {
+  const state = stateWith(chunks(101, 110));
+  expect(selectHasEarlier(state, 101)).toBe(false);
+  expect(selectHasEarlier(state, null)).toBe(true);
+  const windowed = windowTranscript(state, 5);
+  expect(selectHasEarlier(windowed, 101)).toBe(true);
+  expect(selectHasEarlier(restoreEarlier(windowed, state.committed, 5), 101)).toBe(false);
 });

@@ -104,7 +104,9 @@ function fakeFetchImpl(): typeof fetch {
         { status: 200 },
       );
     }
-    return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+    return new Response(JSON.stringify({ chunks: [], historyEpoch: 0, latestSeq: 0 }), {
+      status: 200,
+    });
   };
 }
 
@@ -432,6 +434,126 @@ describe("App component interaction tests", () => {
     store.dispose();
   });
 
+  it.each([
+    "look at this",
+    "",
+  ])("queues staged images through the full UI with text %j", async (text) => {
+    const ws = fakeSocket();
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl: fakeFetchImpl(),
+      localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
+    });
+    ws.resolveOpen();
+    const { container } = render(App, { props: { store, onNavigate: vi.fn() } });
+    const user = userEvent.setup();
+    const textarea = screen.getByRole("textbox", { name: "Message input" });
+    await user.type(textarea, "start");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const conversationId = activeConversationId(store);
+    ws.feedServerMessage({
+      type: "chat.delta",
+      event: { type: "turn-start", conversationId, turnId: "t1" },
+    });
+    if (text) await user.type(textarea, text);
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement;
+    Object.defineProperty(input, "files", {
+      value: [new File(["GIF"], "shot.gif", { type: "image/gif" })],
+    });
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+    await screen.findByRole("button", { name: "Remove image" });
+    ws.sent.length = 0;
+
+    await user.click(screen.getByRole("button", { name: "Queue" }));
+
+    expect(sentMessages(ws).filter((m: { type: string }) => m.type.startsWith("chat."))).toEqual([
+      {
+        type: "chat.queue",
+        requestId: expect.any(String),
+        conversationId,
+        workspaceId: "default",
+        text,
+        images: [{ url: "data:image/gif;base64,R0lG", mimeType: "image/gif" }],
+      },
+    ]);
+    expect(textarea).toHaveValue("");
+    expect(screen.queryByRole("button", { name: "Remove image" })).not.toBeInTheDocument();
+    store.dispose();
+  });
+
+  it("uses only the focused conversation's queue snapshot for the Flush label and POSTs stop", async () => {
+    const ws = fakeSocket();
+    const fetchImpl = vi.fn(fakeFetchImpl());
+    const store = createAppStore({
+      socketFactory: () => ws,
+      fetchImpl,
+      localStorage: createFakeStorage(),
+      chatFlushScheduler: null,
+    });
+    ws.resolveOpen();
+    render(App, { props: { store, onNavigate: vi.fn() } });
+    const user = userEvent.setup();
+    await user.type(screen.getByRole("textbox", { name: "Message input" }), "start");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const firstId = activeConversationId(store);
+    const startTurn = (conversationId: string) =>
+      ws.feedServerMessage({
+        type: "chat.delta",
+        event: { type: "turn-start", conversationId, turnId: `turn-${conversationId}` },
+      });
+    const pushQueue = (conversationId: string, payload: unknown) =>
+      ws.feedSurfaceMessage({
+        type: "surface",
+        conversationId,
+        spec: {
+          id: "message-queue",
+          region: "inline",
+          title: "Message queue",
+          fields: [{ kind: "custom", rendererId: "message-queue", payload }],
+        },
+      });
+    startTurn(firstId);
+    await screen.findByRole("button", { name: "Stop generation" });
+    ws.feedSurfaceMessage({
+      type: "catalog",
+      catalog: [
+        { id: "message-queue", region: "inline", title: "Message queue", scope: "conversation" },
+      ],
+    });
+    const pending = { messages: [{ id: "m1", text: "next", queuedAt: 1 }] };
+    pushQueue(firstId, pending);
+    const flush = await screen.findByRole("button", { name: "Flush" });
+    ws.sent.length = 0;
+    fetchImpl.mockClear();
+    await user.click(flush);
+    expect(fetchImpl.mock.calls.filter(([, init]) => init?.method === "POST")).toEqual([
+      [expect.stringContaining(`/conversations/${firstId}/stop`), { method: "POST" }],
+    ]);
+    expect(sentMessages(ws)).toEqual([]); // No new send, queue, or cancel operation.
+
+    store.newDraft();
+    await user.type(screen.getByRole("textbox", { name: "Message input" }), "second");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    const secondId = activeConversationId(store);
+    expect(secondId).not.toBe(firstId);
+    startTurn(secondId);
+    await screen.findByRole("button", { name: "Stop generation" });
+    pushQueue(firstId, pending); // Late old-scope update must not relabel the new conversation.
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop generation" })).toBeInTheDocument(),
+    );
+    pushQueue(secondId, pending);
+    await screen.findByRole("button", { name: "Flush" });
+    pushQueue(secondId, { messages: [] });
+    await screen.findByRole("button", { name: "Stop generation" });
+    pushQueue(secondId, { messages: "malformed" });
+    await vi.waitFor(() =>
+      expect(screen.getByRole("button", { name: "Stop generation" })).toBeInTheDocument(),
+    );
+    store.dispose();
+  });
+
   it("incoming chat.delta renders text in the chat transcript", async () => {
     const ws = fakeSocket();
     const store = createAppStore({
@@ -564,7 +686,9 @@ describe("App component interaction tests", () => {
           status: 200,
         });
       }
-      return new Response(JSON.stringify({ chunks: [], latestSeq: 0 }), { status: 200 });
+      return new Response(JSON.stringify({ chunks: [], historyEpoch: 0, latestSeq: 0 }), {
+        status: 200,
+      });
     };
 
     const ws = fakeSocket();

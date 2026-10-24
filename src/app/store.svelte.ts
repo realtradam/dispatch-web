@@ -1,99 +1,19 @@
 import type {
-  ChatDeltaMessage,
-  ChatErrorMessage,
-  CompactPercentResponse,
-  CompactResponse,
-  ComputerListResponse,
-  ComputerStatusResponse,
-  ConversationCompactedMessage,
-  ConversationComputerResponse,
-  ConversationHistoryResponse,
-  ConversationListResponse,
-  ConversationMetricsResponse,
-  ConversationOpenMessage,
-  ConversationStatusChangedMessage,
-  ConversationTabGroupChangedMessage,
-  CwdResponse,
-  ExtensionsChangedMessage,
-  LayoutChangedMessage,
-  LspStatusResponse,
-  McpStatusResponse,
   ModelMetadata,
   ModelResponse,
-  ModelsResponse,
   ReasoningEffort,
-  ReasoningEffortResponse,
-  SetCompactPercentRequest,
-  SetConversationComputerRequest,
-  SetCwdRequest,
   SetModelRequest,
-  SetReasoningEffortRequest,
-  SetSystemPromptTemplateRequest,
-  SetTabGroupRequest,
-  SetTitleRequest,
-  SetVisionSettingsRequest,
-  SystemPromptTemplateResponse,
-  SystemPromptVariable,
-  SystemPromptVariablesResponse,
-  TabGroupResponse,
-  TestComputerResponse,
-  TileLayoutChangedMessage,
-  WarmRequest,
-  WarmResponse,
   WorkspaceSetMessage,
 } from "@dispatch/transport-contract";
-import type { SubscribeMessage, SurfaceServerMessage, SurfaceSpec } from "@dispatch/ui-contract";
+import type { SurfaceSpec } from "@dispatch/ui-contract";
 import type { ComputerEntry, ConversationStatus, ImageInput } from "@dispatch/wire";
-import { untrack } from "svelte";
 import { createIdbChunkStore } from "../adapters/idb";
 import { createLocalStore } from "../adapters/local-storage";
-import type { WebSocketLike } from "../adapters/ws";
-import { createSurfaceSocket, type SurfaceSocketOptions } from "../adapters/ws";
-import { normalizeChatLimit } from "../core/chunks";
-import {
-  applyServerMessage,
-  getSurfaceSpec,
-  type ProtocolState,
-  initialState as protocolInitialState,
-  invoke as protocolInvoke,
-  subscribe as protocolSubscribe,
-  unsubscribe as protocolUnsubscribe,
-} from "../core/protocol";
-import type {
-  AccountUsageProviderId,
-  AccountUsageResult,
-  AccountUsageSettingsResult,
-  UpdateAccountUsageSettingsRequest,
-} from "../features/account-usage";
-import { normalizeAccountUsage, normalizeAccountUsageReport } from "../features/account-usage";
-import type { ChatStore, HistorySync, MetricsSync } from "../features/chat";
-import { createChatStore, migrateLegacyModelName } from "../features/chat";
-import type { SetThinkingRequest, ThinkingResponse } from "../features/chat/reasoning-effort";
-import type {
-  ConcurrencyCooldownResult,
-  ConcurrencyDeleteResult,
-  ConcurrencyLimitResult,
-  ConcurrencyLimitsResult,
-  ConcurrencyStatusResult,
-} from "../features/concurrency";
-import {
-  normalizeConcurrencyCooldown,
-  normalizeConcurrencyLimit,
-  normalizeConcurrencyLimits,
-  normalizeConcurrencyStatus,
-} from "../features/concurrency";
-import type { ConversationCache } from "../features/conversation-cache";
+import { createSurfaceSocket } from "../adapters/ws";
+import { getSurfaceSpec } from "../core/protocol";
+import type { ChatStore } from "../features/chat";
+import { migrateLegacyModelName } from "../features/chat";
 import { createConversationCache } from "../features/conversation-cache";
-import type {
-  HeartbeatConfig,
-  HeartbeatConfigPatch,
-  HeartbeatConfigResult,
-  HeartbeatNextRunResult,
-  HeartbeatRun,
-  HeartbeatRunsResult,
-  HeartbeatStopResult,
-} from "../features/heartbeat";
-import { normalizeHeartbeatConfig, normalizeHeartbeatRuns } from "../features/heartbeat";
 import type { LayoutStore } from "../features/layout";
 import {
   createLayoutAbiPort,
@@ -101,659 +21,61 @@ import {
   createLayoutStore,
   listPanelViews,
 } from "../features/layout";
-import type {
-  NamedAgent,
-  NamedAgentDeleteResult,
-  NamedAgentInput,
-  NamedAgentSaveResult,
-  NamedAgentSelectionSnapshot,
-  NamedAgentsResult,
-} from "../features/named-agents";
-import { normalizeNamedAgentRecord, normalizeNamedAgents } from "../features/named-agents";
+import type { NamedAgent, NamedAgentSelectionSnapshot } from "../features/named-agents";
 import type { PluginsStore } from "../features/plugins";
 import { createPluginsHttp, createPluginsStore } from "../features/plugins";
-import {
-  normalizeSearchBackendConfig,
-  type SearchBackendConfigResult,
-} from "../features/search-settings";
 import type { Tab, TabsState } from "../features/tabs";
 import { createTabsStore, deriveTitle, type TabsStore } from "../features/tabs";
+import type { VisionSettings } from "../features/vision";
 import {
-  normalizeVisionSettings,
-  type VisionSettings,
-  type VisionSettingsPatch,
-} from "../features/vision";
-import { createTileLayoutHttp } from "../features/workspaces/adapter/tile-layout-http";
-import type { TileLayoutStore } from "../features/workspaces/tile-layout-store.svelte";
-import { createTileLayoutStore } from "../features/workspaces/tile-layout-store.svelte";
+  createTileLayoutHttp,
+  createTileLayoutStore,
+  geometryFor,
+  type TileLayoutStore,
+} from "../features/workspaces";
+import { createChatRegistry } from "./chat-registry.svelte";
+import { createConversationSettings } from "./conversation-settings.svelte";
+import { createHistorySync, createMetricsSync } from "./history-sync";
+import { createHttpActions } from "./http-actions";
+import { createOpenConversations } from "./open-conversations.svelte";
 import { createPluginHost } from "./plugin-host.svelte";
 import { resolveHttpUrl } from "./resolve-http-url";
 import { resolveWsUrl } from "./resolve-ws-url";
+import { createSettingsRefreshers } from "./settings-refreshers.svelte";
+import type { AppStore, CreateAppStoreOptions } from "./store-types";
+import { createSurfaceProtocol } from "./surface-protocol.svelte";
 import { randomId } from "./uuid";
+import { createWsHandlers } from "./ws-handlers";
 
 const DEFAULT_MODEL = "opencode-1/deepseek-v4-flash";
 
-/** Outcome of a manual `POST /chat/warm` (the "warm now" affordance). */
-export type WarmResult =
-  | { readonly ok: true; readonly response: WarmResponse }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `PUT /conversations/:id/cwd`. */
-export type CwdResult =
-  | { readonly ok: true; readonly cwd: string | null }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `PUT /conversations/:id/computer` (set/clear the per-conversation computer). */
-export type ComputerResult =
-  | { readonly ok: true; readonly computerId: string | null }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `GET /computers/:alias/status` (the live connection state). */
-export type ComputerStatusResult =
-  | { readonly ok: true; readonly response: ComputerStatusResponse }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `POST /computers/:alias/test` (one-shot connectivity probe). */
-export type TestComputerResult =
-  | { readonly ok: true; readonly response: TestComputerResponse }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `GET /conversations/:id/lsp`. */
-export type LspResult =
-  | { readonly ok: true; readonly response: LspStatusResponse }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `GET /conversations/:id/mcp`. */
-export type McpResult =
-  | { readonly ok: true; readonly response: McpStatusResponse }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `PUT /conversations/:id/reasoning-effort`. */
-export type ReasoningEffortResult =
-  | { readonly ok: true; readonly reasoningEffort: ReasoningEffort }
-  | { readonly ok: false; readonly error: string };
-
-/**
- * Outcome of `PUT /conversations/:id/thinking` (PROPOSED — see
- * `backend-handoff.md`; the endpoint is not yet shipped by the backend).
- */
-export type ThinkingResult =
-  | { readonly ok: true; readonly thinking: boolean }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `POST /conversations/:id/compact` (manual compaction). */
-export type CompactResult =
-  | { readonly ok: true; readonly response: CompactResponse }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `PUT /conversations/:id/compact-percent`. */
-export type CompactPercentResult =
-  | { readonly ok: true; readonly percent: number }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `PUT /settings/vision` (global vision-settings save). */
-export type VisionSettingsResult =
-  | { readonly ok: true; readonly settings: VisionSettings }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `GET /system-prompt` (global template load). */
-export type SystemPromptLoadResult =
-  | { readonly ok: true; readonly template: string }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of `PUT /system-prompt` (global template save). */
-export type SystemPromptSaveResult = SystemPromptLoadResult;
-
-/** Outcome of `GET /system-prompt/variables` (variable catalog). */
-export type SystemPromptVariablesResult =
-  | { readonly ok: true; readonly variables: readonly SystemPromptVariable[] }
-  | { readonly ok: false; readonly error: string };
-
-/** Outcome of persisting a chat-limit setting (localStorage; FE-local). */
-export type ChatLimitResult =
-  | { readonly ok: true; readonly chatLimit: number }
-  | { readonly ok: false; readonly error: string };
-
-export interface AppStore {
-  readonly tabs: readonly Tab[];
-  readonly activeConversationId: string | null;
-  /** The workspace currently in view (URL slug); tabs are filtered to it. */
-  readonly activeWorkspaceId: string;
-  /**
-   * The resolved HTTP API base URL (e.g. `http://localhost:24203`). Used to
-   * resolve relative image URLs served by the backend (`/images/…`) into
-   * absolute URLs for `<img src>`.
-   */
-  readonly httpBase: string;
-  readonly activeChat: ChatStore;
-  readonly models: readonly string[];
-  /** Per-model metadata (contextWindow, etc.) from `GET /models`. */
-  readonly modelInfo: Readonly<Record<string, ModelMetadata>>;
-  readonly activeModel: string;
-  readonly catalog: ProtocolState["catalog"];
-  /** Every received surface spec, in catalog order — all auto-subscribed + expanded. */
-  readonly surfaces: readonly SurfaceSpec[];
-  readonly lastError: ProtocolState["lastError"];
-  /** The localStorage instance the store uses for persistence (tabs, chatLimit).
-   *  Exposed so the shell can persist sidebar layout via the same adapter. */
-  readonly storage: Storage | undefined;
-  /** The current spec for one surface by id (discovery-by-id), or null if absent. */
-  surface(surfaceId: string): SurfaceSpec | null;
-  /**
-   * Send a user message (start a turn). Forwards any staged `images`
-   * (`ImageInput[]` — base64 data URLs / https URLs) on the `chat.send` op;
-   * the server passes them to a vision-capable model natively or transcribes
-   * them via vision handoff for a non-vision model. Omitted on the wire when
-   * none are staged. On a draft, promotes to a tab first.
-   */
-  send(text: string, images?: readonly ImageInput[]): void;
-  /**
-   * Enqueue a steering message onto the focused conversation's queue
-   * (`chat.queue` WS op). While a turn is generating, the message is delivered
-   * mid-turn at the next tool-result boundary; when idle, the server
-   * auto-starts a turn (equivalent to `send`). Safe to offer whenever the user
-   * wants to add input — the server owns the idle-vs-generating decision.
-   */
-  queueMessage(text: string): void;
-  /**
-   * Cancel (remove) a single queued steering message by id so it never runs
-   * (`chat.queue.cancel` WS op). Fire-and-forget + idempotent: the
-   * message-queue surface update reconciles the queue UI (the cancelled message
-   * leaves the snapshot). Targets the focused conversation's queue. The caller
-   * optimistically hides the row; a cancel of an already-drained / unknown
-   * message is a silent server no-op (nothing to roll back).
-   */
-  cancelQueuedMessage(messageId: string): void;
-  /** Select a raw model for the active conversation. Pass `snapshot` to record a Named Agent selection (plan §7). */
-  selectModel(model: string, snapshot?: NamedAgentSelectionSnapshot): void;
-  newDraft(): void;
-  /** Switch the active workspace (on route change) + reset to a fresh draft in it. */
-  setActiveWorkspace(workspaceId: string): void;
-  selectTab(conversationId: string): void;
-  closeTab(conversationId: string): void;
-  renameTab(conversationId: string, title: string): void;
-  /**
-   * Move a tab into a subagent group (the tab group parent's id) or out of
-   * any group (null). Purely presentational (NOT lineage): applied
-   * optimistically, persisted via `PUT /conversations/:id/tab-group` (synced
-   * to other clients by `conversation.tabGroupChanged`), reverted on failure.
-   */
-  setTabGroup(conversationId: string, parentId: string | null): void;
-  invoke(surfaceId: string, actionId: string, payload?: unknown): void;
-  /**
-   * Explicitly (re-)subscribe one surface, scoped to `conversationId` (or the
-   * focused conversation when absent) — the frontend-plugin ABI's
-   * `surfaces.subscribe` path (plan 03). The app auto-subscribes every
-   * catalog entry; this is the re-assertion port (same wire semantics).
-   */
-  subscribeSurface(surfaceId: string, conversationId?: string): void;
-  /** Drop one surface's subscription (the ABI's `surfaces.unsubscribe`). */
-  unsubscribeSurface(surfaceId: string, conversationId?: string): void;
-  /**
-   * Manually warm the focused conversation's prompt cache (`POST /chat/warm`).
-   * Returns null when no conversation is focused (a draft has nothing to warm).
-   */
-  warmNow(): Promise<WarmResult | null>;
-  /** The workspace conversation's persisted working directory, or null when unset. */
-  readonly cwd: string | null;
-  /** The conversation workspace settings target: the active tab, or the pending draft's id. */
-  readonly currentConversationId: string;
-  /**
-   * Set the workspace conversation's working directory (`PUT /conversations/:id/cwd`).
-   * Works for a draft too (its id survives promotion), so the first turn runs in it.
-   */
-  setCwd(cwd: string): Promise<CwdResult | null>;
-  /**
-   * The workspace conversation's persisted computer (an SSH `Host` alias), or
-   * null when never set / local. Seeded from the backend on focus change.
-   */
-  readonly computerId: string | null;
-  /**
-   * Persist the workspace conversation's computer (`PUT /conversations/:id/computer`).
-   * Pass null to clear → the conversation inherits the workspace default → local.
-   * Works for a draft too (its id survives promotion). Not seen by the agent — a
-   * user-facing tool-execution target only.
-   */
-  setComputer(computerId: string | null): Promise<ComputerResult | null>;
-  /**
-   * Every remote computer discovered from the user's `~/.ssh/config`
-   * (`GET /computers`), fetched on boot. Read-only — there is no Computer CRUD
-   * (the user edits their ssh config to add one). Empty until the `ssh`
-   * extension lands.
-   */
-  readonly computers: readonly ComputerEntry[];
-  /**
-   * The live connection state of a computer (`GET /computers/:alias/status`):
-   * whether Dispatch currently holds an open SSH session to it. Returns null
-   * only if no alias is given (the focused conversation is local). Polled by the
-   * `ComputerField` while a computer is selected.
-   */
-  computerStatus(alias: string): Promise<ComputerStatusResult | null>;
-  /**
-   * One-shot connectivity probe (`POST /computers/:alias/test`): Dispatch opens
-   * an SSH connection to the alias, runs a trivial command, then closes. `ok` is
-   * true on success; `error` carries the failure reason otherwise.
-   */
-  testComputer(alias: string): Promise<TestComputerResult | null>;
-  /**
-   * The workspace conversation's persisted reasoning effort, or null when never
-   * set (the server then resolves turns at the default, `"high"`).
-   */
-  readonly reasoningEffort: ReasoningEffort | null;
-  /**
-   * Persist the workspace conversation's reasoning effort
-   * (`PUT /conversations/:id/reasoning-effort`). Works for a draft too (its id
-   * survives promotion), so the first turn already runs at the chosen level.
-   * Takes effect from the NEXT turn; resolution stays server-owned.
-   */
-  setReasoningEffort(level: ReasoningEffort): Promise<ReasoningEffortResult | null>;
-  /**
-   * The workspace conversation's persisted thinking flag, or null when never
-   * set (the server then resolves turns with thinking ON — the default).
-   * `false` ⇒ thinking disabled entirely (the SEPARATE "off" axis — NOT a
-   * zero-effort level; the umans route maps it to `reasoning_effort: "none"`).
-   * PROPOSED backend contract — see `backend-handoff.md`.
-   */
-  readonly thinking: boolean | null;
-  /**
-   * Persist the workspace conversation's thinking flag
-   * (`PUT /conversations/:id/thinking`). Works for a draft too (its id survives
-   * promotion), so the first turn already runs with the chosen setting. Takes
-   * effect from the NEXT turn; resolution stays server-owned.
-   * PROPOSED backend contract — see `backend-handoff.md`.
-   */
-  setThinking(enabled: boolean): Promise<ThinkingResult | null>;
-  /**
-   * Manually trigger conversation compaction (`POST /conversations/:id/compact`).
-   * Summarizes old messages + retains the most recent N. Returns null when no
-   * conversation is focused (a draft has nothing to compact).
-   */
-  compactNow(keepLastN?: number): Promise<CompactResult | null>;
-  /**
-   * Stop an in-flight generation (`POST /conversations/:id/stop`). Aborts the
-   * turn without closing the conversation — partial messages are persisted, the
-   * turn seals with `reason: "aborted"`, and the conversation goes `active → idle`.
-   * Returns null when no conversation is focused.
-   */
-  stopGeneration(): void;
-  /**
-   * The workspace conversation's auto-compact percent (0-100). `0` = disabled
-   * (manual only); a positive number = auto-compact triggers when the last
-   * turn's input tokens exceed it. Seeded from the backend on focus change.
-   */
-  readonly compactPercent: number | null;
-  /**
-   * Persist the workspace conversation's auto-compact percent
-   * (`PUT /conversations/:id/compact-percent`). `0` disables; 1-100 sets the
-   * trigger percentage of the model's context window. Default (null) is 85.
-   * number enables. Works for a draft too (its id survives promotion).
-   */
-  setCompactPercent(percent: number): Promise<CompactPercentResult | null>;
-  /**
-   * The GLOBAL vision settings (`GET /settings/vision`): `imageLimit` (max
-   * native images per turn before compaction; 0 = disabled) + `compactionModel`
-   * (which vision model transcribes old images; null = auto). Shared across all
-   * conversations. Seeded on boot; `null` = not yet fetched.
-   */
-  readonly visionSettings: VisionSettings | null;
-  /**
-   * Refetch the global vision settings (`GET /settings/vision`). Called by the
-   * vision-settings view on mount; also seeded on boot.
-   */
-  refreshVisionSettings(): Promise<void>;
-  /**
-   * Save a PARTIAL vision-settings update (`PUT /settings/vision`). Either
-   * field may be omitted. Returns the merged settings on success.
-   */
-  setVisionSettings(patch: VisionSettingsPatch): Promise<VisionSettingsResult | null>;
-  /**
-   * Fetch the workspace conversation's language-server status (`GET /conversations/:id/lsp`).
-   * The backend lazily spawns servers, so this may take a moment on the first call for a cwd.
-   */
-  lspStatus(): Promise<LspResult | null>;
-  /**
-   * Fetch the workspace conversation's MCP server status (`GET /conversations/:id/mcp`).
-   * Mirrors the LSP status endpoint: returns `{cwd, servers}` with empty `servers`
-   * when no cwd is set; the backend lazily connects servers, so this may take a
-   * moment on the first call for a cwd.
-   */
-  mcpStatus(): Promise<McpResult | null>;
-  /**
-   * Load the global system prompt template (`GET /system-prompt`). The template is
-   * conversation-agnostic; it is resolved once per conversation on first turn and
-   * persisted for prompt-cache safety.
-   */
-  loadSystemPrompt(): Promise<SystemPromptLoadResult>;
-  /**
-   * Persist the global system prompt template (`PUT /system-prompt`). Changes apply
-   * to new conversations on their first turn; existing conversations keep their
-   * resolved system prompt until compaction.
-   */
-  setSystemPrompt(template: string): Promise<SystemPromptSaveResult>;
-  /**
-   * Load the static catalog of available system prompt variables (`GET /system-prompt/variables`).
-   * Used by the builder to render the variable selector buttons.
-   */
-  loadSystemPromptVariables(): Promise<SystemPromptVariablesResult>;
-  /** The persisted chat limit (max loaded chunks per conversation). */
-  readonly chatLimit: number;
-  /**
-   * A conversation's backend lifecycle status (`active`/`idle`/`closed`), or
-   * `undefined` when unknown. Drives the tab-bar generating indicator
-   * (cross-device: a tab spinning because another device's turn is running).
-   */
-  conversationStatus(conversationId: string): ConversationStatus | undefined;
-  /**
-   * Whether at least one conversation in the given workspace is currently
-   * active or queued (generating / waiting for a concurrency slot) — drives
-   * the loading-dots indicator on workspace cards. Backed by a once-derived
-   * `activeWorkspaces` set (the open-tab set × the backend lifecycle statuses)
-   * so this is an O(1) lookup, not a per-card scan of the full tab list.
-   * Reactive: the set is a `$derived`, so a Svelte template expression calling
-   * this re-runs when the tab set or status map changes.
-   */
-  workspaceHasActiveConversations(workspaceId: string): boolean;
-  /**
-   * Persist + live-apply a new chat limit: writes `dispatch.chatLimit` to
-   * localStorage and propagates to every live chat store (trim if lower,
-   * deferred via the unload gate while a reader is scrolled up; no-op if
-   * higher — page unloaded history back in via "Show earlier"). Stores created
-   * afterwards pick the new limit up at creation. Always succeeds (FE-local).
-   */
-  setChatLimit(limit: number): Promise<ChatLimitResult>;
-  /**
-   * Wire the chat-limit unload gate (composition-root injection, called once by
-   * the shell after it owns the scroll region): unloading old chunks is allowed
-   * only while the gate returns true — i.e. the reader is stuck to the bottom —
-   * so a trim never yanks content out from under someone reading history.
-   * Before attachment unloading is allowed (the initial view starts at the
-   * bottom).
-   */
-  attachUnloadGate(gate: () => boolean): void;
-  /**
-   * Load the active workspace's heartbeat config
-   * (`GET /workspaces/:id/heartbeat`). Workspace-scoped (NOT per-conversation):
-   * the backend runs an autonomous agent loop on a configured interval, writing
-   * each run into a dedicated conversation. The config covers the system/task
-   * prompts, model, reasoning effort, interval, and an enabled flag.
-   */
-  heartbeatConfig(): Promise<HeartbeatConfigResult>;
-  /**
-   * Persist a partial heartbeat config patch
-   * (`PUT /workspaces/:id/heartbeat`). The backend merges the patch onto the
-   * stored config; returns the full updated config.
-   */
-  setHeartbeatConfig(patch: HeartbeatConfigPatch): Promise<HeartbeatConfigResult>;
-  /**
-   * Load the active workspace's heartbeat run history
-   * (`GET /workspaces/:id/heartbeat/runs`). Each run references the conversation
-   * it wrote to — open one via {@link watchConversation} to see its chat live.
-   */
-  heartbeatRuns(): Promise<HeartbeatRunsResult>;
-  /**
-   * Stop a running heartbeat run (`POST /workspaces/:id/heartbeat/runs/:runId/stop`).
-   * The run's in-flight turn seals (its conversation keeps streaming until it
-   * ends); the run's status flips to `stopped` (visible on the next runs poll).
-   */
-  stopHeartbeatRun(runId: string): Promise<HeartbeatStopResult>;
-  /**
-   * Fetch the server-authoritative next-run timestamp
-   * (`GET /workspaces/:id/heartbeat/next-run`) — when the next heartbeat run
-   * will fire (ISO 8601), or null when disabled / no run scheduled. The FE shows
-   * a live countdown from this. When the endpoint is absent (404 — backend
-   * hasn't shipped CR-HB-3 yet) it returns `ok: false` so the FE falls back to
-   * an approximation from the runs + config.
-   */
-  heartbeatNextRun(): Promise<HeartbeatNextRunResult>;
-  /**
-   * Open a "watch" on a conversation for a modal viewer (the heartbeat run-chat
-   * modal): ensures a live {@link ChatStore} for the conversation, subscribing
-   * to its turn stream (`chat.subscribe`) + loading history. Reuses the open
-   * tab's store if the conversation is already a tab; otherwise creates an
-   * EPHEMERAL watch store (separate from tabs — never opens a tab). Deltas are
-   * routed to it automatically. Pair every open with {@link unwatchConversation}
-   * on close to unsubscribe + dispose the ephemeral store.
-   */
-  watchConversation(conversationId: string): ChatStore;
-  /** Dispose + unsubscribe a watch opened by {@link watchConversation}. */
-  unwatchConversation(conversationId: string): void;
-  /**
-   * Load all configured per-provider concurrency limits
-   * (`GET /concurrency/limits`). Global (not workspace-scoped). Returns an empty
-   * list when the concurrency extension isn't loaded (`{ limits: [] }`).
-   */
-  concurrencyLimits(): Promise<ConcurrencyLimitsResult>;
-  /**
-   * Fetch the configured limit for one provider
-   * (`GET /concurrency/limits/:providerId`). `404` (no limit configured) and
-   * `503` (extension not loaded) both surface as `ok: false`.
-   */
-  getConcurrencyLimit(providerId: string): Promise<ConcurrencyLimitResult>;
-  /**
-   * Set or update a provider's concurrency limit
-   * (`PUT /concurrency/limits/:providerId`, body `{ limit }`). `limit` must be a
-   * positive integer (a non-positive body is `400`). At the cap, further requests
-   * queue oldest-agent-first rather than being sent immediately.
-   */
-  setConcurrencyLimit(providerId: string, limit: number): Promise<ConcurrencyLimitResult>;
-  /**
-   * Remove a provider's concurrency limit (`DELETE /concurrency/limits/:providerId`),
-   * making it unlimited. `404` (not configured) and `503` (extension not loaded)
-   * both surface as `ok: false`.
-   */
-  deleteConcurrencyLimit(providerId: string): Promise<ConcurrencyDeleteResult>;
-  /**
-   * Fetch live concurrency status for every provider with a configured limit
-   * (`GET /concurrency/status`): in-flight slots held, agents queued, and a paused
-   * state with a `pausedUntil` epoch-ms when a 429 backoff is in effect. Each
-   * entry also carries the per-slot release `cooldownMs` + an `autoReduced` flag
-   * (true when a 429 auto-reduced the limit by 1; the FE renders a banner). Returns
-   * an empty list when the extension isn't loaded (`{ providers: [] }`).
-   */
-  concurrencyStatus(): Promise<ConcurrencyStatusResult>;
-  /**
-   * Load Claude + Codex subscription usage (`GET /usage`). Served from the
-   * backend's cache (5 min TTL); `refresh: true` sends `?refresh=1`, which the
-   * server still rate-limits (min interval + failure cooldown). A 503 (the
-   * `account-usage` extension isn't loaded) returns `unavailable: true`.
-   */
-  accountUsage(opts?: { readonly refresh?: boolean }): Promise<AccountUsageResult>;
-  /**
-   * Update a provider's usage settings (`PUT /usage/:provider/settings`; today
-   * only `hyper`: `dailyAllowance` + `resetAnchor` epoch-ms or null). Returns
-   * the provider's refreshed report.
-   */
-  setAccountUsageSettings(
-    provider: AccountUsageProviderId,
-    settings: UpdateAccountUsageSettingsRequest,
-  ): Promise<AccountUsageSettingsResult>;
-  /**
-   * Load the GLOBAL search-backend selection
-   * (`GET /search/config`): which engine backs the `web_search` tool's search
-   * mode. Not workspace-scoped — the selection is global. `unavailable: true`
-   * on the failure variant marks the 503 degrade (the backend's
-   * search-config service not loaded) so the UI can disable the field.
-   */
-  searchBackendConfig(): Promise<SearchBackendConfigResult>;
-  /**
-   * Persist a new search-backend selection
-   * (`PUT /search/config`, body `{ backend }`). `400` (unknown/unconfigured
-   * backend) and `503` (service not loaded) both surface as `ok: false`.
-   */
-  setSearchBackend(backend: string): Promise<SearchBackendConfigResult>;
-  /**
-   * Fetch the per-slot release cooldown (ms) for one provider
-   * (`GET /concurrency/cooldown/:providerId`). `404` (no concurrency config at
-   * all) and `503` (extension not loaded) both surface as `ok: false`.
-   */
-  getConcurrencyCooldown(providerId: string): Promise<ConcurrencyCooldownResult>;
-  /**
-   * Set the per-slot release cooldown (ms) for one provider
-   * (`PUT /concurrency/cooldown/:providerId`, body `{ cooldownMs }`). `cooldownMs`
-   * must be a non-negative integer (0 = no cooldown / instant re-admission); an
-   * invalid body is `400`. Persists + applies to subsequently recycled slots.
-   */
-  setConcurrencyCooldown(
-    providerId: string,
-    cooldownMs: number,
-  ): Promise<ConcurrencyCooldownResult>;
-  /**
-   * A critical error that blocks normal operation (e.g. the cross-device tab
-   * restore fetch failed). When non-null, a full-screen modal is shown with the
-   * error details. Cleared by `clearFatalError` (the modal's dismiss button).
-   */
-  readonly fatalError: string | null;
-  /** Dismiss the fatal error (called by the error modal's X button). */
-  clearFatalError(): void;
-  // ── Named Agents (global config; plan §9) ──────────────────────────────────
-  /**
-   * The persisted Named Agents (from `GET /named-agents`). Global user config
-   * (not per-workspace); seeded on boot. Drives the sidebar editor AND the
-   * synthetic "Named Agents" provider in the model selector (plan §6).
-   */
-  readonly namedAgents: readonly NamedAgent[];
-  /**
-   * The active conversation's Named Agent selection snapshot (plan §7), or null
-   * when it was selected via a raw model. Survives the Named Agent being renamed
-   * / removed (the snapshot retains the friendly label + captured raw model).
-   */
-  readonly namedAgentSnapshot: NamedAgentSelectionSnapshot | null;
-  /** Refetch the Named Agents (`GET /named-agents`). */
-  refreshNamedAgents(): Promise<NamedAgentsResult>;
-  // ── Plugins (plan 07) ──────────────────────────────────────────────────────
-  /**
-   * The plugin manager + per-workspace enablement store (one instance per
-   * app store). The workspaces page's manager/modal read + mutate through
-   * it; the app store feeds its `onExtensionsChanged` hook.
-   */
-  readonly plugins: PluginsStore;
-  /**
-   * The ACTIVE workspace's tile tree (plan 02): served by the backend's
-   * layout provider when one is active, the local default otherwise. The
-   * shell reads `tree` for the renderer and feeds edits back through
-   * `onTreeChange` (debounced PUT + rollback); the store owns the probes,
-   * the WS-push filter, and the no-provider degrade.
-   */
-  readonly layout: LayoutStore;
-  /**
-   * The home grid's synced tile layout (ONE shared document per device
-   * orientation — `wide` = landscape/desktop, `tall` = portrait/mobile),
-   * served by the backend's home-tile-layout plugin. The home page locks the
-   * active orientation to the resolved grid geometry; this store owns the
-   * probes, the WS-push filter, the debounced PUT + rollback, and the
-   * offline degrade.
-   */
-  readonly tileLayout: TileLayoutStore;
-  /**
-   * Loaded provider-tier plugins effectively enabled in the ACTIVE workspace
-   * (`GET /workspaces/:id/plugins/providers-status`). `null` = unknown — the
-   * first-boot guardrail renders only on a confident `0` (§7).
-   */
-  readonly enabledProviderCount: number | null;
-  /**
-   * Create a Named Agent (`POST /named-agents`). On success the store's
-   * `namedAgents` list is updated (append/replace) so every consumer — the
-   * sidebar editor AND the model selector — reflects it without a reload.
-   */
-  createNamedAgent(input: NamedAgentInput): Promise<NamedAgentSaveResult>;
-  /**
-   * Update a Named Agent (`PUT /named-agents/:id`). On success the store list is
-   * updated in place. Returns the canonical saved record.
-   */
-  updateNamedAgent(id: string, input: NamedAgentInput): Promise<NamedAgentSaveResult>;
-  /**
-   * Remove a Named Agent (`DELETE /named-agents/:id`). On success it leaves the
-   * store list immediately (removing it from the sidebar + model selector), and
-   * does NOT alter conversations that previously selected it (those keep their
-   * snapshot — plan §7).
-   */
-  deleteNamedAgent(id: string): Promise<NamedAgentDeleteResult>;
-  dispose(): void;
-}
-
-export interface CreateAppStoreOptions {
-  url?: string;
-  httpUrl?: string;
-  socketFactory?: (url: string) => WebSocketLike;
-  fetchImpl?: typeof fetch;
-  indexedDB?: IDBFactory;
-  conversationId?: string;
-  localStorage?: Storage;
-  /** The workspace to scope to at boot (its URL slug); "default" if absent. */
-  workspaceId?: string;
-  /**
-   * How live chat events are batched before folding into a chat store.
-   * Default: once per animation frame (with a timeout fallback for hidden
-   * tabs). `null` = fold every event synchronously (tests that assert on the
-   * transcript immediately after feeding a frame).
-   */
-  chatFlushScheduler?: ((flush: () => void) => void) | null;
-}
-
-function createHistorySync(httpBase: string, fetchImpl: typeof fetch): HistorySync {
-  return async (conversationId, sinceSeq, window) => {
-    let url = `${httpBase}/conversations/${encodeURIComponent(conversationId)}?sinceSeq=${sinceSeq}`;
-    // CR-5 windowing (transport-contract@0.10.0): both must be positive
-    // integers when present (the server 400s otherwise; callers guarantee it).
-    if (window?.limit !== undefined) url += `&limit=${window.limit}`;
-    if (window?.beforeSeq !== undefined) url += `&beforeSeq=${window.beforeSeq}`;
-    const res = await fetchImpl(url);
-    if (!res.ok) {
-      throw new Error(`History sync failed: ${res.status}`);
-    }
-    return (await res.json()) as ConversationHistoryResponse;
-  };
-}
-
-function createMetricsSync(httpBase: string, fetchImpl: typeof fetch): MetricsSync {
-  return async (conversationId: string) => {
-    const url = `${httpBase}/conversations/${encodeURIComponent(conversationId)}/metrics`;
-    const res = await fetchImpl(url);
-    if (!res.ok) return { turns: [] };
-    return (await res.json()) as ConversationMetricsResponse;
-  };
-}
-
-/** Replace-or-append a Named Agent into a list (immutably), keyed by id. */
-function upsertNamedAgentList(
-  agents: readonly NamedAgent[],
-  agent: NamedAgent,
-): readonly NamedAgent[] {
-  const idx = agents.findIndex((a) => a.id === agent.id);
-  if (idx === -1) return [...agents, agent];
-  return agents.map((a) => (a.id === agent.id ? agent : a));
-}
+export type {
+  AppStore,
+  ChatLimitResult,
+  CompactPercentResult,
+  CompactResult,
+  ComputerResult,
+  ComputerStatusResult,
+  CreateAppStoreOptions,
+  CwdResult,
+  LspResult,
+  McpResult,
+  ReasoningEffortResult,
+  SystemPromptLoadResult,
+  SystemPromptSaveResult,
+  SystemPromptVariablesResult,
+  TestComputerResult,
+  ThinkingResult,
+  VisionSettingsResult,
+  WarmResult,
+} from "./store-types";
 
 export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
-  let protocol = $state<ProtocolState>(protocolInitialState());
-  let models = $state<readonly string[]>([]);
-  let modelInfo = $state<Readonly<Record<string, ModelMetadata>>>({});
-  // Discovered SSH computers (`GET /computers`). Global (like `models`); empty
-  // until the `ssh` extension lands. Read-only — no CRUD (the user edits their
-  // `~/.ssh/config`).
-  let computers = $state<readonly ComputerEntry[]>([]);
   let activeModel = $state(DEFAULT_MODEL);
-  // The persisted Named Agents (global user config). Seeded from the backend on
-  // boot + kept in sync by the CRUD methods; drives both the sidebar editor and
-  // the synthetic model-selector provider.
-  let namedAgents = $state<readonly NamedAgent[]>([]);
   // The active conversation's Named Agent snapshot (null when selected via a raw
   // model). Derived from the active tab; survives a Named Agent being edited.
   let namedAgentSnapshot = $state<NamedAgentSelectionSnapshot | null>(null);
   let fatalError = $state<string | null>(null);
-
-  /**
-   * Loaded provider-tier plugins effectively enabled in the ACTIVE workspace
-   * (`GET /workspaces/:id/plugins/providers-status`, plan 06 §6.5). `null` =
-   * unknown (not fetched yet / endpoint missing) — the first-boot guardrail
-   * shows only on a confident `0` (§7).
-   */
-  let enabledProviderCount = $state<number | null>(null);
-
-  /** Replace-or-append a Named Agent into the reactive list (immutably). */
-  function upsertNamedAgent(agent: NamedAgent): void {
-    namedAgents = upsertNamedAgentList(namedAgents, agent);
-  }
 
   // The workspace currently in view (its URL slug); "default" until routing
   // sets it. Tabs are filtered to this workspace; a new conversation is stamped
@@ -816,205 +138,49 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   // the debounced PUT + rollback, and the offline degrade.
   const tileLayoutStore = createTileLayoutStore({
     http: createTileLayoutHttp(httpBase, fetchImpl),
+    initialMode:
+      typeof window === "undefined"
+        ? "wide"
+        : geometryFor(window.innerWidth, window.innerHeight).mode,
+    storage: localStorageOpt,
   });
 
-  /**
-   * Refetch the model catalog for the ACTIVE workspace
-   * (`GET /models?workspaceId=`, plan 06 §6.5 — workspace-aware; a backend
-   * without the param returns the global catalog, which stays correct).
-   * Re-run on boot, on every workspace switch, and on `extensions-changed`
-   * (a provider toggled in another client updates the picker here too).
-   */
-  async function refreshModels(): Promise<void> {
-    try {
-      const res = await fetchImpl(
-        `${httpBase}/models?workspaceId=${encodeURIComponent(activeWorkspaceId)}`,
-      );
-      if (!res.ok) return;
-      const data = (await res.json()) as ModelsResponse;
-      // Defensive: a malformed/SPA-fallback response must never poison the
-      // picker with a non-array (the old boot chain had the same exposure).
-      if (!Array.isArray(data.models)) return;
-      models = data.models;
-      modelInfo = data.modelInfo ?? {};
-    } catch (err) {
-      reportError("Failed to load model list", err);
-    }
-  }
-
-  /**
-   * Refetch the active workspace's provider status (the §6.5 first-boot
-   * guardrail signal). Guarded against a slow response losing a race with a
-   * workspace switch (only the CURRENT workspace's result lands). Non-JSON
-   * 200 (SPA fallback — endpoint not shipped) leaves it null (no prompt).
-   */
-  async function refreshProviderStatus(): Promise<void> {
-    const workspaceId = activeWorkspaceId;
-    try {
-      const res = await fetchImpl(
-        `${httpBase}/workspaces/${encodeURIComponent(workspaceId)}/plugins/providers-status`,
-      );
-      if (!res.ok) {
-        if (workspaceId === activeWorkspaceId) enabledProviderCount = null;
-        return;
-      }
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) return;
-      const data = (await res.json()) as { enabledProviderCount?: number };
-      if (workspaceId === activeWorkspaceId) {
-        enabledProviderCount =
-          typeof data.enabledProviderCount === "number" ? data.enabledProviderCount : null;
-      }
-    } catch {
-      // Non-fatal: the guardrail just stays hidden (null) when the endpoint
-      // is unreachable.
-      if (workspaceId === activeWorkspaceId) enabledProviderCount = null;
-    }
-  }
+  const refreshers = createSettingsRefreshers({
+    httpBase,
+    fetchImpl,
+    activeWorkspaceId: () => activeWorkspaceId,
+    reportError,
+  });
 
   const storageAdapter = createLocalStore<TabsState>("dispatch.tabs", {
     storage: localStorageOpt,
   });
   const tabsStore: TabsStore = createTabsStore(storageAdapter);
 
-  // The chat limit (max loaded chunks per conversation) — a persisted local
-  // setting surfaced in the sidebar's Settings view. Reactive so the field +
-  // any live-apply re-trim update together. The default is written back on
-  // first run so the knob is discoverable in localStorage too.
-  const chatLimitStore = createLocalStore<number>("dispatch.chatLimit", {
+  const registry = createChatRegistry({
     storage: localStorageOpt,
+    tabsStore,
+    createCache: () =>
+      createConversationCache(createIdbChunkStore({ indexedDB: indexedDBFactory })),
+    historySync: createHistorySync(httpBase, fetchImpl),
+    metricsSync: createMetricsSync(httpBase, fetchImpl),
+    defaultModel: DEFAULT_MODEL,
+    activeModel: () => activeModel,
+    activeWorkspaceId: () => activeWorkspaceId,
+    send: (msg) => socket?.send(msg),
+    reportError,
+    chatFlushScheduler: opts?.chatFlushScheduler,
   });
-  const storedChatLimit = chatLimitStore.load();
-  const normalizedChatLimit = normalizeChatLimit(storedChatLimit);
-  let chatLimit = $state(normalizedChatLimit);
-  if (storedChatLimit === null) {
-    chatLimitStore.save(normalizedChatLimit);
-  }
 
-  // Unload gate — attached by the shell once it owns the scroll region (see
-  // `AppStore.attachUnloadGate`). Until then, unloading is allowed.
-  let unloadGate: (() => boolean) | null = null;
+  const cache = registry.cache;
 
-  const cache: ConversationCache = createConversationCache(
-    createIdbChunkStore({ indexedDB: indexedDBFactory }),
-  );
-
-  const historySync = createHistorySync(httpBase, fetchImpl);
-  const metricsSync = createMetricsSync(httpBase, fetchImpl);
-
-  const chatStores = new Map<string, ChatStore>();
-
-  // Ephemeral chat stores for MODAL viewers (the heartbeat run-chat modal): a
-  // watch on a conversation's live turn stream WITHOUT opening a tab. Separate
-  // from `chatStores` (tabs) so closing a modal never disturbs the tab strip,
-  // and a tab's conversation reuses its own store (see `watchConversation`).
-  // Deltas are routed here in addition to `chatStores`.
-  const watchStores = new Map<string, ChatStore>();
-
-  /**
-   * Coalesce live chat events to at most one fold + render per animation
-   * frame (a late-join replay of a long turn arrives as a burst of WS frames;
-   * folding each separately re-derives the whole transcript per frame). A
-   * timeout backs up rAF, which browsers pause in hidden tabs — a backgrounded
-   * tab still applies its events (just less often).
-   */
-  function scheduleChatFlush(flush: () => void): void {
-    let ran = false;
-    const run = (): void => {
-      if (ran) return;
-      ran = true;
-      flush();
-    };
-    if (typeof requestAnimationFrame === "function") requestAnimationFrame(run);
-    setTimeout(run, 250);
-  }
-
-  const chatFlushScheduler =
-    opts?.chatFlushScheduler === undefined ? scheduleChatFlush : opts.chatFlushScheduler;
-
-  function createChatFor(conversationId: string, model: string, workspaceId: string): ChatStore {
-    return createChatStore({
-      conversationId,
-      model,
-      workspaceId,
-      transport: {
-        send(msg) {
-          socket?.send(msg);
-        },
-      },
-      historySync,
-      metricsSync,
-      cache,
-      // Read from the persisted store (kept in sync with the reactive `chatLimit`
-      // by `setChatLimit` + boot) so this snapshot doesn't reference the `$state`
-      // — each store captures its limit at creation; live updates go through
-      // `setChatLimit`.
-      chatLimit: normalizeChatLimit(chatLimitStore.load()),
-      canUnload: () => (unloadGate === null ? true : unloadGate()),
-      ...(chatFlushScheduler !== null ? { scheduleFlush: chatFlushScheduler } : {}),
-      onError: (context, err) => {
-        reportError(`${context} (conversation: ${conversationId})`, err);
-      },
-    });
-  }
-
-  const initialDraftId = randomId();
-  // Read `activeWorkspaceId` with untrack to suppress Svelte's
-  // `state_referenced_locally` warning — this intentionally captures the
-  // INITIAL workspace for the boot draft. When the workspace changes later,
-  // `setActiveWorkspace` creates a fresh draft store with the new id.
-  let draftStore: ChatStore = createChatFor(
-    initialDraftId,
-    DEFAULT_MODEL,
-    untrack(() => activeWorkspaceId),
-  );
-  let draftConversationId: string = initialDraftId;
-
-  let activeChat = $state<ChatStore>(draftStore as ChatStore);
-
-  // The active conversation's persisted working directory (per-tab). Seeded from
-  // the backend on focus change; null for a draft / when unset.
-  let cwd = $state<string | null>(null);
-
-  /** Refetch the workspace conversation's cwd into reactive state (works for a draft too). */
-  async function refreshCwd(): Promise<void> {
-    const id = workspaceConversationId();
-    try {
-      const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/cwd`);
-      if (!res.ok) return;
-      const data = (await res.json()) as CwdResponse;
-      // Guard a slow response losing a race with a conversation switch.
-      if (workspaceConversationId() === id) cwd = data.cwd ?? null;
-    } catch (err) {
-      reportError("Failed to load working directory", err);
-    }
-  }
-
-  // The active conversation's persisted computer (SSH Host alias). Seeded on
-  // focus change; null = local / never set (inherits the workspace default).
-  let computerId = $state<string | null>(null);
-
-  /**
-   * Refetch the workspace conversation's persisted computer into reactive state
-   * (works for a draft too). A draft's id 404s until promoted; `res.ok` is false
-   * so it is a silent no-op (mirrors `refreshCwd` for a draft).
-   */
-  async function refreshComputer(): Promise<void> {
-    const id = workspaceConversationId();
-    // Clear immediately so a switch never shows the PREVIOUS conversation's
-    // computer while the fetch is in flight (null renders as "Local").
-    computerId = null;
-    try {
-      const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/computer`);
-      if (!res.ok) return;
-      const data = (await res.json()) as ConversationComputerResponse;
-      // Guard a slow response losing a race with a conversation switch.
-      if (workspaceConversationId() === id) computerId = data.computerId ?? null;
-    } catch (err) {
-      reportError("Failed to load computer", err);
-    }
-  }
-
+  const settings = createConversationSettings({
+    httpBase,
+    fetchImpl,
+    workspaceConversationId,
+    activeWorkspaceId: () => activeWorkspaceId,
+    reportError,
+  });
   /** Refetch the workspace conversation's persisted model (works for a draft too). */
   async function refreshModel(): Promise<void> {
     const id = workspaceConversationId();
@@ -1033,213 +199,16 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         if (activeId !== null) {
           tabsStore.setModel(activeId, data.model);
           tabsStore.setSnapshot(activeId, namedAgentSnapshot);
-          chatStores.get(activeId)?.setModel(data.model);
-          chatStores.get(activeId)?.setNamedAgent(namedAgentSnapshot);
+          registry.chatStores.get(activeId)?.setModel(data.model);
+          registry.chatStores.get(activeId)?.setNamedAgent(namedAgentSnapshot);
         } else {
-          draftStore.setModel(data.model);
-          draftStore.setNamedAgent(namedAgentSnapshot);
+          registry.draftStore.setModel(data.model);
+          registry.draftStore.setNamedAgent(namedAgentSnapshot);
         }
       }
     } catch (err) {
       reportError("Failed to load model", err);
     }
-  }
-
-  // The workspace conversation's persisted reasoning effort. Seeded from the
-  // backend on focus change; null = never set (the server default applies).
-  let reasoningEffort = $state<ReasoningEffort | null>(null);
-
-  /** Refetch the workspace conversation's reasoning effort (works for a draft too). */
-  async function refreshReasoningEffort(): Promise<void> {
-    const id = workspaceConversationId();
-    // Clear immediately so a switch never shows the PREVIOUS conversation's level
-    // while the fetch is in flight (null renders as the server default).
-    reasoningEffort = null;
-    try {
-      const res = await fetchImpl(
-        `${httpBase}/conversations/${encodeURIComponent(id)}/reasoning-effort`,
-      );
-      if (!res.ok) return;
-      const data = (await res.json()) as ReasoningEffortResponse;
-      // Guard a slow response losing a race with a conversation switch.
-      if (workspaceConversationId() === id) reasoningEffort = data.reasoningEffort ?? null;
-    } catch (err) {
-      reportError("Failed to load reasoning effort", err);
-    }
-  }
-
-  // The workspace conversation's persisted thinking flag (SEPARATE from the
-  // effort level). Seeded from the backend on focus change; null = never set
-  // (thinking ON — the default). PROPOSED endpoint (see backend-handoff.md):
-  // a 404 (endpoint not yet shipped) leaves `thinking` null ⇒ ON (default), so
-  // the selector simply shows the effort level until the backend ships it.
-  let thinking = $state<boolean | null>(null);
-
-  /** Refetch the workspace conversation's thinking flag (works for a draft too). */
-  async function refreshThinking(): Promise<void> {
-    const id = workspaceConversationId();
-    // Clear immediately so a switch never shows the PREVIOUS conversation's
-    // setting while the fetch is in flight (null ⇒ ON, the default).
-    thinking = null;
-    try {
-      const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/thinking`);
-      if (!res.ok) return;
-      // Guard against the SPA fallback: when DISPATCH_WEB_DIR is set (production),
-      // unknown API routes get index.html with HTTP 200 + text/html instead of a
-      // 404. Treat any non-JSON 200 as "endpoint not shipped" → leave null (ON).
-      const contentType = res.headers.get("content-type") ?? "";
-      if (!contentType.includes("application/json")) return;
-      const data = (await res.json()) as ThinkingResponse;
-      // Guard a slow response losing a race with a conversation switch.
-      if (workspaceConversationId() === id) thinking = data.thinking ?? null;
-    } catch (err) {
-      reportError("Failed to load thinking setting", err);
-    }
-  }
-
-  // The workspace conversation's auto-compact percent. Seeded from the
-  // backend on focus change; null = not yet fetched. 0 = disabled.
-  let compactPercent = $state<number | null>(null);
-
-  // The GLOBAL vision settings (shared across all conversations). Seeded on
-  // boot; null = not yet fetched.
-  let visionSettings = $state<VisionSettings | null>(null);
-
-  /** Refetch the global vision settings (`GET /settings/vision`). */
-  async function refreshVisionSettings(): Promise<void> {
-    try {
-      const res = await fetchImpl(`${httpBase}/settings/vision`);
-      if (!res.ok) return;
-      const data = normalizeVisionSettings(await res.json());
-      visionSettings = data;
-    } catch (err) {
-      reportError("Failed to load vision settings", err);
-    }
-  }
-
-  /** Refetch the workspace conversation's compact percent (works for a draft too). */
-  async function refreshCompactPercent(): Promise<void> {
-    const id = workspaceConversationId();
-    compactPercent = null;
-    try {
-      const res = await fetchImpl(
-        `${httpBase}/conversations/${encodeURIComponent(id)}/compact-percent`,
-      );
-      if (!res.ok) return;
-      const data = (await res.json()) as CompactPercentResponse;
-      if (workspaceConversationId() === id) compactPercent = data.threshold;
-    } catch (err) {
-      reportError("Failed to load compact percent", err);
-    }
-  }
-
-  function getActiveChat(): ChatStore {
-    const activeId = tabsStore.activeConversationId;
-    if (activeId === null) {
-      return draftStore;
-    }
-    return chatStores.get(activeId) ?? draftStore;
-  }
-
-  function refreshActiveChat(): void {
-    activeChat = getActiveChat();
-  }
-
-  function handleChatMessage(msg: ChatDeltaMessage | ChatErrorMessage): void {
-    let targetId: string | undefined;
-    if (msg.type === "chat.delta") {
-      targetId = msg.event.conversationId;
-    } else {
-      targetId = msg.conversationId;
-    }
-
-    if (targetId !== undefined) {
-      const store = chatStores.get(targetId) ?? watchStores.get(targetId);
-      if (store !== undefined) {
-        store.handleDelta(msg);
-        return;
-      }
-    }
-
-    // fallback: try all stores (chat.error without conversationId)
-    for (const store of chatStores.values()) {
-      store.handleDelta(msg);
-    }
-    for (const store of watchStores.values()) {
-      store.handleDelta(msg);
-    }
-  }
-
-  /**
-   * Start watching a conversation's live turn events (`chat.subscribe`). Sent for
-   * EVERY open conversation — not just the active one — so a backgrounded tab keeps
-   * streaming a running turn, and a reloaded/second client re-attaches to an
-   * in-flight turn (the server replays it from `turn-start`). Idempotent server-side;
-   * the socket queues it until the connection is open. NOT needed right after
-   * `chat.send` (that auto-subscribes the sending connection).
-   */
-  function subscribeChat(conversationId: string): void {
-    socket?.send({ type: "chat.subscribe", conversationId });
-  }
-
-  /** Stop watching a conversation's turn events (`chat.unsubscribe`). Never stops the turn. */
-  function unsubscribeChat(conversationId: string): void {
-    socket?.send({ type: "chat.unsubscribe", conversationId });
-  }
-
-  /**
-   * Open a "watch" on a conversation for a modal viewer (the heartbeat run-chat
-   * modal). Returns a live {@link ChatStore} for the conversation's turn stream.
-   * If the conversation is already an open TAB, reuses its store (it is already
-   * subscribed + streaming); otherwise creates an EPHEMERAL watch store in
-   * `watchStores` (separate from tabs — never opens a tab), subscribes to its
-   * live turn stream, and loads history. Deltas route to it via `handleChatMessage`.
-   * Pair with {@link unwatchConversation} on close.
-   */
-  function watchConversation(conversationId: string): ChatStore {
-    // An open tab already has a live store + subscription — reuse it.
-    const tabStore = chatStores.get(conversationId);
-    if (tabStore !== undefined) return tabStore;
-    const existing = watchStores.get(conversationId);
-    if (existing !== undefined) return existing;
-    const store = createChatFor(conversationId, activeModel, activeWorkspaceId);
-    watchStores.set(conversationId, store);
-    void store.load();
-    subscribeChat(conversationId);
-    return store;
-  }
-
-  /**
-   * Dispose + unsubscribe a watch opened by {@link watchConversation}. A no-op if
-   * the conversation was (or became) an open TAB — the tab owns its store +
-   * subscription, so nothing is torn down (closing the modal must not disturb the
-   * tab strip). Only the ephemeral watch store is disposed + unsubscribed.
-   */
-  function unwatchConversation(conversationId: string): void {
-    // A tab reuses its own store — leave it (and its subscription) intact.
-    if (chatStores.has(conversationId)) return;
-    const store = watchStores.get(conversationId);
-    if (store === undefined) return;
-    store.dispose();
-    watchStores.delete(conversationId);
-    unsubscribeChat(conversationId);
-  }
-
-  /**
-   * Tell the backend the user EXPLICITLY closed this conversation's tab
-   * (`POST /conversations/:id/close`): aborts any in-flight turn (it seals with
-   * `reason: "aborted"`) and stops + DISABLES its cache-warming (persisted OFF).
-   * Distinct from a disconnect / `chat.unsubscribe`, which deliberately leave
-   * both running. Fire-and-forget: a failure is non-fatal (worst case the
-   * warming keeps running until a later close/toggle), and the endpoint is
-   * idempotent server-side.
-   */
-  function closeConversation(conversationId: string): void {
-    void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/close`, {
-      method: "POST",
-    }).catch((err) => {
-      reportError("Failed to close conversation", err);
-    });
   }
 
   /** The conversation the surfaces should scope to (undefined for a draft). */
@@ -1254,160 +223,35 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
    * promotion (first send), so a cwd set on a draft carries into the real turn.
    */
   function workspaceConversationId(): string {
-    return tabsStore.activeConversationId ?? draftConversationId;
+    return tabsStore.activeConversationId ?? registry.draftConversationId;
   }
 
-  function handleServerMessage(msg: SurfaceServerMessage): void {
-    protocol = applyServerMessage(protocol, msg);
-    // Surfaces are auto-expanded: whenever the catalog changes, subscribe to
-    // every entry (and drop subscriptions for entries that vanished).
-    if (msg.type === "catalog") {
-      syncSubscriptions();
-    }
-  }
-
-  /**
-   * Subscribe to every catalog entry, scoped to the focused conversation, and
-   * unsubscribe stragglers. Re-run on conversation switch: a conversation-scoped
-   * surface (e.g. cache-warming) re-scopes to the new id (`protocolSubscribe`
-   * emits unsubscribe-old + subscribe-new); a global surface ignores the id.
-   */
-  function syncSubscriptions(): void {
-    const cid = focusedConversationId();
-    for (const entry of protocol.catalog) {
-      // A GLOBAL surface ignores conversation scope — subscribe it WITHOUT an id
-      // so a conversation switch doesn't churn a redundant unsubscribe+subscribe
-      // round trip (ui-contract@0.2.0 catalog `scope`; ABSENT = assume
-      // conversation-scoped, the conservative pre-0.2.0 policy).
-      const scoped = entry.scope === "global" ? undefined : cid;
-      const result = protocolSubscribe(protocol, entry.id, scoped);
-      protocol = result.state;
-      for (const msg of result.outgoing) {
-        socket?.send(msg);
-      }
-    }
-    const catalogIds = new Set(protocol.catalog.map((e) => e.id));
-    for (const id of [...protocol.subscriptions.keys()]) {
-      if (!catalogIds.has(id)) {
-        const result = protocolUnsubscribe(protocol, id);
-        protocol = result.state;
-        for (const msg of result.outgoing) {
-          socket?.send(msg);
-        }
-      }
-    }
-  }
+  const surfaces = createSurfaceProtocol({
+    focusedConversationId,
+    send: (msg) => socket?.send(msg),
+  });
 
   let socket: ReturnType<typeof createSurfaceSocket> | null = null;
 
-  /**
-   * The surface OP implementations — closure functions shared by the app
-   * store's public methods AND the frontend-plugin ABI's surfaces ports (the
-   * plugin host binds exactly these; there is no second protocol state).
-   */
-  function invokeSurfaceOp(
-    surfaceId: string,
-    actionId: string,
-    payload?: unknown,
-    conversationId?: string,
-  ): void {
-    const result = protocolInvoke(
-      protocol,
-      surfaceId,
-      actionId,
-      payload,
-      conversationId ?? focusedConversationId(),
-    );
-    protocol = result.state;
-    for (const msg of result.outgoing) {
-      socket?.send(msg);
-    }
-  }
-
-  function subscribeSurfaceOp(surfaceId: string, conversationId?: string): void {
-    const result = protocolSubscribe(
-      protocol,
-      surfaceId,
-      conversationId ?? focusedConversationId(),
-    );
-    protocol = result.state;
-    for (const msg of result.outgoing) {
-      socket?.send(msg);
-    }
-  }
-
-  function unsubscribeSurfaceOp(surfaceId: string, conversationId?: string): void {
-    // protocolUnsubscribe keys on the surface alone (it drops the pair it
-    // was subscribed under); the optional id documents the intent.
-    void conversationId;
-    const result = protocolUnsubscribe(protocol, surfaceId);
-    protocol = result.state;
-    for (const msg of result.outgoing) {
-      socket?.send(msg);
-    }
-  }
-
-  function surfaceSpecOp(surfaceId: string): SurfaceSpec | null {
-    return getSurfaceSpec(protocol, surfaceId);
-  }
-
-  /**
-   * Open a conversation tab — used by the `conversation.open` WS broadcast
-   * (CLI `--open` flag) and by `conversation.statusChanged` when a new active
-   * conversation is discovered. If the conversation is already open, this is a
-   * no-op; otherwise create a chat store, load its history, subscribe to its live
-   * turns, and add the tab WITHOUT switching the active conversation (the user
-   * stays on their current tab; the new tab appears in the strip). The tab is
-   * stamped with the conversation's actual `workspaceId`, NOT the viewer's
-   * currently active workspace.
-   */
-  function openConversation(
-    conversationId: string,
-    workspaceId: string,
-    model?: string,
-    tabGroupParentId?: string,
-  ): void {
-    if (chatStores.has(conversationId)) return;
-    // Stamp the tab with the conversation's PERSISTED model when the open
-    // broadcast carries it (falling back to the current global selection) —
-    // never let the globally-active model overwrite a conversation's real one
-    // (fix-toolcall-duplicate-keys plan Part 4).
-    const tabModel = model ?? activeModel;
-    const store = createChatFor(conversationId, tabModel, workspaceId);
-    chatStores.set(conversationId, store);
-    void store.load();
-    subscribeChat(conversationId);
-    tabsStore.openTab({
-      conversationId,
-      model: tabModel,
-      title: "Conversation",
-      workspaceId,
-      ...(tabGroupParentId !== undefined ? { tabGroupParentId } : {}),
-    });
-  }
-
-  /**
-   * Remove a tab + its chat store locally (NO `POST /close` — used when the
-   * backend already marked the conversation `closed` via `conversation.statusChanged`).
-   */
-  function removeTabLocally(conversationId: string): void {
-    unsubscribeChat(conversationId);
-    const store = chatStores.get(conversationId);
-    if (store !== undefined) {
-      store.dispose();
-      chatStores.delete(conversationId);
-    }
-    void cache.delete(conversationId);
-    tabsStore.closeTab(conversationId);
-    conversationStatuses.delete(conversationId);
-    refreshActiveChat();
-    syncSubscriptions();
-    void refreshCwd();
-    void refreshComputer();
-    void refreshReasoningEffort();
-    void refreshThinking();
-    void refreshCompactPercent();
-  }
+  const conversations = createOpenConversations({
+    httpBase,
+    fetchImpl,
+    tabsStore,
+    registry,
+    cache,
+    activeModel: () => activeModel,
+    settings,
+    syncSubscriptions: surfaces.syncSubscriptions,
+    reportError,
+  });
+  const httpActions = createHttpActions({
+    httpBase,
+    fetchImpl,
+    activeConversationId: () => tabsStore.activeConversationId,
+    activeModel: () => activeModel,
+    activeWorkspaceId: () => activeWorkspaceId,
+    reportError,
+  });
 
   /**
    * Surface a swallowed error to the user via the full-screen error modal
@@ -1421,101 +265,6 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
         ? `${err.name}: ${err.message}\n\n${err.stack ?? "(no stack trace available)"}`
         : String(err);
     fatalError = `${context}\n\n${detail}`;
-  }
-
-  // Conversation lifecycle status (backend-owned, pushed via WS +
-  // fetched on connect). Keyed by conversationId.
-  let conversationStatuses = $state<Map<string, ConversationStatus>>(new Map());
-
-  // The set of workspaces with ≥1 active/queued conversation, derived ONCE
-  // (not recomputed per card). Every active/queued conversation has an open
-  // tab stamped with its workspace, so the tabs are the conversation→workspace
-  // map; cross-reference with the lifecycle statuses. `$derived` recomputes
-  // lazily when the tab set or status map changes, so each
-  // `workspaceHasActiveConversations` call is an O(1) lookup instead of a scan
-  // of the full tab list per card.
-  const activeWorkspaces = $derived.by(() => {
-    const out = new Set<string>();
-    for (const tab of tabsStore.tabs) {
-      const status = conversationStatuses.get(tab.conversationId);
-      if (status === "active" || status === "queued") out.add(tab.workspaceId);
-    }
-    return out;
-  });
-
-  /**
-   * Fetch `GET /conversations?status=active,idle` on connect to restore the
-   * tab bar across devices. Merges: opens tabs for conversations not already
-   * open, removes tabs for conversations that are no longer active/idle
-   * (closed on another device), and subscribes to `active` conversations'
-   * live streams.
-   */
-  async function fetchOpenConversations(): Promise<void> {
-    try {
-      const res = await fetchImpl(`${httpBase}/conversations?status=active,idle`);
-      if (!res.ok) return;
-      const data = (await res.json()) as ConversationListResponse;
-
-      // Update the status map from the authoritative backend list.
-      const newStatuses = new Map<string, ConversationStatus>();
-      for (const conv of data.conversations) {
-        newStatuses.set(conv.id, conv.status);
-      }
-      conversationStatuses = newStatuses;
-
-      // Open tabs for conversations not already open.
-      const existingIds = new Set(chatStores.keys());
-      for (const conv of data.conversations) {
-        if (!existingIds.has(conv.id)) {
-          // Stamp the tab with the conversation's PERSISTED model (when the
-          // list carries it) instead of the global active model — the fix for
-          // tabs showing/overwriting the wrong model
-          // (fix-toolcall-duplicate-keys plan Part 4).
-          const model = conv.model ?? activeModel;
-          const store = createChatFor(conv.id, model, conv.workspaceId);
-          chatStores.set(conv.id, store);
-          void store.load();
-          subscribeChat(conv.id);
-          tabsStore.openTab({
-            conversationId: conv.id,
-            model,
-            title: conv.title,
-            workspaceId: conv.workspaceId,
-            ...(conv.tabGroupParentId !== undefined
-              ? { tabGroupParentId: conv.tabGroupParentId }
-              : {}),
-          });
-        } else {
-          // Already open — reconcile title + workspace from the authoritative
-          // backend list. A raced `conversation.open` (summon) may have stamped
-          // the tab with the wrong workspace ("default"); the backend's
-          // authoritative conversation record is the source of truth, so a
-          // differing tab workspace is corrected here.
-          tabsStore.setTitle(conv.id, conv.title);
-          const tab = tabsStore.tabs.find((t) => t.conversationId === conv.id);
-          if (tab?.workspaceId !== conv.workspaceId) {
-            tabsStore.setWorkspaceId(conv.id, conv.workspaceId);
-          }
-          // The backend's EFFECTIVE tab group parent is authoritative too.
-          if (tab?.tabGroupParentId !== conv.tabGroupParentId) {
-            tabsStore.setTabGroupParent(conv.id, conv.tabGroupParentId ?? null);
-          }
-        }
-      }
-
-      // Remove tabs for conversations no longer active/idle (closed elsewhere).
-      const backendIds = new Set(data.conversations.map((c) => c.id));
-      for (const tab of tabsStore.tabs) {
-        if (!backendIds.has(tab.conversationId)) {
-          removeTabLocally(tab.conversationId);
-        }
-      }
-    } catch (err) {
-      reportError(
-        `Failed to load conversations from the backend.\n\nURL: ${httpBase}/conversations?status=active,idle`,
-        err,
-      );
-    }
   }
 
   // ── Frontend plugins (plan 03) ─────────────────────────────────────────────
@@ -1532,11 +281,13 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     reporter: pluginsStore,
     activeWorkspaceId: () => activeWorkspaceId,
     surfaces: {
-      subscribe: (surfaceId, conversationId) => subscribeSurfaceOp(surfaceId, conversationId),
-      unsubscribe: (surfaceId, conversationId) => unsubscribeSurfaceOp(surfaceId, conversationId),
+      subscribe: (surfaceId, conversationId) =>
+        surfaces.subscribeSurfaceOp(surfaceId, conversationId),
+      unsubscribe: (surfaceId, conversationId) =>
+        surfaces.unsubscribeSurfaceOp(surfaceId, conversationId),
       invoke: (surfaceId, actionId, payload, conversationId) =>
-        invokeSurfaceOp(surfaceId, actionId, payload, conversationId),
-      getSpec: (surfaceId) => surfaceSpecOp(surfaceId),
+        surfaces.invokeSurfaceOp(surfaceId, actionId, payload, conversationId),
+      getSpec: (surfaceId) => surfaces.surfaceSpecOp(surfaceId),
     },
     // plan 04 §4.5: the plugins' `api.layout` port — applyOps posts to the
     // ACTIVE workspace's provider (the ops route) and feeds the returned
@@ -1549,127 +300,23 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     }),
   });
 
-  const socketOpts: SurfaceSocketOptions = {
+  const socketOpts = createWsHandlers({
     url: wsUrl,
-    onMessage: handleServerMessage,
-    onChat: handleChatMessage,
-    onConversationOpen(msg: ConversationOpenMessage): void {
-      openConversation(msg.conversationId, msg.workspaceId, msg.model, msg.tabGroupParentId);
-    },
-    onConversationTabGroupChanged(msg: ConversationTabGroupChangedMessage): void {
-      // Another client (or this one, echoed) regrouped a tab — apply the
-      // authoritative EFFECTIVE value. Unknown tabs are a reducer no-op.
-      tabsStore.setTabGroupParent(msg.conversationId, msg.tabGroupParentId);
-    },
-    onConversationStatusChanged(msg: ConversationStatusChangedMessage): void {
-      const { conversationId, status, workspaceId } = msg;
-      if (status === "closed") {
-        // Closed on another device (or the backend) — remove the tab locally.
-        if (chatStores.has(conversationId)) {
-          removeTabLocally(conversationId);
-        }
-        return;
-      }
-      // active / queued / idle — update the status map (drives the tab spinner).
-      // `queued` = the turn is in flight but waiting for a concurrency slot
-      // (broadcast-only, never persisted — CR-13); the tab shows a ring.
-      conversationStatuses = new Map(conversationStatuses).set(conversationId, status);
-      // Reconcile the already-open tab's workspace from this authoritative
-      // lifecycle event (the payload workspace is the conversation's actual
-      // persisted workspace). A raced `conversation.open` may have stamped the
-      // wrong workspace ("default") — correct it here.
-      if (
-        chatStores.has(conversationId) &&
-        (tabsStore.tabs.find((t) => t.conversationId === conversationId)?.workspaceId ??
-          workspaceId) !== workspaceId
-      ) {
-        tabsStore.setWorkspaceId(conversationId, workspaceId);
-      }
-      // If this is a new active OR queued conversation we don't have a tab for,
-      // open one — so a cross-device turn (incl. one waiting in the concurrency
-      // queue) is visible. `idle` never opens a tab.
-      if ((status === "active" || status === "queued") && !chatStores.has(conversationId)) {
-        openConversation(conversationId, workspaceId);
-      }
-    },
-    onConversationCompacted(msg: ConversationCompactedMessage): void {
-      // Compaction keeps the conversation ID — the old full history is forked
-      // to an archive (newConversationId). Just reload the same conversation's
-      // history (dispose stale store + cache + re-fetch).
-      const cid = msg.conversationId;
-      const wasActive = tabsStore.activeConversationId === cid;
-      const store = chatStores.get(cid);
-      if (store !== undefined) {
-        store.dispose();
-      }
-      void cache.delete(cid);
-      const fresh = createChatFor(cid, activeModel, activeWorkspaceId);
-      chatStores.set(cid, fresh);
-      void fresh.load();
-      if (wasActive) {
-        refreshActiveChat();
-      }
-    },
-    onReopen() {
-      // The server forgot our subscriptions on reconnect; re-send each with the
-      // conversation it was subscribed under (protocolSubscribe would no-op since
-      // they're still in our local map, so emit the wire messages directly).
-      for (const [surfaceId, sub] of protocol.subscriptions) {
-        const msg: SubscribeMessage =
-          sub.conversationId === undefined
-            ? { type: "subscribe", surfaceId }
-            : { type: "subscribe", surfaceId, conversationId: sub.conversationId };
-        socket?.send(msg);
-      }
-      // A reconnect is a NEW connection — the server forgot this client's
-      // workspace too. Re-declare it so the re-pushed catalog is filtered
-      // (plan 06 §6.4).
-      socket?.send(workspaceSetMsg(activeWorkspaceId));
-      // Re-attach to every open conversation's turn stream. A turn that kept
-      // running while we were disconnected resumes streaming (server replays it
-      // from `turn-start`); one that sealed while we were gone is committed from
-      // history by `resync()` (which also clears a now-stale "generating").
-      for (const tab of tabsStore.tabs) {
-        subscribeChat(tab.conversationId);
-        chatStores.get(tab.conversationId)?.resync();
-      }
-      // Re-attach to every MODAL watch too (a run-chat modal open across a
-      // reconnect keeps streaming). Watch stores are separate from tabs.
-      for (const [watchId, watchStore] of watchStores) {
-        subscribeChat(watchId);
-        watchStore.resync();
-      }
-    },
-    onExtensionsChanged(_msg: ExtensionsChangedMessage) {
-      // §11 multi-client coherence: another client (or this one) mutated the
-      // plugin set. Refetch the plugin list (+ any open workspace modal view),
-      // the workspace-scoped model catalog, and the provider guardrail. The
-      // surface catalog is NOT refetched here — the server re-pushes it
-      // (workspace-filtered) on the same broadcast.
-      pluginsStore.onExtensionsChanged();
-      // Frontend plugins (plan 03): the load lifecycle's extensions-changed
-      // trigger — newly-loaded/enabled frontend plugins import + activate;
-      // unloaded/disabled ones are swept (their tiles fall back).
-      void pluginHost.sync();
-      // A layout plugin enabled/disabled mid-session starts/stops serving —
-      // the probe picks the new provider state up without a reload (§2.6).
-      void layoutStore.probe(activeWorkspaceId);
-      void refreshModels();
-      void refreshProviderStatus();
-    },
-    onLayout(msg: LayoutChangedMessage) {
-      // §2.5 multi-client coherence: a layout write on ANY client (or a
-      // plugin's op) re-renders here — the store filters non-active
-      // workspaces (the server fans out to everyone).
-      layoutStore.onServerTree(msg.workspaceId, msg.tree);
-    },
-    onTileLayout(msg: TileLayoutChangedMessage) {
-      // Multi-client coherence for the home grid's synced layouts: a write
-      // on ANY client re-renders here — the store filters the OTHER
-      // orientation (the server fans out to everyone).
-      tileLayoutStore.onServerTileLayout(msg.mode, msg.data);
-    },
-  };
+    send: (msg) => socket?.send(msg),
+    registry,
+    conversations,
+    surfaces,
+    cache,
+    tabsStore,
+    activeWorkspaceId: () => activeWorkspaceId,
+    workspaceSetMsg: (id) => workspaceSetMsg(id),
+    pluginsStore,
+    pluginHost,
+    layoutStore,
+    tileLayoutStore,
+    refreshers,
+    reportError,
+  });
   if (opts?.socketFactory !== undefined) {
     socketOpts.socketFactory = opts.socketFactory;
   }
@@ -1686,9 +333,9 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
   socket.send(workspaceSetMsg(activeWorkspaceId));
 
   // Fetch the model catalog (workspace-scoped — plan 06 §6.5).
-  void refreshModels();
+  void refreshers.refreshModels();
   // Fetch the active workspace's provider status (§6.5 first-boot guardrail).
-  void refreshProviderStatus();
+  void refreshers.refreshProviderStatus();
   // Probe the ACTIVE layout provider (plan 02 §2.6 boot trigger): the tree is
   // served by the backend's layout plugin when one is active. `boot: true`
   // arms the one-way §2.7 localStorage migration on the first success.
@@ -1703,35 +350,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     activeModel = migrateLegacyModelName(activeModel);
   }
 
-  // Fetch the discovered-computer catalog (global, like models). Empty until
-  // the `ssh` extension lands — a safe no-op until then (the selector shows
-  // "Local (none)" only). Non-fatal: a failure leaves an empty list.
-  void fetchImpl(`${httpBase}/computers`)
-    .then((res) => {
-      if (!res.ok) return { computers: [] } as ComputerListResponse;
-      return res.json() as Promise<ComputerListResponse>;
-    })
-    .then((data) => {
-      computers = data?.computers ?? [];
-    })
-    .catch((err) => {
-      reportError("Failed to load computer list", err);
-    });
-
-  // Fetch the persisted Named Agents (global user config). Seeded on boot so the
-  // sidebar editor + the synthetic model-selector provider have data immediately.
-  // Non-fatal: a failure leaves an empty list (the user can add agents).
-  void fetchImpl(`${httpBase}/named-agents`)
-    .then((res) => {
-      if (!res.ok) return { namedAgents: [] } as { namedAgents: NamedAgent[] };
-      return res.json() as Promise<{ namedAgents: NamedAgent[] }>;
-    })
-    .then((data) => {
-      namedAgents = normalizeNamedAgents(data);
-    })
-    .catch((err) => {
-      reportError("Failed to load named agents", err);
-    });
+  refreshers.loadGlobalCatalogs();
 
   // Restore persisted tabs
   const persistedState = storageAdapter.load();
@@ -1744,13 +363,12 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       if (model !== tab.model) {
         tabsStore.setModel(tab.conversationId, model);
       }
-      const store = createChatFor(tab.conversationId, model, tab.workspaceId);
-      chatStores.set(tab.conversationId, store);
-      void store.load();
+      const store = registry.createChatFor(tab.conversationId, model, tab.workspaceId);
+      registry.chatStores.set(tab.conversationId, store);
       // Watch each restored conversation's live turns: after a reload mid-turn the
       // server replays the in-flight turn so we keep rendering it. Queued until the
       // socket opens.
-      subscribeChat(tab.conversationId);
+      registry.subscribeChat(tab.conversationId);
     }
     if (persistedState.activeConversationId !== null) {
       const activeTab = persistedState.tabs.find(
@@ -1763,19 +381,19 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     }
   }
 
-  refreshActiveChat();
-  void refreshCwd();
-  void refreshComputer();
+  registry.refreshActiveChat();
+  void settings.refreshCwd();
+  void settings.refreshComputer();
   void refreshModel();
-  void refreshReasoningEffort();
-  void refreshThinking();
-  void refreshCompactPercent();
-  void refreshVisionSettings();
+  void settings.refreshReasoningEffort();
+  void settings.refreshThinking();
+  void settings.refreshCompactPercent();
+  void settings.refreshVisionSettings();
 
   // Fetch the authoritative open-conversation list from the backend (cross-
   // device tab sync). Merges with the localStorage-restored tabs: opens new
   // ones, removes closed ones, updates titles + statuses.
-  void fetchOpenConversations();
+  void conversations.fetchOpenConversations();
 
   return {
     get tabs(): readonly Tab[] {
@@ -1800,22 +418,22 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // Reset to a fresh draft scoped to the new workspace so a new chat is
       // stamped with the right `workspaceId` on `chat.send`.
       const nextDraftId = randomId();
-      draftStore = createChatFor(nextDraftId, activeModel, workspaceId);
-      draftConversationId = nextDraftId;
+      registry.draftStore = registry.createChatFor(nextDraftId, activeModel, workspaceId);
+      registry.draftConversationId = nextDraftId;
       tabsStore.newDraft();
       namedAgentSnapshot = null;
-      refreshActiveChat();
-      syncSubscriptions();
-      void refreshCwd();
-      void refreshComputer();
+      registry.refreshActiveChat();
+      surfaces.syncSubscriptions();
+      void settings.refreshCwd();
+      void settings.refreshComputer();
       void refreshModel();
-      void refreshReasoningEffort();
-      void refreshThinking();
-      void refreshCompactPercent();
+      void settings.refreshReasoningEffort();
+      void settings.refreshThinking();
+      void settings.refreshCompactPercent();
       // The model picker + provider guardrail are WORKSPACE-SCOPED now
       // (plan 06 §6.5): refetch both for the new workspace.
-      void refreshModels();
-      void refreshProviderStatus();
+      void refreshers.refreshModels();
+      void refreshers.refreshProviderStatus();
       // The tile tree is WORKSPACE-SCOPED too (plan 02): reset to the local
       // default for the new workspace and probe its provider (§2.6 — every
       // workspace switch is a probe, which is also the missed-push catch-up).
@@ -1826,82 +444,82 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       void pluginHost.sync();
     },
     get activeChat(): ChatStore {
-      return activeChat;
+      return registry.activeChat;
     },
     get models(): readonly string[] {
-      return models;
+      return refreshers.models;
     },
     get modelInfo(): Readonly<Record<string, ModelMetadata>> {
-      return modelInfo;
+      return refreshers.modelInfo;
     },
     get activeModel(): string {
       return activeModel;
     },
     get catalog() {
-      return protocol.catalog;
+      return surfaces.protocol.catalog;
     },
     get surfaces(): readonly SurfaceSpec[] {
       const out: SurfaceSpec[] = [];
-      for (const entry of protocol.catalog) {
-        const spec = getSurfaceSpec(protocol, entry.id);
+      for (const entry of surfaces.protocol.catalog) {
+        const spec = getSurfaceSpec(surfaces.protocol, entry.id);
         if (spec) out.push(spec);
       }
       return out;
     },
     get lastError() {
-      return protocol.lastError;
+      return surfaces.protocol.lastError;
     },
     get storage() {
       return localStorageOpt;
     },
     get cwd(): string | null {
-      return cwd;
+      return settings.cwd;
     },
     get computerId(): string | null {
-      return computerId;
+      return settings.computerId;
     },
     get computers(): readonly ComputerEntry[] {
-      return computers;
+      return refreshers.computers;
     },
     get reasoningEffort(): ReasoningEffort | null {
-      return reasoningEffort;
+      return settings.reasoningEffort;
     },
     get thinking(): boolean | null {
-      return thinking;
+      return settings.thinking;
     },
     get compactPercent(): number | null {
-      return compactPercent;
+      return settings.compactPercent;
     },
     get visionSettings(): VisionSettings | null {
-      return visionSettings;
+      return settings.visionSettings;
     },
     async refreshVisionSettings(): Promise<void> {
-      await refreshVisionSettings();
+      await settings.refreshVisionSettings();
     },
     get chatLimit(): number {
-      return chatLimit;
+      return registry.chatLimit;
     },
     conversationStatus(conversationId: string): ConversationStatus | undefined {
-      return conversationStatuses.get(conversationId);
+      return conversations.conversationStatuses.get(conversationId);
     },
     workspaceHasActiveConversations(workspaceId: string): boolean {
       // O(1) lookup into the once-derived `activeWorkspaces` set; false when the
       // workspace has no active/queued conversation (or none at all).
-      return activeWorkspaces.has(workspaceId);
+      return conversations.workspaceHasActiveConversations(workspaceId);
     },
     get currentConversationId(): string {
       return workspaceConversationId();
     },
 
-    surface(surfaceId: string): SurfaceSpec | null {
-      return getSurfaceSpec(protocol, surfaceId);
+    surface(surfaceId: string, conversationId?: string): SurfaceSpec | null {
+      return surfaces.surfaceSpecOp(surfaceId, conversationId);
     },
 
     send(text: string, images?: readonly ImageInput[]): void {
       if (tabsStore.activeConversationId === null) {
         // Draft: promote to tab on first send. Carry a Named Agent selection's
         // snapshot so the promoted conversation retains how it was selected (§7).
-        const conversationId = draftConversationId;
+        const conversationId = registry.draftConversationId;
         const model = activeModel;
         const snapshot = namedAgentSnapshot ?? undefined;
         tabsStore.createTab({
@@ -1911,37 +529,36 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           workspaceId: activeWorkspaceId,
           ...(snapshot ? { snapshot } : {}),
         });
-        chatStores.set(conversationId, draftStore);
-        void draftStore.load();
+        registry.chatStores.set(conversationId, registry.draftStore);
 
         // Prepare next draft
         const nextDraftId = randomId();
-        draftStore = createChatFor(nextDraftId, activeModel, activeWorkspaceId);
-        draftConversationId = nextDraftId;
+        registry.draftStore = registry.createChatFor(nextDraftId, activeModel, activeWorkspaceId);
+        registry.draftConversationId = nextDraftId;
 
-        refreshActiveChat();
+        registry.refreshActiveChat();
         // The draft became a real conversation: re-scope conversation-scoped
         // surfaces (e.g. cache-warming) to its id.
-        syncSubscriptions();
-        void refreshCwd();
-        void refreshComputer();
-        void refreshReasoningEffort();
-        void refreshThinking();
-        void refreshCompactPercent();
+        surfaces.syncSubscriptions();
+        void settings.refreshCwd();
+        void settings.refreshComputer();
+        void settings.refreshReasoningEffort();
+        void settings.refreshThinking();
+        void settings.refreshCompactPercent();
         // Now send on the promoted store
-        chatStores.get(conversationId)?.send(text, images);
+        registry.chatStores.get(conversationId)?.send(text, images);
       } else {
-        activeChat.send(text, images);
+        registry.activeChat.send(text, images);
       }
     },
 
-    queueMessage(text: string): void {
+    queueMessage(text: string, images?: readonly ImageInput[]): void {
       // Only offered while generating (Composer switches to `chat.queue`
       // when `status === "running"`), so a draft (never generating) never
       // reaches here. `chat.queue` auto-starts a turn if idle, so even a race
       // (turn sealed between the status read and the send) is safe — the
       // server starts a fresh turn with the message as its opening prompt.
-      activeChat.queueMessage(text);
+      registry.activeChat.queueMessage(text, images);
     },
 
     cancelQueuedMessage(messageId: string): void {
@@ -1950,7 +567,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       // A cancel of an already-drained / unknown message is a silent no-op, so
       // there is no local state to roll back. Delegates to the focused
       // conversation's chat store, which owns the conversationId + transport.
-      activeChat.cancelQueuedMessage(messageId);
+      registry.activeChat.cancelQueuedMessage(messageId);
     },
 
     selectModel(model: string, snapshot?: NamedAgentSelectionSnapshot): void {
@@ -1960,8 +577,8 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       if (activeId !== null) {
         tabsStore.setModel(activeId, model);
         tabsStore.setSnapshot(activeId, snapshot ?? null);
-        chatStores.get(activeId)?.setModel(model);
-        chatStores.get(activeId)?.setNamedAgent(snapshot ?? null);
+        registry.chatStores.get(activeId)?.setModel(model);
+        registry.chatStores.get(activeId)?.setNamedAgent(snapshot ?? null);
         const body: SetModelRequest = { model, ...(snapshot ? { namedAgent: snapshot } : {}) };
         void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(activeId)}/model`, {
           method: "PUT",
@@ -1971,25 +588,25 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
           reportError("Failed to persist model", err);
         });
       } else {
-        draftStore.setModel(model);
-        draftStore.setNamedAgent(snapshot ?? null);
+        registry.draftStore.setModel(model);
+        registry.draftStore.setNamedAgent(snapshot ?? null);
       }
     },
 
     newDraft(): void {
       tabsStore.newDraft();
       const nextDraftId = randomId();
-      draftStore = createChatFor(nextDraftId, activeModel, activeWorkspaceId);
-      draftConversationId = nextDraftId;
+      registry.draftStore = registry.createChatFor(nextDraftId, activeModel, activeWorkspaceId);
+      registry.draftConversationId = nextDraftId;
       namedAgentSnapshot = null;
-      refreshActiveChat();
-      syncSubscriptions();
-      void refreshCwd();
-      void refreshComputer();
+      registry.refreshActiveChat();
+      surfaces.syncSubscriptions();
+      void settings.refreshCwd();
+      void settings.refreshComputer();
       void refreshModel();
-      void refreshReasoningEffort();
-      void refreshThinking();
-      void refreshCompactPercent();
+      void settings.refreshReasoningEffort();
+      void settings.refreshThinking();
+      void settings.refreshCompactPercent();
     },
 
     selectTab(conversationId: string): void {
@@ -2001,916 +618,120 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       } else {
         namedAgentSnapshot = null;
       }
-      refreshActiveChat();
-      syncSubscriptions();
-      void refreshCwd();
-      void refreshComputer();
+      registry.refreshActiveChat();
+      surfaces.syncSubscriptions();
+      void settings.refreshCwd();
+      void settings.refreshComputer();
       void refreshModel();
-      void refreshReasoningEffort();
-      void refreshThinking();
-      void refreshCompactPercent();
+      void settings.refreshReasoningEffort();
+      void settings.refreshThinking();
+      void settings.refreshCompactPercent();
     },
 
     closeTab(conversationId: string): void {
       // The user is DONE with this chat: abort any in-flight turn + stop/disable
       // its cache-warming, server-side (POST /close sets status → "closed").
-      closeConversation(conversationId);
-      removeTabLocally(conversationId);
+      conversations.closeConversation(conversationId);
+      conversations.removeTabLocally(conversationId);
     },
 
-    renameTab(conversationId: string, title: string): void {
-      tabsStore.setTitle(conversationId, title);
-      void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/title`, {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title } satisfies SetTitleRequest),
-      }).catch((err) => {
-        reportError("Failed to rename conversation", err);
-      });
-    },
-
-    setTabGroup(conversationId: string, parentId: string | null): void {
-      const previous =
-        tabsStore.tabs.find((t) => t.conversationId === conversationId)?.tabGroupParentId ?? null;
-      tabsStore.setTabGroupParent(conversationId, parentId);
-      void (async () => {
-        try {
-          const res = await fetchImpl(
-            `${httpBase}/conversations/${encodeURIComponent(conversationId)}/tab-group`,
-            {
-              method: "PUT",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ parentId } satisfies SetTabGroupRequest),
-            },
-          );
-          if (!res.ok) {
-            const err = (await res.json().catch(() => null)) as { error?: string } | null;
-            throw new Error(err?.error ?? `HTTP ${res.status}`);
-          }
-          const body = (await res.json()) as TabGroupResponse;
-          tabsStore.setTabGroupParent(conversationId, body.tabGroupParentId);
-        } catch (err) {
-          // Revert the optimistic move, then surface the failure.
-          tabsStore.setTabGroupParent(conversationId, previous);
-          reportError("Failed to update the tab's subagent group", err);
-        }
-      })();
-    },
+    renameTab: conversations.renameTab,
+    setTabGroup: conversations.setTabGroup,
 
     invoke(surfaceId: string, actionId: string, payload?: unknown): void {
-      invokeSurfaceOp(surfaceId, actionId, payload);
+      surfaces.invokeSurfaceOp(surfaceId, actionId, payload);
     },
 
     subscribeSurface(surfaceId: string, conversationId?: string): void {
-      subscribeSurfaceOp(surfaceId, conversationId);
+      surfaces.subscribeSurfaceOp(surfaceId, conversationId);
     },
 
     unsubscribeSurface(surfaceId: string, conversationId?: string): void {
-      unsubscribeSurfaceOp(surfaceId, conversationId);
+      surfaces.unsubscribeSurfaceOp(surfaceId, conversationId);
     },
 
-    async warmNow(): Promise<WarmResult | null> {
-      const conversationId = tabsStore.activeConversationId;
-      if (conversationId === null) return null;
-      const body: WarmRequest = { conversationId, model: activeModel };
-      try {
-        const res = await fetchImpl(`${httpBase}/chat/warm`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return { ok: false, error: errBody?.error ?? `Warm failed (HTTP ${res.status})` };
-        }
-        return { ok: true, response: (await res.json()) as WarmResponse };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : "Warm request failed" };
-      }
-    },
+    warmNow: httpActions.warmNow,
 
-    async setCwd(value: string): Promise<CwdResult | null> {
-      const id = workspaceConversationId();
-      const body: SetCwdRequest = {
-        cwd: value,
-        workspaceId: untrack(() => activeWorkspaceId),
-      };
-      try {
-        const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/cwd`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return { ok: false, error: errBody?.error ?? `Set cwd failed (HTTP ${res.status})` };
-        }
-        const data = (await res.json()) as CwdResponse;
-        const next = data.cwd ?? null;
-        if (workspaceConversationId() === id) cwd = next;
-        return { ok: true, cwd: next };
-      } catch (err) {
-        return { ok: false, error: err instanceof Error ? err.message : "Set cwd request failed" };
-      }
-    },
+    setCwd: settings.setCwd,
 
-    async setComputer(computerIdValue: string | null): Promise<ComputerResult | null> {
-      const id = workspaceConversationId();
-      const body: SetConversationComputerRequest = { computerId: computerIdValue };
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/conversations/${encodeURIComponent(id)}/computer`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set computer failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as ConversationComputerResponse;
-        const next = data.computerId ?? null;
-        if (workspaceConversationId() === id) computerId = next;
-        return { ok: true, computerId: next };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set computer request failed",
-        };
-      }
-    },
+    setComputer: settings.setComputer,
 
-    async computerStatus(alias: string): Promise<ComputerStatusResult | null> {
-      if (alias === "") return null;
-      try {
-        const res = await fetchImpl(`${httpBase}/computers/${encodeURIComponent(alias)}/status`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Computer status failed (HTTP ${res.status})`,
-          };
-        }
-        const status = (await res.json()) as ComputerStatusResponse;
-        return { ok: true, response: status };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Computer status request failed",
-        };
-      }
-    },
+    computerStatus: httpActions.computerStatus,
 
-    async testComputer(alias: string): Promise<TestComputerResult | null> {
-      if (alias === "") return null;
-      try {
-        const res = await fetchImpl(`${httpBase}/computers/${encodeURIComponent(alias)}/test`, {
-          method: "POST",
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Test computer failed (HTTP ${res.status})`,
-          };
-        }
-        const response = (await res.json()) as TestComputerResponse;
-        return { ok: true, response };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Test computer request failed",
-        };
-      }
-    },
+    testComputer: httpActions.testComputer,
 
-    async setReasoningEffort(level: ReasoningEffort): Promise<ReasoningEffortResult | null> {
-      const id = workspaceConversationId();
-      const body: SetReasoningEffortRequest = { reasoningEffort: level };
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/conversations/${encodeURIComponent(id)}/reasoning-effort`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set reasoning effort failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as ReasoningEffortResponse;
-        const next = data.reasoningEffort ?? level;
-        if (workspaceConversationId() === id) reasoningEffort = next;
-        return { ok: true, reasoningEffort: next };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set reasoning effort request failed",
-        };
-      }
-    },
+    setReasoningEffort: settings.setReasoningEffort,
 
-    async setThinking(enabled: boolean): Promise<ThinkingResult | null> {
-      const id = workspaceConversationId();
-      const body: SetThinkingRequest = { thinking: enabled };
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/conversations/${encodeURIComponent(id)}/thinking`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set thinking failed (HTTP ${res.status})`,
-          };
-        }
-        // Guard against the SPA fallback (200 + text/html when the endpoint
-        // is not shipped). Optimistically apply locally — the backend can't
-        // persist it, but the UI reflects the user's intent for this session.
-        const contentType = res.headers.get("content-type") ?? "";
-        if (!contentType.includes("application/json")) {
-          if (workspaceConversationId() === id) thinking = enabled;
-          return { ok: true, thinking: enabled };
-        }
-        const data = (await res.json()) as ThinkingResponse;
-        const next = data.thinking ?? enabled;
-        if (workspaceConversationId() === id) thinking = next;
-        return { ok: true, thinking: next };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set thinking request failed",
-        };
-      }
-    },
+    setThinking: settings.setThinking,
 
-    stopGeneration(): void {
-      const conversationId = tabsStore.activeConversationId;
-      if (conversationId === null) return;
-      void fetchImpl(`${httpBase}/conversations/${encodeURIComponent(conversationId)}/stop`, {
-        method: "POST",
-      }).catch((err) => {
-        reportError("Failed to stop generation", err);
-      });
-    },
+    stopGeneration: httpActions.stopGeneration,
 
-    async compactNow(keepLastN?: number): Promise<CompactResult | null> {
-      const conversationId = tabsStore.activeConversationId;
-      if (conversationId === null) return null;
-      const body: Record<string, unknown> = {};
-      if (keepLastN !== undefined) body.keepLastN = keepLastN;
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/conversations/${encodeURIComponent(conversationId)}/compact`,
-          {
-            method: "POST",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Compact failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as CompactResponse;
-        return { ok: true, response: data };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Compact request failed",
-        };
-      }
-    },
+    compactNow: httpActions.compactNow,
 
-    async setCompactPercent(percent: number): Promise<CompactPercentResult | null> {
-      const id = workspaceConversationId();
-      const body: SetCompactPercentRequest = { threshold: percent };
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/conversations/${encodeURIComponent(id)}/compact-percent`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(body),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set compact percent failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as CompactPercentResponse;
-        if (workspaceConversationId() === id) compactPercent = data.threshold;
-        return { ok: true, percent: data.threshold };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set compact percent request failed",
-        };
-      }
-    },
+    setCompactPercent: settings.setCompactPercent,
 
-    async setVisionSettings(patch: VisionSettingsPatch): Promise<VisionSettingsResult | null> {
-      const body: SetVisionSettingsRequest = patch;
-      try {
-        const res = await fetchImpl(`${httpBase}/settings/vision`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set vision settings failed (HTTP ${res.status})`,
-          };
-        }
-        const data = normalizeVisionSettings(await res.json());
-        visionSettings = data;
-        return { ok: true, settings: data };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set vision settings request failed",
-        };
-      }
-    },
+    setVisionSettings: settings.setVisionSettings,
 
-    async setChatLimit(limit: number): Promise<ChatLimitResult> {
-      const next = normalizeChatLimit(limit);
-      chatLimitStore.save(next);
-      chatLimit = next;
-      // Propagate to every live chat store. The ACTIVE one is awaited so its
-      // refill (on a raise) lands before the caller returns — letting the
-      // shell preserve scroll over the prepended older chunks. Background
-      // stores refill fire-and-forget. Future stores pick the new limit up at
-      // creation (via the persisted store).
-      const active = getActiveChat();
-      await active.setChatLimit(next);
-      for (const s of chatStores.values()) {
-        if (s !== active) void s.setChatLimit(next);
-      }
-      if (draftStore !== active) void draftStore.setChatLimit(next);
-      return { ok: true, chatLimit: next };
-    },
+    setChatLimit: registry.setChatLimit,
 
-    async lspStatus(): Promise<LspResult | null> {
-      const id = workspaceConversationId();
-      try {
-        const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/lsp`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return { ok: false, error: errBody?.error ?? `LSP status failed (HTTP ${res.status})` };
-        }
-        // Normalize the untyped body at this network seam so a malformed/partial
-        // response can never crash the renderer (servers is guaranteed an array).
-        const data = (await res.json()) as Partial<LspStatusResponse>;
-        const response: LspStatusResponse = {
-          conversationId: data.conversationId ?? id,
-          cwd: data.cwd ?? null,
-          servers: Array.isArray(data.servers) ? data.servers : [],
-        };
-        return { ok: true, response };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "LSP status request failed",
-        };
-      }
-    },
+    lspStatus: settings.lspStatus,
 
-    async mcpStatus(): Promise<McpResult | null> {
-      const id = workspaceConversationId();
-      try {
-        const res = await fetchImpl(`${httpBase}/conversations/${encodeURIComponent(id)}/mcp`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return { ok: false, error: errBody?.error ?? `MCP status failed (HTTP ${res.status})` };
-        }
-        // Normalize the untyped body at this network seam so a malformed/partial
-        // response can never crash the renderer (servers is guaranteed an array).
-        const data = (await res.json()) as Partial<McpStatusResponse>;
-        const response: McpStatusResponse = {
-          conversationId: data.conversationId ?? id,
-          cwd: data.cwd ?? null,
-          servers: Array.isArray(data.servers) ? data.servers : [],
-        };
-        return { ok: true, response };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "MCP status request failed",
-        };
-      }
-    },
+    mcpStatus: settings.mcpStatus,
 
-    async heartbeatConfig(): Promise<HeartbeatConfigResult> {
-      // Workspace-scoped (NOT per-conversation): use the active workspace id.
-      const wsId = untrack(() => activeWorkspaceId);
-      try {
-        const res = await fetchImpl(`${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Heartbeat config failed (HTTP ${res.status})`,
-          };
-        }
-        // Normalize the untyped JSON at the network seam (pure helper) so a
-        // malformed/partial response can never crash the renderer.
-        const config: HeartbeatConfig = normalizeHeartbeatConfig(await res.json());
-        return { ok: true, config };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Heartbeat config request failed",
-        };
-      }
-    },
+    heartbeatConfig: httpActions.heartbeatConfig,
 
-    async setHeartbeatConfig(patch: HeartbeatConfigPatch): Promise<HeartbeatConfigResult> {
-      const wsId = untrack(() => activeWorkspaceId);
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify(patch),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set heartbeat config failed (HTTP ${res.status})`,
-          };
-        }
-        const config: HeartbeatConfig = normalizeHeartbeatConfig(await res.json());
-        return { ok: true, config };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set heartbeat config request failed",
-        };
-      }
-    },
+    setHeartbeatConfig: httpActions.setHeartbeatConfig,
 
-    async heartbeatRuns(): Promise<HeartbeatRunsResult> {
-      const wsId = untrack(() => activeWorkspaceId);
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat/runs`,
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Heartbeat runs failed (HTTP ${res.status})`,
-          };
-        }
-        const runs: readonly HeartbeatRun[] = normalizeHeartbeatRuns(await res.json());
-        return { ok: true, runs };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Heartbeat runs request failed",
-        };
-      }
-    },
+    heartbeatRuns: httpActions.heartbeatRuns,
 
-    async stopHeartbeatRun(runId: string): Promise<HeartbeatStopResult> {
-      const wsId = untrack(() => activeWorkspaceId);
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat/runs/${encodeURIComponent(runId)}/stop`,
-          { method: "POST" },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Stop heartbeat run failed (HTTP ${res.status})`,
-          };
-        }
-        return { ok: true };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Stop heartbeat run request failed",
-        };
-      }
-    },
+    stopHeartbeatRun: httpActions.stopHeartbeatRun,
 
-    async heartbeatNextRun(): Promise<HeartbeatNextRunResult> {
-      const wsId = untrack(() => activeWorkspaceId);
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/workspaces/${encodeURIComponent(wsId)}/heartbeat/next-run`,
-        );
-        if (!res.ok) {
-          // 404 = the backend hasn't shipped CR-HB-3 yet → the FE falls back to
-          // an approximation. Surface as ok:false (non-fatal).
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Heartbeat next-run failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json().catch(() => null)) as { nextRunAt?: string | null } | null;
-        // `null` (disabled / no run scheduled) passes through; anything non-string
-        // also becomes null so a malformed body can't crash the countdown.
-        const raw = data?.nextRunAt;
-        const nextRunAt = typeof raw === "string" ? raw : null;
-        return { ok: true, nextRunAt };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Heartbeat next-run request failed",
-        };
-      }
-    },
+    heartbeatNextRun: httpActions.heartbeatNextRun,
 
     watchConversation(conversationId: string): ChatStore {
-      return watchConversation(conversationId);
+      return registry.watchConversation(conversationId);
     },
 
     unwatchConversation(conversationId: string): void {
-      unwatchConversation(conversationId);
+      registry.unwatchConversation(conversationId);
     },
 
     // ── Concurrency (per-provider limits + live status; GLOBAL, not workspace-scoped)
 
-    async concurrencyLimits(): Promise<ConcurrencyLimitsResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/concurrency/limits`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Concurrency limits failed (HTTP ${res.status})`,
-          };
-        }
-        // Normalize the untyped JSON at the network seam (pure helper) so a
-        // malformed/partial response (e.g. the extension returning `{}`) can
-        // never crash the renderer.
-        const limits = normalizeConcurrencyLimits(await res.json());
-        return { ok: true, limits };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Concurrency limits request failed",
-        };
-      }
-    },
+    concurrencyLimits: httpActions.concurrencyLimits,
 
-    async getConcurrencyLimit(providerId: string): Promise<ConcurrencyLimitResult> {
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/concurrency/limits/${encodeURIComponent(providerId)}`,
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Concurrency limit failed (HTTP ${res.status})`,
-          };
-        }
-        const limit = normalizeConcurrencyLimit(await res.json());
-        if (limit === null) {
-          return { ok: false, error: "Malformed concurrency limit response" };
-        }
-        return { ok: true, providerId: limit.providerId, limit: limit.limit };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Concurrency limit request failed",
-        };
-      }
-    },
+    getConcurrencyLimit: httpActions.getConcurrencyLimit,
 
-    async setConcurrencyLimit(providerId: string, limit: number): Promise<ConcurrencyLimitResult> {
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/concurrency/limits/${encodeURIComponent(providerId)}`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ limit }),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set concurrency limit failed (HTTP ${res.status})`,
-          };
-        }
-        const echoed = normalizeConcurrencyLimit(await res.json());
-        if (echoed === null) {
-          return { ok: false, error: "Malformed concurrency limit response" };
-        }
-        return { ok: true, providerId: echoed.providerId, limit: echoed.limit };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set concurrency limit request failed",
-        };
-      }
-    },
+    setConcurrencyLimit: httpActions.setConcurrencyLimit,
 
-    async deleteConcurrencyLimit(providerId: string): Promise<ConcurrencyDeleteResult> {
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/concurrency/limits/${encodeURIComponent(providerId)}`,
-          { method: "DELETE" },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Delete concurrency limit failed (HTTP ${res.status})`,
-          };
-        }
-        return { ok: true, providerId };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Delete concurrency limit request failed",
-        };
-      }
-    },
+    deleteConcurrencyLimit: httpActions.deleteConcurrencyLimit,
 
-    async accountUsage(opts?: { readonly refresh?: boolean }): Promise<AccountUsageResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/usage${opts?.refresh ? "?refresh=1" : ""}`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Account usage failed (HTTP ${res.status})`,
-            ...(res.status === 503 ? { unavailable: true } : {}),
-          };
-        }
-        return { ok: true, usage: normalizeAccountUsage(await res.json(), Date.now()) };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Account usage request failed",
-        };
-      }
-    },
+    accountUsage: httpActions.accountUsage,
 
-    async setAccountUsageSettings(
-      provider: AccountUsageProviderId,
-      settings: UpdateAccountUsageSettingsRequest,
-    ): Promise<AccountUsageSettingsResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/usage/${encodeURIComponent(provider)}/settings`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(settings),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Save usage settings failed (HTTP ${res.status})`,
-          };
-        }
-        const report = normalizeAccountUsageReport(await res.json());
-        return report
-          ? { ok: true, report }
-          : { ok: false, error: "Malformed usage settings response" };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Save usage settings request failed",
-        };
-      }
-    },
+    setAccountUsageSettings: httpActions.setAccountUsageSettings,
 
-    async concurrencyStatus(): Promise<ConcurrencyStatusResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/concurrency/status`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Concurrency status failed (HTTP ${res.status})`,
-          };
-        }
-        const providers = normalizeConcurrencyStatus(await res.json());
-        return { ok: true, providers };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Concurrency status request failed",
-        };
-      }
-    },
+    concurrencyStatus: httpActions.concurrencyStatus,
 
-    async searchBackendConfig(): Promise<SearchBackendConfigResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/search/config`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Search config failed (HTTP ${res.status})`,
-            // The 503 degrade = the backend's search-config service not loaded
-            // (the tool-web-search extension absent) — a distinct UI state.
-            ...(res.status === 503 ? { unavailable: true } : {}),
-          };
-        }
-        // Normalize the untyped JSON at this network seam (pure helper) so a
-        // malformed/partial response can never crash the renderer.
-        const config = normalizeSearchBackendConfig(await res.json());
-        return { ok: true, config };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Search config request failed",
-        };
-      }
-    },
+    searchBackendConfig: httpActions.searchBackendConfig,
 
-    async setSearchBackend(backend: string): Promise<SearchBackendConfigResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/search/config`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ backend }),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set search backend failed (HTTP ${res.status})`,
-            ...(res.status === 503 ? { unavailable: true } : {}),
-          };
-        }
-        const config = normalizeSearchBackendConfig(await res.json());
-        return { ok: true, config };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set search backend request failed",
-        };
-      }
-    },
+    setSearchBackend: httpActions.setSearchBackend,
 
-    async getConcurrencyCooldown(providerId: string): Promise<ConcurrencyCooldownResult> {
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/concurrency/cooldown/${encodeURIComponent(providerId)}`,
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Get concurrency cooldown failed (HTTP ${res.status})`,
-          };
-        }
-        const data = normalizeConcurrencyCooldown(await res.json());
-        if (data === null) {
-          return { ok: false, error: "Malformed concurrency cooldown response" };
-        }
-        return { ok: true, providerId: data.providerId, cooldownMs: data.cooldownMs };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Get concurrency cooldown request failed",
-        };
-      }
-    },
+    getConcurrencyCooldown: httpActions.getConcurrencyCooldown,
 
-    async setConcurrencyCooldown(
-      providerId: string,
-      cooldownMs: number,
-    ): Promise<ConcurrencyCooldownResult> {
-      try {
-        const res = await fetchImpl(
-          `${httpBase}/concurrency/cooldown/${encodeURIComponent(providerId)}`,
-          {
-            method: "PUT",
-            headers: { "content-type": "application/json" },
-            body: JSON.stringify({ cooldownMs }),
-          },
-        );
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set concurrency cooldown failed (HTTP ${res.status})`,
-          };
-        }
-        const data = normalizeConcurrencyCooldown(await res.json());
-        if (data === null) {
-          return { ok: false, error: "Malformed concurrency cooldown response" };
-        }
-        return { ok: true, providerId: data.providerId, cooldownMs: data.cooldownMs };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set concurrency cooldown request failed",
-        };
-      }
-    },
+    setConcurrencyCooldown: httpActions.setConcurrencyCooldown,
 
-    async loadSystemPrompt(): Promise<SystemPromptLoadResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/system-prompt`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Load system prompt failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as SystemPromptTemplateResponse;
-        return { ok: true, template: data.template ?? "" };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Load system prompt request failed",
-        };
-      }
-    },
+    loadSystemPrompt: httpActions.loadSystemPrompt,
 
-    async setSystemPrompt(template: string): Promise<SystemPromptSaveResult> {
-      try {
-        const body: SetSystemPromptTemplateRequest = { template };
-        const res = await fetchImpl(`${httpBase}/system-prompt`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(body),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Set system prompt failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as SystemPromptTemplateResponse;
-        return { ok: true, template: data.template };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Set system prompt request failed",
-        };
-      }
-    },
+    setSystemPrompt: httpActions.setSystemPrompt,
 
-    async loadSystemPromptVariables(): Promise<SystemPromptVariablesResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/system-prompt/variables`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Load system prompt variables failed (HTTP ${res.status})`,
-          };
-        }
-        const data = (await res.json()) as Partial<SystemPromptVariablesResponse>;
-        return { ok: true, variables: Array.isArray(data.variables) ? data.variables : [] };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Load system prompt variables request failed",
-        };
-      }
-    },
+    loadSystemPromptVariables: httpActions.loadSystemPromptVariables,
 
-    attachUnloadGate(gate: () => boolean): void {
-      unloadGate = gate;
-    },
+    attachUnloadGate: registry.attachUnloadGate,
 
     // ── Named Agents (global config; plan §9) ────────────────────────────────
 
     get namedAgents(): readonly NamedAgent[] {
-      return namedAgents;
+      return refreshers.namedAgents;
     },
     get namedAgentSnapshot(): NamedAgentSelectionSnapshot | null {
       return namedAgentSnapshot;
@@ -2927,103 +748,16 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
       return tileLayoutStore;
     },
     get enabledProviderCount(): number | null {
-      return enabledProviderCount;
+      return refreshers.enabledProviderCount;
     },
 
-    async refreshNamedAgents(): Promise<NamedAgentsResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/named-agents`);
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Named agents failed (HTTP ${res.status})`,
-          };
-        }
-        const agents = normalizeNamedAgents(await res.json());
-        namedAgents = agents;
-        return { ok: true, agents };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Named agents request failed",
-        };
-      }
-    },
+    refreshNamedAgents: refreshers.refreshNamedAgents,
 
-    async createNamedAgent(input: NamedAgentInput): Promise<NamedAgentSaveResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/named-agents`, {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(input),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Create named agent failed (HTTP ${res.status})`,
-          };
-        }
-        const agent = normalizeNamedAgentRecord(await res.json());
-        if (agent === null) return { ok: false, error: "Malformed named agent response" };
-        upsertNamedAgent(agent);
-        return { ok: true, agent };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Create named agent request failed",
-        };
-      }
-    },
+    createNamedAgent: refreshers.createNamedAgent,
 
-    async updateNamedAgent(id: string, input: NamedAgentInput): Promise<NamedAgentSaveResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/named-agents/${encodeURIComponent(id)}`, {
-          method: "PUT",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify(input),
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Update named agent failed (HTTP ${res.status})`,
-          };
-        }
-        const agent = normalizeNamedAgentRecord(await res.json());
-        if (agent === null) return { ok: false, error: "Malformed named agent response" };
-        upsertNamedAgent(agent);
-        return { ok: true, agent };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Update named agent request failed",
-        };
-      }
-    },
+    updateNamedAgent: refreshers.updateNamedAgent,
 
-    async deleteNamedAgent(id: string): Promise<NamedAgentDeleteResult> {
-      try {
-        const res = await fetchImpl(`${httpBase}/named-agents/${encodeURIComponent(id)}`, {
-          method: "DELETE",
-        });
-        if (!res.ok) {
-          const errBody = (await res.json().catch(() => null)) as { error?: string } | null;
-          return {
-            ok: false,
-            error: errBody?.error ?? `Delete named agent failed (HTTP ${res.status})`,
-          };
-        }
-        namedAgents = namedAgents.filter((a) => a.id !== id);
-        return { ok: true };
-      } catch (err) {
-        return {
-          ok: false,
-          error: err instanceof Error ? err.message : "Delete named agent request failed",
-        };
-      }
-    },
+    deleteNamedAgent: refreshers.deleteNamedAgent,
 
     get fatalError(): string | null {
       return fatalError;
@@ -3033,15 +767,7 @@ export function createAppStore(opts?: CreateAppStoreOptions): AppStore {
     },
 
     dispose(): void {
-      for (const store of chatStores.values()) {
-        store.dispose();
-      }
-      chatStores.clear();
-      for (const store of watchStores.values()) {
-        store.dispose();
-      }
-      watchStores.clear();
-      draftStore.dispose();
+      registry.dispose();
       socket?.close();
       socket = null;
     },

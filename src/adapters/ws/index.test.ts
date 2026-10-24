@@ -6,7 +6,7 @@ interface FakeSocket extends WebSocketLike {
   sent: string[];
   resolveOpen(): void;
   invokeMessage(data: string): void;
-  invokeClose(): void;
+  invokeClose(code?: number): void;
 }
 
 function fakeSocket(): FakeSocket {
@@ -44,8 +44,8 @@ function fakeSocket(): FakeSocket {
     invokeMessage(data: string) {
       onmessage?.({ data });
     },
-    invokeClose() {
-      onclose?.({ code: 1000, reason: "" });
+    invokeClose(code = 1000) {
+      onclose?.({ code, reason: "" });
     },
     sent,
   };
@@ -404,4 +404,135 @@ describe("createSurfaceSocket", () => {
     expect(ws.sent).toHaveLength(1);
     expect(JSON.parse(ws.sent[0] ?? "")).toEqual({ type: "chat.send", message: "queued" });
   });
+});
+
+describe("reconnect backoff after open", () => {
+  it.each([1013, 1006, 1011])("grows and caps delays across repeated early %s closes", (code) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const sockets: FakeSocket[] = [];
+    const handle = createSurfaceSocket({
+      url: "ws://test",
+      onMessage: vi.fn(),
+      socketFactory: () => {
+        const ws = fakeSocket();
+        sockets.push(ws);
+        return ws;
+      },
+    });
+    try {
+      for (const delay of [500, 1000, 2000, 4000, 8000, 16000, 30000, 30000]) {
+        const count = sockets.length;
+        sockets.at(-1)?.resolveOpen();
+        vi.advanceTimersByTime(100);
+        sockets.at(-1)?.invokeClose(code);
+        vi.advanceTimersByTime(delay - 1);
+        expect(sockets).toHaveLength(count);
+        vi.advanceTimersByTime(1);
+        expect(sockets).toHaveLength(count + 1);
+      }
+    } finally {
+      handle.close();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+
+  it.each([
+    "healthy",
+    "normal",
+    "going away",
+  ])("resets accumulated backoff after a %s connection", (mode) => {
+    vi.useFakeTimers();
+    const random = vi.spyOn(Math, "random").mockReturnValue(0.5);
+    const sockets: FakeSocket[] = [];
+    const handle = createSurfaceSocket({
+      url: "ws://test",
+      onMessage: vi.fn(),
+      socketFactory: () => {
+        const ws = fakeSocket();
+        sockets.push(ws);
+        return ws;
+      },
+    });
+    try {
+      sockets[0]?.resolveOpen();
+      sockets[0]?.invokeClose(1013);
+      vi.advanceTimersByTime(500);
+      sockets[1]?.resolveOpen();
+      if (mode === "healthy") vi.advanceTimersByTime(30000);
+      sockets[1]?.invokeClose(mode === "normal" ? 1000 : mode === "going away" ? 1001 : 1013);
+      vi.advanceTimersByTime(499);
+      expect(sockets).toHaveLength(2);
+      vi.advanceTimersByTime(1);
+      expect(sockets).toHaveLength(3);
+      handle.close();
+      vi.advanceTimersByTime(60000);
+      expect(sockets).toHaveLength(3);
+    } finally {
+      handle.close();
+      random.mockRestore();
+      vi.useRealTimers();
+    }
+  });
+});
+
+it("routes chat.queued only through the typed chat callback, never surface/error handling", () => {
+  const ws = fakeSocket();
+  const onChat = vi.fn();
+  const onMessage = vi.fn();
+  const handle = createSurfaceSocket({
+    url: "ws://test",
+    socketFactory: () => ws,
+    onChat,
+    onMessage,
+  });
+  const ack = {
+    type: "chat.queued",
+    conversationId: "c1",
+    reason: "compaction",
+    messageId: "q1",
+    requestId: "r1",
+  };
+  ws.invokeMessage(JSON.stringify(ack));
+  expect(onChat).toHaveBeenCalledExactlyOnceWith(ack);
+  expect(onMessage).not.toHaveBeenCalled();
+  handle.close();
+});
+
+it("routes resync notices to chat without reconnect/resend or surface errors", () => {
+  vi.useFakeTimers();
+  const ws = fakeSocket();
+  const onChat = vi.fn();
+  const onMessage = vi.fn();
+  const onReopen = vi.fn();
+  const factory = vi.fn(() => ws);
+  const handle = createSurfaceSocket({
+    url: "ws://test",
+    socketFactory: factory,
+    onChat,
+    onMessage,
+    onReopen,
+  });
+  try {
+    ws.resolveOpen();
+    const notice = {
+      type: "chat.resync-required",
+      conversationId: "c1",
+      turnId: "t1",
+      reason: "replay-limit",
+    };
+    ws.invokeMessage(JSON.stringify(notice));
+    ws.invokeMessage(JSON.stringify(notice));
+    vi.advanceTimersByTime(1000);
+    expect(onChat).toHaveBeenCalledTimes(2);
+    expect(onChat).toHaveBeenCalledWith(notice);
+    expect(onMessage).not.toHaveBeenCalled();
+    expect(onReopen).not.toHaveBeenCalled();
+    expect(factory).toHaveBeenCalledTimes(1);
+    expect(ws.sent).toEqual([]);
+  } finally {
+    handle.close();
+    vi.useRealTimers();
+  }
 });

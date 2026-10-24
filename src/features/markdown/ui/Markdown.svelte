@@ -1,15 +1,29 @@
 <script lang="ts">
-  import { renderMarkdown } from "../logic/markdown";
+  import { type MarkdownImageOptions, renderMarkdown } from "../logic/markdown";
   import { advance, createStreamingMarkdown } from "../logic/streaming-markdown";
 
   let {
     text,
     streaming = false,
+    image = undefined,
   }: {
     text: string;
     /** Balance dangling delimiters while the message is still generating. */
     streaming?: boolean;
+    /**
+     * Per-conversation local-image context: the backend HTTP base and the
+     * conversation cwd. Markdown image srcs that are local paths are rewritten
+     * through `${apiBase}/local-image?path=…` (relative paths resolve against
+     * `cwd`). Remote HTTP(S) images require a click; data, same-origin and
+     * backend images load inline. Omit it to skip local-path rewriting.
+     */
+    image?: MarkdownImageOptions;
   } = $props();
+
+  // Keep the optional `image` out of the options object when absent
+  // (exactOptionalPropertyTypes). Identity is irrelevant: the streaming cache
+  // keys on apiBase/cwd values.
+  const renderOpts = $derived(image === undefined ? undefined : { image });
 
   // Checkpoint streaming state: one per component instance (per streaming
   // message). It caches the settled blocks' HTML so each delta re-renders only
@@ -22,14 +36,14 @@
   // chunk): ONE full authoritative render — today's exact behavior, so the
   // final/persisted output is byte-identical by construction.
   const rendered = $derived.by(() => {
-    if (!streaming) return { prefixHtml: "", tailHtml: renderMarkdown(text) };
-    return advance(streamingState, text);
+    if (!streaming) return { prefixHtml: "", tailHtml: renderMarkdown(text, renderOpts) };
+    return advance(streamingState, text, renderOpts);
   });
 
   let container: HTMLElement;
 
-  // One delegated listener on the stable container handles every code block's
-  // copy button — including blocks re-created when the tail html changes
+  // One delegated listener on the stable container handles image consent and
+  // every code block's copy button — including blocks re-created when the tail html changes
   // (streaming), since the listener lives on the container, not the buttons.
   // Clipboard is the edge effect; absent (insecure context) → no-op.
   $effect(() => {
@@ -39,6 +53,26 @@
     const onClick = (event: Event): void => {
       const target = event.target;
       if (!(target instanceof Element)) return;
+      const remote = target.closest<HTMLButtonElement>("button.remote-image[data-src]");
+      if (remote !== null && el.contains(remote)) {
+        event.preventDefault(); // A Markdown image may be wrapped in a link.
+        event.stopPropagation();
+        // data-* is authorable in raw HTML: validate again at the DOM edge.
+        let url: URL;
+        try {
+          url = new URL(remote.dataset.src ?? "");
+        } catch {
+          return;
+        }
+        if (url.protocol !== "http:" && url.protocol !== "https:") return;
+        const img = el.ownerDocument.createElement("img");
+        img.alt = remote.dataset.alt ?? "";
+        if (remote.dataset.title !== undefined) img.title = remote.dataset.title;
+        img.setAttribute("referrerpolicy", "no-referrer");
+        img.src = url.href;
+        remote.replaceWith(img);
+        return;
+      }
       const button = target.closest<HTMLButtonElement>("[data-copy]");
       if (button === null) return;
 

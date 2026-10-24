@@ -381,7 +381,9 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
   const builtInSummary = summarize?.(args).trim();
   const callSummary =
     entry.call === null
-      ? "Call in earlier history"
+      ? entry.recovering
+        ? "Recovering tool input…"
+        : "Call in earlier history"
       : isEmptyInput(input)
         ? ""
         : oneLine(
@@ -416,7 +418,9 @@ export function viewToolEntry(entry: ToolEntry): ToolCardView {
       entry.call === null
         ? {
             kind: "unavailable",
-            text: "This call is earlier in the conversation. Show earlier messages to see it.",
+            text: entry.recovering
+              ? "Tool input is unavailable until it is persisted. Recovering from conversation history…"
+              : "This call is earlier in the conversation. Show earlier messages to see it.",
           }
         : detail(entry.toolName, input, args),
     resultSummary,

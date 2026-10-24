@@ -36,6 +36,7 @@ import xml from "highlight.js/lib/languages/xml";
 import yaml from "highlight.js/lib/languages/yaml";
 import { Marked } from "marked";
 import { markedHighlight } from "marked-highlight";
+import { resolveImageUrl } from "../../../core/chunks";
 
 // Hot set: registered eagerly so common code blocks highlight on first paint.
 const HOT_LANGUAGES: Record<string, LanguageFn> = {
@@ -184,33 +185,257 @@ function addCopyButtons(html: string): string {
     .replace(/<\/pre>/g, "</pre></div>");
 }
 
-/**
- * A DEDICATED DOMPurify instance (not the shared default export) so the
- * link hook below only applies to chat Markdown, never to any other sanitizer
- * user. Every link opens in a NEW TAB: after DOMPurify has allowlisted the
- * attributes, each `<a href>` gets `target="_blank"` + `rel="noopener
- * noreferrer"` (the opened page can't reach `window.opener` or see a referrer).
- * Applied in the hook, so it covers marked links, autolinks, AND raw-HTML
- * anchors alike — and the hook overwrites any author-supplied target/rel.
- */
-const purify = DOMPurify();
-purify.addHook("afterSanitizeAttributes", (node) => {
-  if (node.tagName === "A" && node.hasAttribute("href")) {
-    node.setAttribute("target", "_blank");
-    node.setAttribute("rel", "noopener noreferrer");
-  }
-});
+// Positive policy: chat HTML is passive Markdown structure, not arbitrary web
+// content. New browser elements/attributes must not silently add fetch sinks.
+// In particular there is no CSS, SVG/MathML, media, form, embed or metadata.
+const MARKDOWN_TAGS = [
+  "a",
+  "abbr",
+  "b",
+  "blockquote",
+  "br",
+  "caption",
+  "code",
+  "col",
+  "colgroup",
+  "dd",
+  "del",
+  "details",
+  "div",
+  "dl",
+  "dt",
+  "em",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+  "hr",
+  "i",
+  "img",
+  "kbd",
+  "li",
+  "mark",
+  "ol",
+  "p",
+  "pre",
+  "q",
+  "rp",
+  "rt",
+  "ruby",
+  "s",
+  "samp",
+  "small",
+  "span",
+  "strong",
+  "sub",
+  "summary",
+  "sup",
+  "table",
+  "tbody",
+  "td",
+  "tfoot",
+  "th",
+  "thead",
+  "tr",
+  "u",
+  "ul",
+  "var",
+  "wbr",
+  "button",
+  "input",
+];
+const MARKDOWN_ATTRIBUTES = [
+  "alt",
+  "align",
+  "checked",
+  "class",
+  "colspan",
+  "disabled",
+  "height",
+  "href",
+  "open",
+  "reversed",
+  "rowspan",
+  "scope",
+  "src",
+  "start",
+  "title",
+  "type",
+  "width",
+];
 
-function sanitize(html: string): string {
-  return purify.sanitize(html);
+/**
+ * A dedicated, render-local DOMPurify instance: hooks never affect another
+ * consumer or retain a conversation's backend allowlist. The document base is
+ * part of the sanitizer's existing DOM dependency; no location/state is cached.
+ */
+function sanitize(html: string, image?: MarkdownImageOptions): string {
+  const purify = DOMPurify();
+  const base = document.baseURI;
+  const origin = new URL(base).origin;
+  const backendOrigin = image === undefined ? origin : new URL(image.apiBase || base, base).origin;
+  purify.addHook("uponSanitizeElement", (node) => {
+    // Keep GFM task lists, but no image/submit/other form controls. Removing
+    // only type/src would allow browser defaulting or later attribute changes.
+    if (
+      node.nodeName === "INPUT" &&
+      (node as Element).getAttribute("type")?.toLowerCase() !== "checkbox"
+    ) {
+      node.parentNode?.removeChild(node);
+    }
+  });
+  purify.addHook("afterSanitizeAttributes", (node) => {
+    // URL-bearing attributes are supported ONLY on these two HTML elements.
+    if (node.tagName !== "A") node.removeAttribute("href");
+    if (node.tagName !== "IMG") node.removeAttribute("src");
+    if (node.tagName === "INPUT") node.setAttribute("disabled", "");
+    if (node.tagName === "BUTTON") node.setAttribute("type", "button");
+    if (node.tagName === "A" && node.hasAttribute("href")) {
+      node.setAttribute("target", "_blank");
+      node.setAttribute("rel", "noopener noreferrer");
+    }
+    if (node.tagName !== "IMG") return;
+    const src = node.getAttribute("src");
+    if (src === null) return;
+    let url: URL;
+    try {
+      url = new URL(src, base);
+    } catch {
+      node.removeAttribute("src");
+      return;
+    }
+    if (url.protocol === "data:") return; // Image context cannot load subresources.
+    if (url.protocol !== "http:" && url.protocol !== "https:") {
+      node.removeAttribute("src");
+      return;
+    }
+    if (url.origin === origin || url.origin === backendOrigin) return;
+
+    // Only safe, inert attributes are carried over. In particular, never copy
+    // srcset or author event handlers to the image created after consent.
+    const button = node.ownerDocument.createElement("button");
+    button.setAttribute("type", "button");
+    button.setAttribute("class", "remote-image btn btn-sm");
+    button.setAttribute("data-src", url.href);
+    button.setAttribute("data-alt", node.getAttribute("alt") ?? "");
+    const title = node.getAttribute("title");
+    if (title !== null) button.setAttribute("data-title", title);
+    button.textContent = `Load image from ${url.host}`;
+    node.parentNode?.replaceChild(button, node);
+  });
+  return purify.sanitize(html, {
+    ALLOWED_TAGS: MARKDOWN_TAGS,
+    ALLOWED_ATTR: MARKDOWN_ATTRIBUTES,
+    // Keep consent/copy data and accessibility labels, never active URL sinks
+    // such as srcset, style, background, ping, action or namespaced href.
+    ALLOW_DATA_ATTR: true,
+    ALLOW_ARIA_ATTR: true,
+  });
+}
+
+/**
+ * Per-conversation context for rendering local-path images inline. `apiBase`
+ * is the backend HTTP base (may be `""` → a root-relative `/local-image?…`);
+ * `cwd` resolves RELATIVE Markdown image srcs against the conversation's
+ * working directory (the same machine the backend serves files from).
+ */
+export interface MarkdownImageOptions {
+  readonly apiBase: string;
+  readonly cwd?: string | null;
+}
+
+/** Render options shared by all three render paths. */
+export interface MarkdownRenderOptions {
+  /** Balance dangling delimiters while the message is still generating. */
+  readonly streaming?: boolean;
+  /** Rewrite local-path image srcs through the backend's `/local-image` route. */
+  readonly image?: MarkdownImageOptions;
+}
+
+/** Decode a URL-ish path, tolerating malformed `%` escapes. */
+function safeDecode(path: string): string {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * Rewrite one image `src` for the local-image feature. Pure: `input → output`.
+ *
+ * - `file:///path` → local absolute path (scheme stripped).
+ * - `/absolute/path` → local absolute path.
+ * - a relative path (no scheme, no leading `/`) → joined to the conversation
+ *   `cwd` (no `cwd` → left untouched).
+ * - `http(s)://…`, `data:`, and any other scheme → left untouched.
+ *
+ * Local paths become `${apiBase}/local-image?path=<encoded>`, reusing
+ * `resolveImageUrl`'s join-without-double-slash semantics (an empty `apiBase`
+ * yields a root-relative path).
+ */
+function rewriteImageSrc(src: string, image: MarkdownImageOptions): string {
+  const trimmed = src.trim();
+  if (trimmed.length === 0) return src;
+  // Network-path URLs (including browser-normalized backslashes) are URLs,
+  // not local filesystem paths. The sanitizer applies the consent policy.
+  if (/^(?:data:|https?:\/\/)/i.test(trimmed) || /^[/\\]{2}/.test(trimmed)) return src;
+
+  let path: string;
+
+  if (/^file:\/\//i.test(trimmed)) {
+    // file:///abs/path (and file://localhost/abs/path) → /abs/path.
+    const match = /^file:\/\/([^/]*)(\/.*)?$/i.exec(trimmed);
+    if (match === null) return src;
+    const host = match[1] ?? "";
+    const filePath = match[2] ?? "/";
+    path = host === "" || host.toLowerCase() === "localhost" ? filePath : `/${host}${filePath}`;
+    path = safeDecode(path);
+  } else if (trimmed.startsWith("/")) {
+    path = safeDecode(trimmed);
+  } else if (trimmed.startsWith("~/")) {
+    // The backend expands a leading `~`; pass it through un-joined.
+    path = trimmed;
+  } else if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(trimmed)) {
+    // Some other scheme (mailto:, ftp:, …) — leave it alone.
+    return src;
+  } else {
+    const cwd = image.cwd ?? null;
+    if (cwd === null || cwd.length === 0) return src;
+    const base = cwd.replace(/\/+$/, "");
+    path = `${base}/${safeDecode(trimmed.replace(/^\.\//, ""))}`;
+  }
+
+  return resolveImageUrl(`/local-image?path=${encodeURIComponent(path)}`, image.apiBase);
+}
+
+/**
+ * Parse with marked, optionally rewriting image token `href`s just before
+ * rendering. Doing it on the token stream (not the Markdown source) means
+ * fenced/inline code is never touched, and reference-style images resolve
+ * through marked's normal link resolution. When `image` is absent the parse is
+ * byte-identical to today's.
+ */
+function parseMarkdown(src: string, image?: MarkdownImageOptions): string {
+  if (image === undefined) return md.parse(src) as string;
+
+  const renderer = new md.Renderer();
+  const imageRenderer = renderer.image;
+  renderer.image = (token) =>
+    imageRenderer.call(renderer, {
+      ...token,
+      href: rewriteImageSrc(token.href, image),
+    });
+  return md.parse(src, { renderer }) as string;
 }
 
 /** Render Markdown to sanitized HTML. Returns `""` if parsing ever throws. */
-export function renderMarkdown(text: string, opts?: { streaming?: boolean }): string {
+export function renderMarkdown(text: string, opts?: MarkdownRenderOptions): string {
   const src = opts?.streaming === true ? closeOpenDelimiters(text) : text;
   try {
-    const raw = md.parse(src) as string;
-    return sanitize(addCopyButtons(raw));
+    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)), opts?.image);
   } catch {
     return "";
   }
@@ -225,11 +450,14 @@ export function renderMarkdown(text: string, opts?: { streaming?: boolean }): st
  * degenerate case (nothing settled yet) is exactly today's behavior.
  * Returns `""` if parsing ever throws.
  */
-export function renderMarkdownTail(text: string, seed: DelimiterCounts = ZERO_COUNTS): string {
+export function renderMarkdownTail(
+  text: string,
+  seed: DelimiterCounts = ZERO_COUNTS,
+  opts?: MarkdownRenderOptions,
+): string {
   const src = closeOpenDelimiters(text, seed);
   try {
-    const raw = md.parse(src) as string;
-    return sanitize(addCopyButtons(raw));
+    return sanitize(addCopyButtons(parseMarkdown(src, opts?.image)), opts?.image);
   } catch {
     return "";
   }

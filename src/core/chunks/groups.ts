@@ -3,6 +3,7 @@ import type { RenderedChunk } from "./types";
 
 /** One tool call and its response. Null call = unloaded history; null result = pending. */
 export interface ToolEntry {
+  readonly recovering?: boolean;
   readonly toolCallId: string;
   readonly toolName: string;
   readonly call: ToolCallChunk | null;
@@ -26,7 +27,10 @@ export type RenderGroup =
  * the stable t<toolCallId> render keys are always unique, even on corrupt replay.
  * Pure: input → output; no DOM, effects, or Svelte.
  */
-export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonly RenderGroup[] {
+export function groupRenderedChunks(
+  rendered: readonly RenderedChunk[],
+  recovering = false,
+): readonly RenderGroup[] {
   const calls = new Map<string, RenderedChunk>();
   const results = new Map<string, RenderedChunk>();
   for (const rc of rendered) {
@@ -55,7 +59,13 @@ export function groupRenderedChunks(rendered: readonly RenderedChunk[]): readonl
     const turnId = callRow?.turnId ?? resultRow?.turnId;
     groups.push({
       kind: "tool",
-      entry: { toolCallId: c.toolCallId, toolName: call?.toolName ?? c.toolName, call, result },
+      entry: {
+        toolCallId: c.toolCallId,
+        toolName: call?.toolName ?? c.toolName,
+        call,
+        result,
+        ...(recovering && call === null && resultRow?.provisional ? { recovering: true } : {}),
+      },
       provisional: Boolean(callRow?.provisional || resultRow?.provisional),
       ...(stepId !== undefined ? { stepId } : {}),
       ...(turnId !== undefined ? { turnId } : {}),

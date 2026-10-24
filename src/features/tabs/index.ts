@@ -1,12 +1,14 @@
-export type { TabGroupForest, TabGroupNode } from "./tab-groups";
+export type { GroupTone, TabGroupForest, TabGroupNode } from "./tab-groups";
 export {
   buildTabGroups,
   cascadeCloseIds,
   directGroupChildren,
+  GROUP_TONES,
   groupBleedPx,
   groupDescendants,
   groupGutterPx,
   groupParentCandidates,
+  groupTone,
   lastRowIsGroup,
   visibleGroupParents,
 } from "./tab-groups";
